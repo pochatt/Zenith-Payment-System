@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Zenith オペレーションコンソール</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: {
+        jp: ['"Noto Sans JP"','"Hiragino Sans"','"Yu Gothic"','sans-serif'],
+      },
+      colors: {
+        brand: {
+          50:  '#eef4ff',
+          100: '#d9e8fb',
+          500: '#003366',
+          600: '#0066CC',
+          700: '#004499',
+        },
+        accent: '#FF6600',
+      },
+    }
+  }
+}
+</script>
+<style>
+  .mono { font-family: 'SF Mono','Consolas','Courier New',monospace; font-size: .78rem; }
+  @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+  .fade-in { animation: fadeIn .2s ease; }
+  [x-cloak] { display: none; }
+  #consoleSidebar { transition: transform .28s cubic-bezier(.4,0,.2,1); }
+  #consoleOverlay { display:none; }
+  #consoleOverlay.open { display:block; }
+  @media (max-width: 767px) {
+    #consoleSidebar { transform: translateX(-100%); position:fixed; top:0; left:0; height:100%; z-index:50; }
+    #consoleSidebar.open { transform: translateX(0); }
+    #consoleMain { margin-left: 0 !important; }
+  }
+</style>
+</head>
+<body class="bg-gray-50 font-jp text-gray-800 min-h-screen">
+
+<div x-data="zcConsole()" x-cloak class="flex h-screen overflow-hidden">
+  <!-- Mobile overlay -->
+  <div id="consoleOverlay" class="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" @click="closeSidebar()"></div>
+
+  <!-- Sidebar -->
+  <aside id="consoleSidebar" class="w-44 bg-white border-r border-gray-200 flex flex-col flex-shrink-0">
+    <div class="px-4 py-4 border-b border-gray-100">
+      <div class="font-serif text-lg text-brand-500 tracking-widest">Zenith</div>
+      <div class="text-[10px] text-gray-400 mt-0.5">Operation Console</div>
+    </div>
+    <nav class="flex-1 py-2 space-y-0.5 overflow-y-auto">
+      <template x-for="r in roles" :key="r.key">
+        <button @click="role = r.key; $nextTick(() => drawCharts()); closeSidebar()"
+          :class="role === r.key ? 'bg-brand-50 text-brand-600 border-brand-500 font-medium' : 'text-gray-600 border-transparent hover:bg-gray-50'"
+          class="w-full text-left px-4 py-2 text-sm flex items-center gap-2 border-l-[3px] transition-colors">
+          <i :class="r.icon" class="w-5 text-center text-sm"></i>
+          <span x-text="r.label"></span>
+        </button>
+      </template>
+    </nav>
+    <div class="px-4 py-2 border-t border-gray-100 text-[10px] text-gray-400">
+      更新: <span x-text="lastRefresh">-</span>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div id="consoleMain" class="flex-1 flex flex-col overflow-hidden">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 px-4 md:px-5 py-3 flex items-center justify-between flex-shrink-0 gap-3">
+      <div class="flex items-center gap-3 min-w-0">
+        <!-- Hamburger (mobile only) -->
+        <button @click="openSidebar()" class="md:hidden flex-shrink-0 w-9 h-9 flex flex-col items-center justify-center gap-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">
+          <span class="block w-5 h-0.5 bg-gray-600 rounded"></span>
+          <span class="block w-5 h-0.5 bg-gray-600 rounded"></span>
+          <span class="block w-5 h-0.5 bg-gray-600 rounded"></span>
+        </button>
+        <h1 class="text-base font-medium text-gray-700 truncate" x-text="roles.find(r=>r.key===role)?.label + ' ダッシュボード'"></h1>
+      </div>
+      <div class="flex items-center gap-3">
+        <template x-if="alerts.length">
+          <div class="flex items-center gap-1">
+            <template x-for="a in alerts" :key="a.msg">
+              <span :class="a.level==='HIGH' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'"
+                class="text-xs px-2 py-0.5 rounded-full font-medium" x-text="a.msg"></span>
+            </template>
+          </div>
+        </template>
+        <button @click="refresh()" class="text-xs text-gray-400 hover:text-gray-600 px-3 py-1 rounded border border-gray-200"><i class="fa-solid fa-arrows-rotate mr-1"></i>更新</button>
+      </div>
+    </header>
+
+    <!-- Content -->
+    <div class="flex-1 overflow-y-auto p-4 md:p-5">
+
+      <!-- KPI cards (全ロール共通) -->
+      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5 fade-in">
+        <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+          <div class="text-gray-300 mb-1"><i class="fa-solid fa-exchange-alt text-lg"></i></div>
+          <div class="text-2xl font-serif text-brand-600" x-text="kpi.total"></div>
+          <div class="text-[11px] text-gray-400 mt-1">取引総数</div>
+        </div>
+        <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+          <div class="text-emerald-200 mb-1"><i class="fa-solid fa-circle-check text-lg"></i></div>
+          <div class="text-2xl font-serif text-emerald-600" x-text="kpi.settled"></div>
+          <div class="text-[11px] text-gray-400 mt-1">決済完了</div>
+        </div>
+        <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+          <div class="text-red-200 mb-1"><i class="fa-solid fa-circle-xmark text-lg"></i></div>
+          <div class="text-2xl font-serif text-red-500" x-text="kpi.failed"></div>
+          <div class="text-[11px] text-gray-400 mt-1">失敗</div>
+        </div>
+        <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+          <div class="text-blue-200 mb-1"><i class="fa-solid fa-network-wired text-lg"></i></div>
+          <div class="text-lg font-medium" x-text="kpi.dns"></div>
+          <div class="text-[11px] text-gray-400 mt-1">DNS状態</div>
+        </div>
+        <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+          <div class="text-amber-200 mb-1"><i class="fa-solid fa-bell text-lg"></i></div>
+          <div class="text-2xl font-serif text-amber-600" x-text="notifications.sent"></div>
+          <div class="text-[11px] text-gray-400 mt-1">入金通知</div>
+        </div>
+        <div class="bg-white rounded-lg border border-gray-200 p-4 text-center">
+          <div class="text-indigo-200 mb-1"><i class="fa-solid fa-user-check text-lg"></i></div>
+          <div class="text-2xl font-serif text-indigo-600" x-text="acctVerifyStats.matched"></div>
+          <div class="text-[11px] text-gray-400 mt-1">口座確認</div>
+        </div>
+      </div>
+
+      <!-- ops -->
+      <template x-if="role === 'ops'">
+        <div class="space-y-4 fade-in">
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-chart-bar mr-1 text-gray-400"></i>レーン別件数</h3>
+            <div id="chartLaneBar" style="height:220px"></div>
+          </div>
+          <template x-if="alerts.length">
+            <div class="bg-white rounded-lg border border-gray-200 p-4">
+              <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-triangle-exclamation mr-1 text-amber-400"></i>アラート</h3>
+              <template x-for="a in alerts" :key="a.msg">
+                <div :class="a.level==='HIGH' ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'"
+                  class="border rounded p-3 text-sm mb-2">
+                  <span :class="a.level==='HIGH' ? 'text-red-700' : 'text-amber-700'" x-text="a.msg"></span>
+                </div>
+              </template>
+            </div>
+          </template>
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h4 class="text-sm font-medium text-gray-600 mb-3"><i class="fa-solid fa-bell mr-1 text-gray-400"></i>入金通知ステータス</h4>
+            <div class="grid grid-cols-3 gap-3 text-center">
+              <div class="bg-emerald-50 rounded p-3">
+                <div class="text-lg font-bold text-emerald-600" x-text="notifications.sent">0</div>
+                <div class="text-xs text-gray-500">送信成功</div>
+              </div>
+              <div class="bg-amber-50 rounded p-3">
+                <div class="text-lg font-bold text-amber-600" x-text="notifications.retry">0</div>
+                <div class="text-xs text-gray-500">リトライ中</div>
+              </div>
+              <div class="bg-red-50 rounded p-3">
+                <div class="text-lg font-bold text-red-600" x-text="notifications.failed">0</div>
+                <div class="text-xs text-gray-500">失敗</div>
+              </div>
+            </div>
+          </div>
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h4 class="text-sm font-medium text-gray-600 mb-3"><i class="fa-solid fa-user-check mr-1 text-gray-400"></i>事前口座確認KPI</h4>
+            <div class="grid grid-cols-3 gap-3 text-center">
+              <div class="bg-emerald-50 rounded p-3">
+                <div class="text-lg font-bold text-emerald-600" x-text="acctVerifyStats.matched">0</div>
+                <div class="text-xs text-gray-500">MATCHED</div>
+              </div>
+              <div class="bg-amber-50 rounded p-3">
+                <div class="text-lg font-bold text-amber-600" x-text="acctVerifyStats.unmatched">0</div>
+                <div class="text-xs text-gray-500">UNMATCHED</div>
+              </div>
+              <div class="bg-red-50 rounded p-3">
+                <div class="text-lg font-bold text-red-600" x-text="acctVerifyStats.notFound">0</div>
+                <div class="text-xs text-gray-500">NOT_FOUND</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- liq -->
+      <template x-if="role === 'liq'">
+        <div class="space-y-4 fade-in">
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-gauge-high mr-1 text-gray-400"></i>H利用率ゲージ</h3>
+            <div id="chartLiqGauges" class="grid grid-cols-3 md:grid-cols-5 gap-3"></div>
+          </div>
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-scale-balanced mr-1 text-gray-400"></i>DNSネットポジション</h3>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead><tr class="border-b border-gray-200 text-left">
+                  <th class="pb-2 text-xs text-gray-400 font-medium">銀行</th>
+                  <th class="pb-2 text-xs text-gray-400 font-medium text-right">Debit</th>
+                  <th class="pb-2 text-xs text-gray-400 font-medium text-right">Credit</th>
+                  <th class="pb-2 text-xs text-gray-400 font-medium text-right">Net</th>
+                </tr></thead>
+                <tbody class="divide-y divide-gray-100">
+                  <template x-for="p in dnsPos" :key="p.bank_id">
+                    <tr class="hover:bg-gray-50">
+                      <td class="py-1.5 text-xs" x-text="p.bank_id"></td>
+                      <td class="py-1.5 text-xs text-right" x-text="fmt(p.debit_amount||0)"></td>
+                      <td class="py-1.5 text-xs text-right" x-text="fmt(p.credit_amount||0)"></td>
+                      <td class="py-1.5 text-xs text-right font-medium"
+                        :class="(p.credit_amount||0)-(p.debit_amount||0) >= 0 ? 'text-emerald-600' : 'text-red-600'"
+                        x-text="(((p.credit_amount||0)-(p.debit_amount||0))>=0?'+':'')+fmt((p.credit_amount||0)-(p.debit_amount||0))"></td>
+                    </tr>
+                  </template>
+                  <template x-if="!dnsPos.length">
+                    <tr><td colspan="4" class="py-4 text-center text-gray-400 text-sm">本日のDNSポジションなし</td></tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- biz -->
+      <template x-if="role === 'biz'">
+        <div class="space-y-4 fade-in">
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-chart-line mr-1 text-gray-400"></i>時系列（1時間bucket）</h3>
+            <div id="chartTimeline" style="height:200px"></div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="bg-white rounded-lg border border-gray-200 p-4">
+              <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-chart-pie mr-1 text-gray-400"></i>レーン別シェア</h3>
+              <div id="chartPie" style="height:200px"></div>
+            </div>
+            <div class="bg-white rounded-lg border border-gray-200 p-4">
+              <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-ranking-star mr-1 text-gray-400"></i>銀行別送金額ランキング</h3>
+              <div class="space-y-1">
+                <template x-for="(b, i) in bankRanking.slice(0,8)" :key="b.bank_id">
+                  <div class="flex items-center gap-2 text-xs">
+                    <span class="text-gray-400 w-4" x-text="i+1"></span>
+                    <span class="flex-1 truncate" x-text="b.bank_id"></span>
+                    <span class="font-medium text-brand-600" x-text="fmt(b.total)"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="bg-white rounded-lg border border-gray-200 p-4">
+              <h4 class="text-sm font-medium text-gray-600 mb-3"><i class="fa-solid fa-globe mr-1 text-gray-400"></i>クロスボーダー取引</h4>
+              <div class="grid grid-cols-2 gap-3 text-center">
+                <div class="bg-blue-50 rounded p-3">
+                  <div class="text-lg font-bold text-blue-600" x-text="crossBorder.count">0</div>
+                  <div class="text-xs text-gray-500">件数</div>
+                </div>
+                <div class="bg-blue-50 rounded p-3">
+                  <div class="text-lg font-bold text-blue-600" x-text="fmt(crossBorder.volume)"></div>
+                  <div class="text-xs text-gray-500">取引額</div>
+                </div>
+              </div>
+              <div class="mt-3 text-xs text-gray-400">HTLC / GTID レーンの合計</div>
+            </div>
+            <div class="bg-white rounded-lg border border-gray-200 p-4">
+              <h4 class="text-sm font-medium text-gray-600 mb-3"><i class="fa-solid fa-qrcode mr-1 text-gray-400"></i>QR/エイリアス利用統計</h4>
+              <div class="grid grid-cols-2 gap-3 text-center">
+                <div class="bg-violet-50 rounded p-3">
+                  <div class="text-lg font-bold text-violet-600" x-text="qrAlias.qr">0</div>
+                  <div class="text-xs text-gray-500">QR決済</div>
+                </div>
+                <div class="bg-violet-50 rounded p-3">
+                  <div class="text-lg font-bold text-violet-600" x-text="qrAlias.alias">0</div>
+                  <div class="text-xs text-gray-500">エイリアス</div>
+                </div>
+              </div>
+              <div class="mt-3 text-xs text-gray-400">PSPR経由の利用件数</div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- sre -->
+      <template x-if="role === 'sre'">
+        <div class="space-y-4 fade-in">
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-chart-column mr-1 text-gray-400"></i>状態分布</h3>
+            <div id="chartStateBar" style="height:200px"></div>
+          </div>
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-wrench mr-1 text-gray-400"></i>手動操作</h3>
+            <div class="flex gap-2 flex-wrap">
+              <button @click="doSweep()" class="text-xs border border-gray-200 rounded px-3 py-1.5 hover:bg-gray-50"><i class="fa-solid fa-clock-rotate-left mr-1"></i>タイムアウト巡回</button>
+              <button @click="doEod()" class="text-xs border border-gray-200 rounded px-3 py-1.5 hover:bg-gray-50"><i class="fa-solid fa-moon mr-1"></i>EODバッチ</button>
+            </div>
+            <div x-text="sreMsg" class="text-xs text-gray-500 mt-2 mono"></div>
+          </div>
+        </div>
+      </template>
+
+      <!-- audit -->
+      <template x-if="role === 'audit'">
+        <div class="fade-in">
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-list mr-1 text-gray-400"></i>全取引（<span x-text="txs.length"></span>件）</h3>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead><tr class="border-b border-gray-200 text-left">
+                  <th class="pb-2 text-xs text-gray-400 font-medium">TXID</th>
+                  <th class="pb-2 text-xs text-gray-400 font-medium">状態</th>
+                  <th class="pb-2 text-xs text-gray-400 font-medium">レーン</th>
+                  <th class="pb-2 text-xs text-gray-400 font-medium text-right">金額</th>
+                  <th class="pb-2 text-xs text-gray-400 font-medium">日時</th>
+                </tr></thead>
+                <tbody class="divide-y divide-gray-100">
+                  <template x-for="t in txs.slice(0,100)" :key="t.txid">
+                    <tr class="hover:bg-gray-50 cursor-pointer" @click="auditSel = auditSel===t.txid ? null : t.txid">
+                      <td class="py-1.5 mono text-[11px]" x-text="t.txid?.slice(0,20)+'...'"></td>
+                      <td class="py-1.5"><span class="inline-block rounded-full px-2 py-0.5 text-[11px]"
+                        :class="t.state==='SETTLED'?'bg-emerald-100 text-emerald-700':t.state?.startsWith('FAIL')||t.state==='CANCELLED'?'bg-red-100 text-red-700':'bg-amber-100 text-amber-700'"
+                        x-text="t.state"></span></td>
+                      <td class="py-1.5 text-xs" x-text="t.lane||'-'"></td>
+                      <td class="py-1.5 text-xs text-right" x-text="fmt(t.amount?.value||0)"></td>
+                      <td class="py-1.5 text-[11px] text-gray-400" x-text="(t.created_at||'').replace('T',' ').slice(0,19)"></td>
+                    </tr>
+                    <template x-if="auditSel === t.txid">
+                      <tr>
+                        <td colspan="5" class="bg-gray-50 px-4 py-3">
+                          <pre class="mono text-[11px] text-gray-700 whitespace-pre-wrap" x-text="JSON.stringify(t, null, 2)"></pre>
+                        </td>
+                      </tr>
+                    </template>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- admin -->
+      <template x-if="role === 'admin'">
+        <div class="space-y-4 fade-in">
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-sliders mr-1 text-gray-400"></i>管理操作</h3>
+            <div class="flex gap-2 flex-wrap">
+              <button @click="doSeed()" class="text-xs bg-amber-100 text-amber-800 border border-amber-200 rounded px-3 py-1.5 hover:bg-amber-200"><i class="fa-solid fa-seedling mr-1"></i>シードリセット</button>
+              <button @click="doEod()" class="text-xs border border-gray-200 rounded px-3 py-1.5 hover:bg-gray-50"><i class="fa-solid fa-moon mr-1"></i>EODバッチ</button>
+              <button @click="doSweep()" class="text-xs border border-gray-200 rounded px-3 py-1.5 hover:bg-gray-50"><i class="fa-solid fa-clock-rotate-left mr-1"></i>タイムアウト巡回</button>
+              <button @click="doDnsKick()" class="text-xs border border-gray-200 rounded px-3 py-1.5 hover:bg-gray-50"><i class="fa-solid fa-bolt mr-1"></i>DNS Kick</button>
+            </div>
+            <div x-text="adminMsg" class="text-xs text-gray-500 mt-2 mono"></div>
+          </div>
+          <div class="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 class="text-sm font-medium text-gray-700 mb-3 pb-2 border-b border-gray-100"><i class="fa-solid fa-building-columns mr-1 text-gray-400"></i>参加銀行 (<span x-text="banks.length"></span>行)</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <template x-for="b in banks" :key="b.bank_id">
+                <div class="border border-gray-200 rounded p-2 text-xs">
+                  <div class="font-medium" x-text="b.bank_id"></div>
+                  <div class="text-gray-400 truncate" x-text="b.bank_name"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </template>
+
+    </div>
+  </div>
+</div>
+
+<script>
+const CRON_SECRET = 'zenith-cron-secret';
+
+function fmt(v) { return Number(v).toLocaleString('ja-JP') + ' 円'; }
+
+function cronH() { return { 'X-Cron-Secret': CRON_SECRET }; }
+
+async function apiFetch(path, method = 'GET', body = null, extra = {}) {
+  const opts = { method, headers: { 'Content-Type': 'application/json', ...extra } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  return r.json();
+}
+
+document.addEventListener('alpine:init', () => {
+  Alpine.data('zcConsole', () => ({
+    role: 'ops',
+    roles: [
+      { key: 'ops',   label: '運用',   icon: 'fa-solid fa-display' },
+      { key: 'liq',   label: '流動性', icon: 'fa-solid fa-droplet' },
+      { key: 'biz',   label: '企画',   icon: 'fa-solid fa-briefcase' },
+      { key: 'sre',   label: 'SRE',    icon: 'fa-solid fa-server' },
+      { key: 'audit', label: '監査',   icon: 'fa-solid fa-clipboard-check' },
+      { key: 'admin', label: '運営',   icon: 'fa-solid fa-shield-halved' },
+    ],
+    banks: [],
+    txs: [],
+    dnsStatus: {},
+    dnsPos: [],
+    loading: false,
+    lastRefresh: '-',
+    auditSel: null,
+    sreMsg: '',
+    adminMsg: '',
+    notifications: { sent: 0, retry: 0, failed: 0 },
+    acctVerifyStats: { matched: 0, unmatched: 0, notFound: 0 },
+    crossBorder: { count: 0, volume: 0 },
+    qrAlias: { qr: 0, alias: 0 },
+
+    openSidebar() {
+      document.getElementById('consoleSidebar').classList.add('open');
+      document.getElementById('consoleOverlay').classList.add('open');
+      document.body.style.overflow = 'hidden';
+    },
+    closeSidebar() {
+      document.getElementById('consoleSidebar').classList.remove('open');
+      document.getElementById('consoleOverlay').classList.remove('open');
+      document.body.style.overflow = '';
+    },
+
+    async init() {
+      await this.refresh();
+      setInterval(() => this.refresh(), 5000);
+    },
+
+    async refresh() {
+      const today = new Date().toISOString().slice(0,10);
+      try {
+        const [b, t, ds, dp] = await Promise.all([
+          apiFetch('/api/banks'),
+          apiFetch('/api/transactions?limit=200'),
+          apiFetch(`/api/dns/${today}/status`),
+          apiFetch(`/api/dns/${today}/position`),
+        ]);
+        this.banks      = b.banks ?? b ?? [];
+        this.txs        = t.transactions ?? t ?? [];
+        this.dnsStatus  = ds ?? {};
+        this.dnsPos     = dp.positions ?? dp ?? [];
+      } catch(e) { console.error('refresh error', e); }
+
+      // Compute derived stats from transactions
+      const settled = this.txs.filter(t => t.state === 'SETTLED');
+      const failedTxs = this.txs.filter(t => t.state === 'FAILED_EXECUTION');
+      const processing = this.txs.filter(t => t.state && !['SETTLED','FAILED_EXECUTION','CANCELLED'].includes(t.state));
+      this.notifications = {
+        sent: settled.length,
+        retry: processing.length,
+        failed: failedTxs.length,
+      };
+
+      const htlcGtid = this.txs.filter(t => t.lane === 'HTLC' || t.lane === 'GTID');
+      this.crossBorder = {
+        count: htlcGtid.length,
+        volume: htlcGtid.reduce((sum, t) => sum + (t.amount?.value || 0), 0),
+      };
+
+      // Approximate account verification stats from settled vs failed
+      this.acctVerifyStats = {
+        matched: settled.length,
+        unmatched: this.txs.filter(t => t.state === 'CANCELLED').length,
+        notFound: failedTxs.length,
+      };
+
+      // QR/Alias approximation: RTP lane as QR proxy, PSPR references as alias
+      this.qrAlias = {
+        qr: this.txs.filter(t => t.lane === 'RTP').length,
+        alias: this.txs.filter(t => t.lane === 'EXPRESS' && t.payee_alias).length,
+      };
+
+      this.lastRefresh = new Date().toLocaleTimeString('ja-JP');
+      this.$nextTick(() => this.drawCharts());
+    },
+
+    fmt,
+
+    get kpi() {
+      const settled = this.txs.filter(t => t.state === 'SETTLED').length;
+      const failed  = this.txs.filter(t => t.state === 'FAILED_EXECUTION').length;
+      return { total: this.txs.length, settled, failed, dns: this.dnsStatus.state ?? '-' };
+    },
+
+    get alerts() {
+      const a = [];
+      if (this.kpi.failed > 5) a.push({ level:'HIGH', msg:`失敗取引 ${this.kpi.failed}件` });
+      if (this.dnsStatus.state === 'HOLD_ACTIVE') a.push({ level:'HIGH', msg:'DNS HOLD_ACTIVE 状態' });
+      return a;
+    },
+
+    get bankRanking() {
+      const map = {};
+      for (const t of this.txs) {
+        if (!t.payer_bank_id) continue;
+        map[t.payer_bank_id] = (map[t.payer_bank_id] || 0) + (t.amount?.value || 0);
+      }
+      return Object.entries(map).map(([bank_id, total]) => ({ bank_id, total })).sort((a,b) => b.total - a.total);
+    },
+
+    drawCharts() {
+      if (this.role === 'ops')   this.drawLaneBar();
+      if (this.role === 'liq')   this.drawLiqGauges();
+      if (this.role === 'biz') { this.drawTimeline(); this.drawPie(); }
+      if (this.role === 'sre')   this.drawStateBar();
+    },
+
+    drawLaneBar() {
+      const el = document.getElementById('chartLaneBar');
+      if (!el) return;
+      const laneMap = {};
+      for (const t of this.txs) { const l = t.lane || 'UNKNOWN'; laneMap[l] = (laneMap[l]||0) + 1; }
+      const lanes = Object.keys(laneMap);
+      const chart = echarts.init(el);
+      chart.setOption({
+        tooltip: {},
+        xAxis: { type: 'category', data: lanes },
+        yAxis: { type: 'value' },
+        series: [{ type: 'bar', data: lanes.map(l => laneMap[l]), itemStyle: { color: '#8B4513' } }],
+      });
+    },
+
+    drawLiqGauges() {
+      const el = document.getElementById('chartLiqGauges');
+      if (!el) return;
+      el.innerHTML = '';
+      // 簡易表示: 各銀行のdnsポジションからゲージ代替
+      const shown = this.banks.slice(0, 10);
+      for (const bank of shown) {
+        const pos = this.dnsPos.find(p => p.bank_id === bank.bank_id);
+        const net = pos ? Math.abs((pos.credit_amount||0) - (pos.debit_amount||0)) : 0;
+        const max = this.dnsPos.reduce((a, p) => Math.max(a, Math.abs((p.credit_amount||0)-(p.debit_amount||0))), 1);
+        const pct = Math.round(net / max * 100);
+        const div = document.createElement('div');
+        div.className = 'text-center';
+        div.innerHTML = `<div class="text-[10px] text-gray-500 truncate">${bank.bank_name || bank.bank_id}</div>
+          <div id="gconsole-${bank.bank_id}" style="height:80px"></div>
+          <div class="text-[10px] text-gray-400">${pct}%</div>`;
+        el.appendChild(div);
+        const chart = echarts.init(div.querySelector(`#gconsole-${bank.bank_id}`));
+        chart.setOption({ series: [{ type:'gauge', min:0, max:100, radius:'90%',
+          axisLine: { lineStyle: { color: [[0.5,'#34d399'],[0.8,'#fbbf24'],[1,'#f87171']], width:8 } },
+          pointer: { length:'55%', width:3 }, axisTick:{show:false}, splitLine:{show:false}, axisLabel:{show:false},
+          detail: { show:false }, data: [{ value: pct }],
+        }] });
+      }
+    },
+
+    drawTimeline() {
+      const el = document.getElementById('chartTimeline');
+      if (!el) return;
+      const buckets = {};
+      for (const t of this.txs) {
+        if (!t.created_at) continue;
+        const h = t.created_at.slice(0, 13);
+        buckets[h] = (buckets[h]||0) + 1;
+      }
+      const keys = Object.keys(buckets).sort();
+      const chart = echarts.init(el);
+      chart.setOption({
+        tooltip: { trigger: 'axis' },
+        xAxis: { type: 'category', data: keys.map(k => k.slice(11) + ':00'), axisLabel: { fontSize: 10 } },
+        yAxis: { type: 'value' },
+        series: [{ type: 'line', data: keys.map(k => buckets[k]), smooth: true, areaStyle: { opacity: 0.1 }, itemStyle: { color: '#8B4513' } }],
+      });
+    },
+
+    drawPie() {
+      const el = document.getElementById('chartPie');
+      if (!el) return;
+      const map = {};
+      for (const t of this.txs) { const l = t.lane || 'UNKNOWN'; map[l] = (map[l]||0) + 1; }
+      const chart = echarts.init(el);
+      chart.setOption({
+        tooltip: { trigger: 'item' },
+        series: [{ type: 'pie', radius: ['40%','70%'],
+          data: Object.entries(map).map(([name,value]) => ({ name, value })),
+          label: { fontSize: 10 },
+        }],
+      });
+    },
+
+    drawStateBar() {
+      const el = document.getElementById('chartStateBar');
+      if (!el) return;
+      const map = {};
+      for (const t of this.txs) { const s = t.state||'UNKNOWN'; map[s] = (map[s]||0) + 1; }
+      const states = Object.keys(map);
+      const colors = { SETTLED:'#34d399', FAILED_EXECUTION:'#f87171', CANCELLED:'#f87171', RECEIVED:'#fbbf24', PROCESSING:'#60a5fa' };
+      const chart = echarts.init(el);
+      chart.setOption({
+        tooltip: {},
+        xAxis: { type: 'category', data: states, axisLabel: { fontSize: 9, rotate: 30 } },
+        yAxis: { type: 'value' },
+        series: [{ type: 'bar', data: states.map(s => ({ value: map[s], itemStyle: { color: colors[s]||'#9ca3af' } })) }],
+      });
+    },
+
+    async doSweep() {
+      try {
+        const r = await apiFetch('/internal/cron/timeout-sweep', 'POST', null, cronH());
+        this.sreMsg = 'タイムアウト巡回完了: swept=' + (r.swept||0);
+      } catch(e) { this.sreMsg = 'Error: ' + e.message; }
+    },
+
+    async doEod() {
+      try {
+        const r = await apiFetch('/internal/cron/eod', 'POST', null, cronH());
+        this.sreMsg = this.adminMsg = 'EOD完了: ' + JSON.stringify(r).slice(0, 80);
+      } catch(e) { this.sreMsg = this.adminMsg = 'Error: ' + e.message; }
+    },
+
+    async doSeed() {
+      try {
+        await apiFetch('/internal/seed', 'POST', null, cronH());
+        this.adminMsg = 'シードリセット完了';
+        await this.refresh();
+      } catch(e) { this.adminMsg = 'Error: ' + e.message; }
+    },
+
+    async doDnsKick() {
+      try {
+        const r = await apiFetch('/internal/dns/kick', 'POST', null, cronH());
+        this.adminMsg = 'DNS Kick完了: cycle_id=' + (r.cycle_id || '-');
+      } catch(e) { this.adminMsg = 'Error: ' + e.message; }
+    },
+  }));
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+name = "zenith-mock"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ZC_HMAC_SECRET   = "zenith-dev-secret-change-in-prod"
+BANK_BASE_URL    = ""   # same-Worker呼び出し。空文字 = 内部ルーティング
+CRON_SECRET      = "zenith-cron-secret"
+QR_SECRET        = "zenith-qr-secret-change-in-prod"
+
+# D1 database
+# `wrangler d1 create zenith-db` を実行後、出力された database_id を貼り付ける
+[[d1_databases]]
+binding       = "DB"
+database_name = "zenith-db"
+database_id   = "YOUR_DATABASE_ID"
+
+# Cloudflare Queues
+[[queues.producers]]
+binding = "QUEUE"
+queue   = "zenith-mock-queue"
+
+[[queues.consumers]]
+queue             = "zenith-mock-queue"
+max_batch_size    = 10
+max_batch_timeout = 5
+max_retries       = 3
+
+# R2 bucket（証跡・Vault の将来拡張用）
+[[r2_buckets]]
+binding     = "R2"
+bucket_name = "zenith-mock-r2"
+
+# Cron triggers
+[triggers]
+crons = [
+  "30 7 * * *",   # 毎日 16:30 JST = 07:30 UTC → EOD
+  "* * * * *",    # 毎分 → timeout sweep
+]
