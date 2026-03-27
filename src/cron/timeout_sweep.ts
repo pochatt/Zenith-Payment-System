@@ -23,9 +23,11 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
   let swept = 0
 
   // 1. T2_exec タイムアウト: DECIDED_TO_SETTLE が 5分以上
+  // BULK/DEFERRED は EOD まで DECIDED_TO_SETTLE で待機する設計のため除外
+  // HTLC は timelock で独立管理されるため除外（claimHtlc は同期 debit で完結）
   const t2Deadline = new Date(now.getTime() - T2_EXEC_TIMEOUT_SEC * 1000).toISOString()
   const decidedOld = await db
-    .prepare(`SELECT txid FROM Transactions WHERE state='DECIDED_TO_SETTLE' AND updated_at < ?`)
+    .prepare(`SELECT txid FROM Transactions WHERE state='DECIDED_TO_SETTLE' AND lane NOT IN ('BULK','DEFERRED','HTLC') AND updated_at < ?`)
     .bind(t2Deadline)
     .all<{ txid: string }>()
 

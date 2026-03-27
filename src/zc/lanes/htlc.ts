@@ -6,7 +6,7 @@
 import type { Env, HtlcCreateRequest, HtlcClaimRequest, HtlcContractRow } from '../../types'
 import { nowISO } from '../../types'
 import { reserveH, lockH, releaseH } from '../h_model'
-import { writeFinalityLog, callBankAuthorityCheck, finalizeCancelledTx } from '../orchestrator'
+import { writeFinalityLog, callBankAuthorityCheck, callBankExecuteDebit, onPayerExecConfirmed, suspendTx, finalizeCancelledTx } from '../orchestrator'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { sha256hex } from '../../shared/hmac'
 import { newUUID } from '../../shared/idempotency'
@@ -218,14 +218,21 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
     txid_or_gtid: htlc.txid,
   })
 
-  // Execution をキューに投入
-  await env.QUEUE.send({
-    type: 'ZC_BANK_DEBIT',
-    payload: { txid: htlc.txid, payer_bank_id: htlc.payer_bank_id, payee_bank_id: htlc.payee_bank_id, amount: { value: htlc.amount_value, currency: 'JPY' }, decision_proof_ref: decisionProofRef },
-    txid: htlc.txid, attempt: 0, enqueued_at: now,
-  })
+  // HTLC は timelock があるため、キューの遅延リスクを避けて同期的に debit を実行する
+  const bankResp = await callBankExecuteDebit(htlc.payer_bank_id, {
+    request_id: `DEBIT-${htlc.txid}`,
+    txid: htlc.txid,
+    amount: { value: htlc.amount_value, currency: 'JPY' },
+    decision_proof_ref: decisionProofRef,
+  }, env)
 
-  return { result: 'ACCEPTED', htlc_id: req.htlc_id, state: 'DECIDED_TO_SETTLE' }
+  if (bankResp.result === 'OK') {
+    await onPayerExecConfirmed(htlc.txid, JSON.stringify(bankResp.bank_proof_ref), env)
+    return { result: 'ACCEPTED', htlc_id: req.htlc_id, state: 'PAYER_EXEC_CONFIRMED' }
+  } else {
+    await suspendTx(htlc.txid, 'EXEC_DEBIT_FAILED', db)
+    return { result: 'REJECTED', htlc_id: req.htlc_id, state: 'SUSPENDED', reason_code: 'EXEC_DEBIT_FAILED' }
+  }
 }
 
 export async function cancelHtlc(
