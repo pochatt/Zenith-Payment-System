@@ -1,7 +1,27 @@
-# Zenith Payment System Mock
+# Zenith Payment System — Mock Implementation
 
-Zenith Coordinator（ZC）と参加銀行2行のモック実装。
-Cloudflare Workers + D1 + Queues + R2 で動作し、**固定費 ¥0**（全サービス無料枠内）。
+> **Zenith** は全銀ネットが策定した次世代即時決済アーキテクチャです。
+> 本リポジトリは **参加銀行向けインテグレーション開発・接続試験用のモック実装** です。
+
+---
+
+## 関連ドキュメント
+
+| ドキュメント | URL |
+|-------------|-----|
+| 全銀ネット 公式アナウンスメント（2026年3月） | [announcement_20260319-3.pdf](https://www.zengin-net.jp/announcement/pdf/announcement_20260319-3.pdf) |
+| Zenith 方式設計・仕様書 | [sakuolia.jp/zenith.html](https://www.sakuolia.jp/zenith.html) |
+
+---
+
+## このモックの目的
+
+銀行・FinTechベンダーが **Zenith本番環境への接続前** に、以下を自前環境で検証するためのリファレンス実装です：
+
+- **API契約の確認** — ZC（Zenith Coordinator）との送受信フォーマット・ステートマシンをエンドツーエンドで試せる
+- **多レーン対応の実装検証** — Express / Standard / HTLC / RTP / High-Value の挙動差異を実際に叩いて確認できる
+- **日次ネット清算（DNS）の動作確認** — EODバッチ・精算フローをローカルで再現できる
+- **無料で動く** — Cloudflare Workers の無料枠のみで動作。インフラコスト **¥0**
 
 ---
 
