@@ -363,6 +363,13 @@ async function handleZcApi(req: Request, path: string, method: string, env: Env)
   if (method === 'GET' && dnsPosMatch)
     return handleGetDnsPosition(dnsPosMatch[1]!, env)
 
+  // GET /api/boj/positions — 各参加行の日銀預け金（BOJ）残高照会（公開API）
+  // 報告書「論点7: 資金清算・決済のあり方」—プレファンドRTGS方式の残高監視
+  if (method === 'GET' && path === '/api/boj/positions') {
+    const positions = await getBojPositions(env.DB)
+    return json(200, { positions, as_of: nowISO() })
+  }
+
   // GET /api/cases/:case_id
   const caseMatch = path.match(/^\/api\/cases\/([^/]+)$/)
   if (method === 'GET' && caseMatch)

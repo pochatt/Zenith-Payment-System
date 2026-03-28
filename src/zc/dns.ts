@@ -22,7 +22,7 @@ import { nowISO, suspenseAccountId, nostroAccountId } from '../types'
 import { writeFinalityLog } from './orchestrator'
 import { newUUID } from '../shared/idempotency'
 import { settleSuspenseForDns } from '../bank/suspense'
-import { insertJournalGroup } from '../bank/ledger'
+import { insertJournalGroup, calcBalance } from '../bank/ledger'
 import { releaseH } from './h_model'
 
 // ---------------------------------------------------------------------------
@@ -119,6 +119,42 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
     .prepare(`SELECT * FROM DnsCycles WHERE cycle_id = ?`)
     .bind(cycleId).first<DnsCycleRow>()
   if (!cycle || cycle.state !== 'KICKED') return
+
+  // ---------------------------------------------------------------------------
+  // 事前BOJ残高充足確認: ネット支払超行の BOJ 残高を検証（プレファンドRTGS要件）
+  // 報告書「論点7: 資金清算・決済のあり方」—プレファンドRTGS方式では
+  // 清算前に各参加行の事前拠出残高が支払超額をカバーできるか確認する
+  // ---------------------------------------------------------------------------
+  const debitPositions = await db
+    .prepare(`SELECT bank_id, net_position FROM DnsNetPositions WHERE cycle_id = ? AND net_position < 0`)
+    .bind(cycleId).all<{ bank_id: string; net_position: number }>()
+
+  const bojShortfalls: Array<{ bank_id: string; shortfall: number }> = []
+  for (const row of debitPositions.results) {
+    const bojBalance = await calcBalance(`${row.bank_id}-BOJ`, db)
+    const requiredDebit = -row.net_position  // net_position < 0 なので正の値
+    // bojBalance は負値（事前拠出）、requiredDebit を差し引いても 0 以下なら OK
+    if (bojBalance + requiredDebit > 0) {
+      bojShortfalls.push({ bank_id: row.bank_id, shortfall: bojBalance + requiredDebit })
+    }
+  }
+
+  if (bojShortfalls.length > 0) {
+    // BOJ残高不足: サイクルを HOLD_ACTIVE に遷移して手動対処を待つ
+    await db.prepare(
+      `UPDATE DnsCycles SET state='HOLD_ACTIVE', hold_reason=?, updated_at=? WHERE cycle_id=?`
+    ).bind(
+      JSON.stringify({ reason: 'BOJ_INSUFFICIENT_FUNDS', shortfalls: bojShortfalls }),
+      now, cycleId
+    ).run()
+    await writeFinalityLog(db, {
+      txid: null, event_type: 'DnsHeld', state_from: 'KICKED', state_to: 'HOLD_ACTIVE',
+      payload_json: JSON.stringify({ cycle_id: cycleId, reason: 'BOJ_INSUFFICIENT_FUNDS', shortfalls: bojShortfalls }),
+      txid_or_gtid: cycleId,
+    })
+    console.error(`[dns] settleDns aborted: BOJ shortfall detected`, bojShortfalls)
+    return
+  }
 
   // 各銀行の別段預金を清算
   const participants = await db
