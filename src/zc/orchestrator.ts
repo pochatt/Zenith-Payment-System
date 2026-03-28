@@ -220,6 +220,20 @@ export async function onPayeeExecConfirmed(
     console.error(`[orchestrator] credit notification failed for ${txid}:`, err)
   }
 
+  // 仕向銀行（payer bank）への決済完了通知: 入金結果通知の双方向完結
+  // 報告書「論点2: 入金結果通知機能」—被仕向銀行への通知に加え、仕向銀行にも確定通知を送る
+  try {
+    await callBankIngress(tx.payer_bank_id, 'debit-settled', {
+      request_id: `DEBIT-SETTLED-${txid}`,
+      txid,
+      amount: { value: tx.amount_value, currency: 'JPY' },
+      payee_bank_id: tx.payee_bank_id,
+      settled_at: now,
+    }, env)
+  } catch (err) {
+    console.error(`[orchestrator] debit-settled notification failed for ${txid}:`, err)
+  }
+
   // GTID leg 完了確認: 全 leg が SETTLED になったら GT_SETTLED へ遷移
   if (txid.startsWith('TX-GT-')) {
     const leg = await db.prepare(

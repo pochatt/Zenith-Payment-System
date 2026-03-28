@@ -73,13 +73,13 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
     return json(200, existing)
   }
 
-  // 金額上限チェック (tx_amount_limit / daily_amount_limit)
+  // 金額上限チェック / RECEIVE_ONLY 参加形態チェック
   // 一部のモックDB環境でマイグレーション未適用による 'no such column' エラーを回避するため、フォールバックを追加
-  let participant: { tx_amount_limit?: number | null; daily_amount_limit?: number | null; daily_amount_used?: number } | null = null
+  let participant: { tx_amount_limit?: number | null; daily_amount_limit?: number | null; daily_amount_used?: number; participation_mode?: string | null } | null = null
   try {
     participant = await db.prepare(
-      `SELECT tx_amount_limit, daily_amount_limit, daily_amount_used FROM Participants WHERE bank_id = ?`,
-    ).bind(body.payer.bank_id).first<{ tx_amount_limit: number | null; daily_amount_limit: number | null; daily_amount_used: number }>()
+      `SELECT tx_amount_limit, daily_amount_limit, daily_amount_used, participation_mode FROM Participants WHERE bank_id = ?`,
+    ).bind(body.payer.bank_id).first<{ tx_amount_limit: number | null; daily_amount_limit: number | null; daily_amount_used: number; participation_mode: string | null }>()
   } catch (e: any) {
     if (e.message && e.message.includes('no such column: tx_amount_limit')) {
       console.warn(`[ingress] tx_amount_limit column missing in Participants table. Skipping limit checks.`);
@@ -87,6 +87,12 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
     } else {
       throw e;
     }
+  }
+
+  // 被仕向のみ参加行（RECEIVE_ONLY）は送金起点になれない
+  if (participant?.participation_mode === 'RECEIVE_ONLY') {
+    await completeIdempotency(idempKey, { result: 'REJECTED', reason_code: 'PARTICIPATION_MODE_RECEIVE_ONLY' }, db)
+    return jsonError(422, 'PARTICIPATION_MODE_RECEIVE_ONLY', `bank ${body.payer.bank_id} is registered as RECEIVE_ONLY and cannot initiate transfers`)
   }
 
   if (participant?.tx_amount_limit != null && body.amount.value > participant.tx_amount_limit) {

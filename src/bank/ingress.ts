@@ -98,6 +98,7 @@ export async function handleBankIngress(
     case 'account-verify':   return bankAccountVerify(bankId, payload as BankAccountVerifyIngressRequest, env)
     case 'credit-notify':    return bankCreditNotify(bankId, payload as BankCreditNotifyIngressRequest, env)
     case 'rtp-notify':       return bankRtpNotify(bankId, payload as BankRtpNotifyIngressRequest, env)
+    case 'debit-settled':    return bankDebitSettled(bankId, payload as BankDebitSettledRequest, env)
     default:
       return { result: 'ERROR', reason_code: 'UNKNOWN_COMMAND' }
   }
@@ -835,6 +836,48 @@ async function bankRtpNotify(
       payer_bank_id: req.payer_bank_id,
       expires_at: req.expires_at,
     },
+  })
+  return resp
+}
+
+// ---------------------------------------------------------------------------
+// 11. debit-settled  仕向銀行への決済完了通知（入金結果通知の対称）
+// ---------------------------------------------------------------------------
+
+/** Request body for the debit-settled ingress command. */
+interface BankDebitSettledRequest {
+  request_id: string
+  txid: string
+  amount: { value: number; currency: string }
+  payee_bank_id: string
+  settled_at: string
+}
+
+/**
+ * **Command 11: debit-settled** — Settlement completion notification to payer bank.
+ *
+ * Called by ZC after the full transaction reaches SETTLED state. Confirms to
+ * the payer (仕向銀行) that the payee credit has been delivered and the
+ * end-to-end settlement is final. Records an audit entry for traceability.
+ *
+ * This implements the "入金結果通知" (credit result notification) from the
+ * payer side perspective, completing the bidirectional settlement confirmation
+ * loop required by the Zengin Future Vision report (論点2: 入金結果通知機能).
+ */
+async function bankDebitSettled(
+  bankId: string, req: BankDebitSettledRequest, env: Env,
+): Promise<{ result: 'ACKNOWLEDGED'; txid: string } | { result: 'ERROR'; reason_code: string }> {
+  const db = env.DB
+  const idempResult = await checkIdempotency(req.request_id, bankId, req.txid, 'debit-settled', db)
+  if (idempResult.existing) return idempResult.response as { result: 'ACKNOWLEDGED'; txid: string }
+
+  const resp = { result: 'ACKNOWLEDGED' as const, txid: req.txid }
+  await saveResponse(req.request_id, resp, db)
+  await auditLog(db, {
+    bank_id: bankId, txid: req.txid, request_id: req.request_id,
+    command: 'debit-settled', status: 'OK',
+    amount: req.amount.value,
+    details: { payee_bank_id: req.payee_bank_id, settled_at: req.settled_at },
   })
   return resp
 }
