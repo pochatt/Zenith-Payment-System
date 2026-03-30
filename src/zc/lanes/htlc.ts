@@ -3,10 +3,10 @@
  *       preimage-based claim.
  * @module zc/lanes/htlc
  */
-import type { Env, HtlcCreateRequest, HtlcClaimRequest, HtlcContractRow } from '../../types'
+import type { Env, HtlcCreateRequest, HtlcClaimRequest, HtlcContractRow, ReleaseReserveRequest } from '../../types'
 import { nowISO } from '../../types'
 import { reserveH, lockH, releaseH } from '../h_model'
-import { writeFinalityLog, callBankAuthorityCheck, callBankExecuteDebit, onPayerExecConfirmed, suspendTx, finalizeCancelledTx } from '../orchestrator'
+import { writeFinalityLog, callBankAuthorityCheck, callBankExecuteDebit, callBankReleaseReserve, onPayerExecConfirmed, suspendTx, finalizeCancelledTx } from '../orchestrator'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { sha256hex } from '../../shared/hmac'
 import { newUUID } from '../../shared/idempotency'
@@ -89,7 +89,7 @@ export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
     .first<HtlcContractRow>()
   if (!htlc || htlc.state !== 'HTLC_RECEIVED') return
 
-  // timelockが過去なら即DECIDED_CANCEL
+  // timelockが過去なら即DECIDED_CANCEL（この時点では銀行サスペンス未作成のため env 不要）
   if (new Date(htlc.timelock) <= new Date(now)) {
     await cancelHtlc(htlcId, htlc.txid, 'TIMELOCK_EXPIRED', db)
     return
@@ -115,6 +115,7 @@ export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
     account_hash: txForPayer?.payer_account_hash ?? '',
   }, env)
   if (reserveResult.result === 'ERROR') {
+    // reserve-funds 失敗: 銀行サスペンス未作成のため bank 通知は不要
     await cancelHtlc(htlcId, htlc.txid, reserveResult.reason_code ?? 'RESERVE_FAILED', db)
     return
   }
@@ -153,15 +154,26 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
   if (!htlc) return { result: 'REJECTED', htlc_id: req.htlc_id, state: 'NOT_FOUND', reason_code: 'NOT_FOUND' }
   if (htlc.state !== 'HTLC_LOCKED') return { result: 'REJECTED', htlc_id: req.htlc_id, state: htlc.state, reason_code: 'INVALID_STATE' }
 
-  // timelock 期限確認
+  // timelock 期限確認（HTLC_LOCKED 後: 銀行サスペンス存在 → env を渡して銀行に解放通知）
   if (new Date(htlc.timelock) <= new Date(now)) {
-    await cancelHtlc(req.htlc_id, htlc.txid, 'TIMELOCK_EXPIRED', db)
+    await cancelHtlc(req.htlc_id, htlc.txid, 'TIMELOCK_EXPIRED', db, env)
     return { result: 'REJECTED', htlc_id: req.htlc_id, state: 'DECIDED_CANCEL', reason_code: 'TIMELOCK_EXPIRED' }
   }
 
   // preimage 検証: SHA256(preimage) == hashlock
   const computedHash = await sha256hex(req.preimage)
   if (computedHash !== htlc.hashlock) {
+    // FinalityLog: 検証失敗を記録（説明できる状態の連なりを確保。実際のpreimageは記録しない）
+    await writeFinalityLog(db, {
+      txid: htlc.txid, event_type: 'HtlcClaimRejected',
+      state_from: 'HTLC_LOCKED', state_to: 'HTLC_LOCKED',
+      payload_json: JSON.stringify({
+        htlc_id: req.htlc_id,
+        reason_code: 'INVALID_PREIMAGE',
+        computed_hash_prefix: computedHash.slice(0, 8) + '…',
+      }),
+      txid_or_gtid: htlc.txid,
+    })
     return { result: 'REJECTED', htlc_id: req.htlc_id, state: htlc.state, reason_code: 'INVALID_PREIMAGE' }
   }
 
@@ -174,7 +186,8 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
       request_id: `RECHECK-${htlc.txid}`, txid: htlc.txid, check_type: 'RECHECK',
     }, env)
     if (recheckResult.result === 'NG') {
-      await cancelHtlc(req.htlc_id, htlc.txid, 'RECHECK_AUTHORITY_NG', db)
+      // HTLC_LOCKED 後: 銀行サスペンス存在 → env を渡して銀行に解放通知
+      await cancelHtlc(req.htlc_id, htlc.txid, 'RECHECK_AUTHORITY_NG', db, env)
       return { result: 'REJECTED', htlc_id: req.htlc_id, state: 'DECIDED_CANCEL', reason_code: 'RECHECK_AUTHORITY_NG' }
     }
   }
@@ -236,7 +249,7 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
 }
 
 export async function cancelHtlc(
-  htlcId: string, txid: string, reasonCode: string, db: D1Database,
+  htlcId: string, txid: string, reasonCode: string, db: D1Database, env?: Env,
 ): Promise<void> {
   const now = nowISO()
   // h_reservation_id を取得してH解放
@@ -245,6 +258,22 @@ export async function cancelHtlc(
     .bind(txid).first<{ h_reservation_id: string | null }>()
   if (txForH?.h_reservation_id) {
     await releaseH(txForH.h_reservation_id, db)
+    // HTLC_LOCKED 時点で reserve-funds が実行済みのため、銀行側の別段預金も解放する。
+    // ZC が一方的に解放するのではなく、銀行に通知して銀行自身が解放する（基本思想遵守）。
+    if (env) {
+      const htlcRow = await db
+        .prepare(`SELECT payer_bank_id FROM HtlcContracts WHERE htlc_id = ?`)
+        .bind(htlcId).first<{ payer_bank_id: string }>()
+      if (htlcRow) {
+        await callBankReleaseReserve(htlcRow.payer_bank_id, {
+          request_id: `HTLC-CANCEL-${htlcId}`,
+          txid,
+          reservation_ref: txForH.h_reservation_id,
+        } as ReleaseReserveRequest, env).catch(e =>
+          console.error(`[cancelHtlc] bank release-reserve failed for ${htlcId}:`, e)
+        )
+      }
+    }
   }
   await db.batch([
     db.prepare(`UPDATE HtlcContracts SET state='DECIDED_CANCEL', version=version+1, updated_at=? WHERE htlc_id=?`).bind(now, htlcId),

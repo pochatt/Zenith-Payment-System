@@ -99,6 +99,8 @@ export async function handleBankIngress(
     case 'credit-notify':    return bankCreditNotify(bankId, payload as BankCreditNotifyIngressRequest, env)
     case 'rtp-notify':       return bankRtpNotify(bankId, payload as BankRtpNotifyIngressRequest, env)
     case 'debit-settled':    return bankDebitSettled(bankId, payload as BankDebitSettledRequest, env)
+    case 'initialize-bank':  return bankInitialize(bankId, payload as BankInitializeRequest, env)
+    case 'cleanup-bank':     return bankCleanup(bankId, env)
     default:
       return { result: 'ERROR', reason_code: 'UNKNOWN_COMMAND' }
   }
@@ -880,6 +882,104 @@ async function bankDebitSettled(
     details: { payee_bank_id: req.payee_bank_id, settled_at: req.settled_at },
   })
   return resp
+}
+
+// ---------------------------------------------------------------------------
+// BankInitializeRequest 型定義（このモジュール内でのみ使用）
+// ---------------------------------------------------------------------------
+interface BankInitializeRequest {
+  request_id?: string
+  boj_prefund?: number  // 日銀プレファンド金額（デフォルト: 1000億円）
+}
+
+/**
+ * **Command 12: initialize-bank** — Bank-side account and journal initialization.
+ *
+ * ZC は参加行登録（Participants）のみ行い、銀行内部口座（BankAccounts）や
+ * 仕訳（BankJournals）の初期化は銀行自身が責任を持つ（基本思想: 金融機関が既存責任を保持）。
+ * このハンドラはその「銀行側初期化」を受け付けるエンドポイント。
+ *
+ * 作成する口座:
+ *   - 別段預金（SUSPENSE）: 送金中の資金を一時保管
+ *   - ZC清算勘定（SETTLEMENT）: ZCとの清算
+ *   - 現金口座（ASSET）: 自行現金
+ *   - 日銀預け金口座（BOJ）: RTGS/HIGH_VALUE 用プレファンド
+ */
+async function bankInitialize(
+  bankId: string, req: BankInitializeRequest, env: Env,
+): Promise<{ result: 'INITIALIZED' | 'ALREADY_INITIALIZED'; bank_id: string }> {
+  const db = env.DB
+  const now = nowISO()
+  const today = now.slice(0, 10)
+  const bojPrefund = req.boj_prefund ?? 100_000_000_000  // デフォルト1000億円
+
+  // 冪等チェック: 既に口座が存在する場合はスキップ
+  const existing = await db
+    .prepare(`SELECT account_id FROM BankAccounts WHERE bank_id = ? AND account_type = 'SUSPENSE' LIMIT 1`)
+    .bind(bankId).first<{ account_id: string }>()
+  if (existing) {
+    return { result: 'ALREADY_INITIALIZED', bank_id: bankId }
+  }
+
+  // 銀行内部口座の作成（銀行の責任範囲: ZC は口座構造に関知しない）
+  await db.batch([
+    db.prepare(
+      `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
+       VALUES (?, ?, 'SYSTEM', '別段預金', 'SUSPENSE', 'NORMAL', ?)`
+    ).bind(`${bankId}0000000`, bankId, now),
+    db.prepare(
+      `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
+       VALUES (?, ?, 'SYSTEM', 'ZC清算勘定', 'SETTLEMENT', 'NORMAL', ?)`
+    ).bind(`${bankId}-ZCS`, bankId, now),
+    db.prepare(
+      `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
+       VALUES (?, ?, 'SYSTEM', '現金', 'ASSET', 'NORMAL', ?)`
+    ).bind(`${bankId}-CASH`, bankId, now),
+    db.prepare(
+      `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
+       VALUES (?, ?, 'BOJ', '日本銀行（預け金勘定）', 'BOJ', 'NORMAL', ?)`
+    ).bind(`${bankId}-BOJ`, bankId, now),
+    db.prepare(
+      `INSERT OR IGNORE INTO InterestRates (rate_id, bank_id, account_type, annual_rate, effective_from)
+       VALUES (?, ?, 'SAVINGS', 0.001, ?)`
+    ).bind(`RATE-${bankId}-SAVINGS`, bankId, today),
+    // BOJ 初期プレファンド（HIGH_VALUE RTGS用）
+    // ゼロサム: BOJ(-) / ZCS(+) の対当
+    db.prepare(
+      `INSERT OR IGNORE INTO BankJournals (journal_id, bank_id, account_id, amount, tx_type, tx_group_id, description, value_date, created_at)
+       VALUES (?, ?, ?, ?, 'CASH', ?, 'BOJ初期プレファンド', ?, ?)`
+    ).bind(`JNL-INIT-${bankId}-BOJ`, bankId, `${bankId}-BOJ`, -bojPrefund, `INIT-${bankId}-BOJ`, today, now),
+    db.prepare(
+      `INSERT OR IGNORE INTO BankJournals (journal_id, bank_id, account_id, amount, tx_type, tx_group_id, description, value_date, created_at)
+       VALUES (?, ?, ?, ?, 'CASH', ?, 'BOJ初期ZCS対当', ?, ?)`
+    ).bind(`JNL-INIT-${bankId}-BOJZCS`, bankId, `${bankId}-ZCS`, bojPrefund, `INIT-${bankId}-BOJ`, today, now),
+  ])
+
+  await auditLog(db, {
+    bank_id: bankId, command: 'initialize-bank', status: 'OK',
+    details: { boj_prefund: bojPrefund },
+  })
+  return { result: 'INITIALIZED', bank_id: bankId }
+}
+
+/**
+ * **Command 13: cleanup-bank** — Bank-side account and journal teardown.
+ *
+ * 銀行の登録解除時に、銀行内部データ（口座・仕訳・金利設定）を削除する。
+ * ZC 側データ（Participants, ZcRequests, SuspenseDetails）は ZC が別途削除する。
+ */
+async function bankCleanup(
+  bankId: string, env: Env,
+): Promise<{ result: 'CLEANED_UP'; bank_id: string }> {
+  const db = env.DB
+  await db.batch([
+    db.prepare('DELETE FROM InterestRates WHERE bank_id=?').bind(bankId),
+    db.prepare('DELETE FROM DailyBalances WHERE account_id LIKE ?').bind(`${bankId}%`),
+    db.prepare('DELETE FROM BankJournals WHERE bank_id=?').bind(bankId),
+    db.prepare('DELETE FROM BankAccounts WHERE bank_id=?').bind(bankId),
+  ])
+  await auditLog(db, { bank_id: bankId, command: 'cleanup-bank', status: 'OK' })
+  return { result: 'CLEANED_UP', bank_id: bankId }
 }
 
 function errorResp(status: number, reason_code: string): Response {

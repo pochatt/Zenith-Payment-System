@@ -208,17 +208,31 @@ export async function onPayeeExecConfirmed(
   await publishEvent(db, tx.payee_bank_id, 'TX_STATE_CHANGED', { txid, newState: 'SETTLED' })
 
   // クレジット通知: 着金通知を生成して即時配送試行
+  let notificationId: string | null = null
+  let notificationDelivered = false
   try {
-    const notificationId = await createCreditNotification(
+    notificationId = await createCreditNotification(
       db, txid, tx.payee_bank_id, tx.payee_account_hash ?? '', { value: tx.amount_value, currency: 'JPY' },
       tx.payer_bank_id, tx.purpose ?? null, tx.edi_ref ?? null,
     )
     await deliverNotification(db, notificationId, env)
+    notificationDelivered = true
     // SSE: 着金通知イベントを発行
     await publishEvent(db, tx.payee_bank_id, 'CREDIT_RECEIVED', { txid, amount: tx.amount_value })
   } catch (err) {
     console.error(`[orchestrator] credit notification failed for ${txid}:`, err)
   }
+  // FinalityLog: 着金通知の配送結果を記録（配送成否の説明可能性を確保）
+  await writeFinalityLog(db, {
+    txid, event_type: 'CreditNotificationAttempted',
+    state_from: 'SETTLED', state_to: 'SETTLED',
+    payload_json: JSON.stringify({
+      notification_id: notificationId,
+      delivered: notificationDelivered,
+      payee_bank_id: tx.payee_bank_id,
+    }),
+    txid_or_gtid: txid,
+  })
 
   // 仕向銀行（payer bank）への決済完了通知: 入金結果通知の双方向完結
   // 報告書「論点2: 入金結果通知機能」—被仕向銀行への通知に加え、仕向銀行にも確定通知を送る
@@ -342,9 +356,11 @@ export async function finalizeCancelledTx(txid: string, db: D1Database): Promise
  * @param txid       - Transaction ID
  * @param reasonCode - Reason for suspension (e.g. 'EXEC_DEBIT_FAILED')
  * @param db         - D1 database handle
+ * @param details    - Optional structured context (e.g. bank response, actor) recorded in FinalityLog
  */
 export async function suspendTx(
   txid: string, reasonCode: string, db: D1Database,
+  details?: Record<string, unknown>,
 ): Promise<void> {
   const now = nowISO()
   // version も取得して CAS UPDATE で TOCTOU 競合を防ぐ
@@ -366,7 +382,7 @@ export async function suspendTx(
   }
   await writeFinalityLog(db, {
     txid, event_type: 'Suspended', state_from: tx.state, state_to: 'SUSPENDED',
-    payload_json: JSON.stringify({ reason_code: reasonCode }), txid_or_gtid: txid,
+    payload_json: JSON.stringify({ reason_code: reasonCode, ...details }), txid_or_gtid: txid,
   })
 
   // CASE 起票
@@ -435,7 +451,11 @@ export async function processQueueMessage(msg: QueueMessage, env: Env): Promise<
         if (bankResp.result === 'OK') {
           await onPayerExecConfirmed(p.txid, JSON.stringify(bankResp.bank_proof_ref), env)
         } else {
-          await suspendTx(p.txid, 'EXEC_DEBIT_FAILED', env.DB)
+          await suspendTx(p.txid, 'EXEC_DEBIT_FAILED', env.DB, {
+            bank_id: p.payer_bank_id,
+            bank_result: (bankResp as unknown as Record<string, unknown>).result,
+            bank_reason_code: (bankResp as unknown as Record<string, unknown>).reason_code,
+          })
         }
         break
       }
@@ -478,7 +498,11 @@ export async function processQueueMessage(msg: QueueMessage, env: Env): Promise<
             txid_or_gtid: p.txid,
           })
         } else {
-          await suspendTx(p.txid, 'EXEC_CREDIT_FAILED', env.DB)
+          await suspendTx(p.txid, 'EXEC_CREDIT_FAILED', env.DB, {
+            bank_id: p.payee_bank_id,
+            bank_result: (bankResp as unknown as Record<string, unknown>).result,
+            bank_reason_code: (bankResp as unknown as Record<string, unknown>).reason_code,
+          })
         }
         break
       }
