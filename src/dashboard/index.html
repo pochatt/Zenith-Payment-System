@@ -2232,7 +2232,10 @@ async function doAcctVerify() {
   if (!acct || acct.length !== 10) { toast('口座番号を10桁で入力してください', 'error'); return; }
   if (!name) { toast('照会名義を入力してください', 'error'); return; }
   try {
-    const r = await api('POST', '/api/account-verify', { account_id: acct, account_name: name, verification_id: uuid(), idempotency_key: uuid() });
+    const verificationId = uuid();
+    const targetBankId = acct.slice(0, 3);
+    await api('POST', '/api/account-verify', { target_account_id: acct, name_to_verify: name, verification_id: verificationId, target_bank_id: targetBankId, idempotency_key: uuid() });
+    const r = await api('GET', `/api/account-verify/${verificationId}`);
     const st = r.status || r.result;
     const matchCls = st === 'MATCHED' ? 'text-emerald-600' : st === 'UNMATCHED' ? 'text-amber-600' : 'text-red-600';
     document.getElementById('avResult').innerHTML = card('照会結果', `
@@ -2242,7 +2245,7 @@ async function doAcctVerify() {
         <div><div class="text-[10px] text-gray-400">結果</div><div class="text-sm font-semibold ${matchCls}">${st}</div></div>
         <div><div class="text-[10px] text-gray-400">一致スコア</div><div class="text-sm">${r.match_score !== undefined ? (r.match_score * 100).toFixed(0) + '%' : '-'}</div></div>
       </div>
-      ${r.registered_name ? `<div class="mt-3 text-xs text-gray-500">登録名義: <span class="font-medium">${r.registered_name}</span></div>` : ''}
+      ${r.target_account_name ? `<div class="mt-3 text-xs text-gray-500">登録名義: <span class="font-medium">${r.target_account_name}</span></div>` : ''}
       ${r.fraud_warning ? `<div class="mt-2 bg-red-50 border border-red-200 rounded p-2 text-xs text-red-600"><i class="fa-solid fa-shield-halved mr-1"></i> フロード警告あり</div>` : ''}
     `);
     toast('口座確認完了', 'success');
@@ -2251,21 +2254,20 @@ async function doAcctVerify() {
 async function doBatchVerify() {
   const text = document.getElementById('avBatch')?.value.trim();
   if (!text) { toast('口座情報を入力してください', 'error'); return; }
-  const items = text.split('\n').filter(l => l.trim()).map(l => { const [a, n] = l.split(','); return { account_id: a?.trim(), account_name: n?.trim(), verification_id: uuid() }; });
+  const items = text.split('\n').filter(l => l.trim()).map(l => { const [a, n] = l.split(','); const acctId = a?.trim(); return { target_account_id: acctId, target_bank_id: acctId?.slice(0, 3), name_to_verify: n?.trim() || undefined }; });
   try {
-    const r = await api('POST', '/api/account-verify/batch', { verifications: items, idempotency_key: uuid() });
-    const results = r.results || [];
+    const results = await api('POST', '/api/account-verify/batch', { batch_id: uuid(), items, idempotency_key: uuid() });
     document.getElementById('avResult').innerHTML = card(`一括照会結果 (${results.length}件)`, `
       <div class="overflow-x-auto"><table class="w-full text-sm"><thead><tr class="border-b border-gray-200 text-left">
         <th class="pb-2 text-xs text-gray-400 font-medium">口座番号</th>
         <th class="pb-2 text-xs text-gray-400 font-medium">照会名義</th>
         <th class="pb-2 text-xs text-gray-400 font-medium">結果</th>
-        <th class="pb-2 text-xs text-gray-400 font-medium">スコア</th>
-      </tr></thead><tbody class="divide-y divide-gray-100">${results.map(r => `<tr class="hover:bg-gray-50">
-        <td class="py-2 mono text-[11px]">${r.account_id||'-'}</td>
-        <td class="py-2 text-xs">${r.account_name||'-'}</td>
-        <td class="py-2">${badge(r.status||r.result||'-')}</td>
-        <td class="py-2 text-xs">${r.match_score !== undefined ? (r.match_score*100).toFixed(0)+'%' : '-'}</td>
+        <th class="pb-2 text-xs text-gray-400 font-medium">照会ID</th>
+      </tr></thead><tbody class="divide-y divide-gray-100">${results.map((r, i) => `<tr class="hover:bg-gray-50">
+        <td class="py-2 mono text-[11px]">${items[i]?.target_account_id||'-'}</td>
+        <td class="py-2 text-xs">${items[i]?.name_to_verify||'-'}</td>
+        <td class="py-2">${badge(r.status||'-')}</td>
+        <td class="py-2 mono text-[10px] text-gray-400">${r.verification_id||'-'}</td>
       </tr>`).join('')}</tbody></table></div>`);
     toast('一括照会完了', 'success');
   } catch(e) { toast('一括照会エラー: ' + e.message, 'error'); }

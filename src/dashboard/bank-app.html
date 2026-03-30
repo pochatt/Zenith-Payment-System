@@ -1514,7 +1514,8 @@ document.addEventListener('alpine:init', () => {
              proxy_value: this.regProxyValue,
              account_id: this.accountId,
              bank_id: this.bankId,
-             customer_name: this.customerName,
+             account_holder_name: this.customerName,
+             idempotency_key: 'PROXY-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
           }),
         });
         const r = await res.json();
@@ -1545,7 +1546,7 @@ document.addEventListener('alpine:init', () => {
         // Also set the transfer payee if in transfer tab
         if (r.account_id) {
           this.tf.payeeAccount = r.account_id;
-          this.tf.payeeName = r.name || r.customer_name || '';
+          this.tf.payeeName = r.account_holder_name || '';
         }
       } catch (e) {
         this.aliasError = '通信エラー: ' + e.message;
