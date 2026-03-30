@@ -101,14 +101,9 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
   }
 
   // 6. 支払人最終認可待ち（Standard固有）
-  // 本来は顧客が /authorize を叩く。ここではモックとして自動認可の準備状態に
-  // H_RESERVED → H_RESERVED の no-op UPDATE を削除（version の無意味なインクリメントを排除）
-
-  // 非同期で authorize キューに積む（モック: 30秒後に自動認可）
-  await env.QUEUE.send({
-    type: 'ZC_STATE_ADVANCE', payload: { txid, action: 'AUTO_AUTHORIZE' },
-    txid, attempt: 0, enqueued_at: now,
-  })
+  // 送金行（または顧客）が POST /api/transfers/:txid/authorize を呼び出すまで
+  // H_RESERVED 状態で待機する。
+  // 基本思想: ZC は決定主体ではなく状態の中継者。送金の最終認可は送金行に委ねる。
 }
 
 /**

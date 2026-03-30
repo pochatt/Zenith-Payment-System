@@ -68,7 +68,8 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     .all<{ htlc_id: string; txid: string }>()
 
   for (const htlc of expiredHtlcs.results) {
-    await cancelHtlc(htlc.htlc_id, htlc.txid, 'TIMELOCK_EXPIRED', db)
+    // env を渡して銀行側サスペンスの解放通知も行う（HTLC_LOCKED 時は reserve-funds が実行済み）
+    await cancelHtlc(htlc.htlc_id, htlc.txid, 'TIMELOCK_EXPIRED', db, env)
     swept++
   }
 

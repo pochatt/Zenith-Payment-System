@@ -488,50 +488,15 @@ export async function handleAddBank(req: Request, env: Env): Promise<Response> {
   ).first<{ bank_id: string }>()
   const nextCode = String(parseInt(maxBank?.bank_id ?? '000', 10) + 1).padStart(3, '0')
 
-  await db.batch([
-    db.prepare(
-      `INSERT INTO Participants (bank_id, bank_name, ingress_base_url, h_limit, h_used, is_active, registered_at)
-       VALUES (?, ?, ?, ?, 0, 1, ?)`
-    ).bind(nextCode, body.bank_name, `/bank/${nextCode}`, body.h_limit ?? 100000000, now),
-    // 別段預金口座を自動作成
-    db.prepare(
-      `INSERT INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
-       VALUES (?, ?, 'SYSTEM', '別段預金', 'SUSPENSE', 'NORMAL', ?)`
-    ).bind(`${nextCode}0000000`, nextCode, now),
-    // ZC清算勘定（日銀当座預金相当）を自動作成
-    db.prepare(
-      `INSERT INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
-       VALUES (?, ?, 'SYSTEM', 'ZC清算勘定', 'SETTLEMENT', 'NORMAL', ?)`
-    ).bind(`${nextCode}-ZCS`, nextCode, now),
-    // 現金（Cash）口座も自動作成
-    db.prepare(
-      `INSERT INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
-       VALUES (?, ?, 'SYSTEM', '現金', 'ASSET', 'NORMAL', ?)`
-    ).bind(`${nextCode}-CASH`, nextCode, now),
-    // 日銀預け金勘定（DNS清算後のBOJ当座預金移動を記録）
-    db.prepare(
-      `INSERT INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
-       VALUES (?, ?, 'BOJ', '日本銀行（預け金勘定）', 'BOJ', 'NORMAL', ?)`
-    ).bind(`${nextCode}-BOJ`, nextCode, now),
-    // 利率マスター
-    db.prepare(
-      `INSERT INTO InterestRates (rate_id, bank_id, account_type, annual_rate, effective_from)
-       VALUES (?, ?, 'SAVINGS', 0.001, ?)`
-    ).bind(`RATE-${nextCode}-SAVINGS`, nextCode, now.slice(0, 10)),
-  ])
+  // ZC 側: 参加行登録のみ（口座管理は銀行の責任）
+  await db.prepare(
+    `INSERT INTO Participants (bank_id, bank_name, ingress_base_url, h_limit, h_used, is_active, registered_at)
+     VALUES (?, ?, ?, ?, 0, 1, ?)`
+  ).bind(nextCode, body.bank_name, `/bank/${nextCode}`, body.h_limit ?? 100000000, now).run()
 
-  // BOJ 初期プレファンド（HIGH_VALUE RTGS用: 1000億円）
-  const today = now.slice(0, 10)
-  await db.batch([
-    db.prepare(
-      `INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
-       VALUES (?, ?, ?, -100000000000, 'CASH', ?, 'BOJ初期プレファンド', ?, ?)`
-    ).bind(`JNL-INIT-${nextCode}-BOJ`, nextCode, `${nextCode}-BOJ`, `INIT-${nextCode}-BOJ`, today, now),
-    db.prepare(
-      `INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
-       VALUES (?, ?, ?, 100000000000, 'CASH', ?, 'BOJ初期ZCS対当', ?, ?)`
-    ).bind(`JNL-INIT-${nextCode}-BOJZCS`, nextCode, `${nextCode}-ZCS`, `INIT-${nextCode}-BOJ`, today, now),
-  ])
+  // 銀行側: 口座・仕訳の初期化を銀行イングレス経由で依頼（基本思想: 金融機関が自身の口座管理に責任を持つ）
+  const { handleBankIngress } = await import('../bank/ingress')
+  await handleBankIngress(nextCode, 'initialize-bank', { request_id: `INIT-BANK-${nextCode}` }, env)
 
   return json(201, { result: 'BANK_CREATED', bank_id: nextCode, bank_name: body.bank_name })
 }
@@ -550,13 +515,14 @@ export async function handleDeleteBank(bankId: string, env: Env): Promise<Respon
     return jsonError(409, 'ACTIVE_TRANSACTIONS', `Bank ${bankId} has ${activeTx.cnt} active transactions`)
   }
 
+  // 銀行側: 口座・仕訳の削除を銀行イングレス経由で依頼（基本思想: 金融機関が自身の口座管理に責任を持つ）
+  const { handleBankIngress } = await import('../bank/ingress')
+  await handleBankIngress(bankId, 'cleanup-bank', {}, env)
+
+  // ZC 側: 参加行データのみ削除
   await db.batch([
-    db.prepare('DELETE FROM InterestRates WHERE bank_id=?').bind(bankId),
     db.prepare('DELETE FROM SuspenseDetails WHERE bank_id=?').bind(bankId),
-    db.prepare('DELETE FROM DailyBalances WHERE account_id LIKE ?').bind(`${bankId}%`),
-    db.prepare('DELETE FROM BankJournals WHERE bank_id=?').bind(bankId),
     db.prepare('DELETE FROM ZcRequests WHERE bank_id=?').bind(bankId),
-    db.prepare('DELETE FROM BankAccounts WHERE bank_id=?').bind(bankId),
     db.prepare('DELETE FROM Participants WHERE bank_id=?').bind(bankId),
   ])
 
