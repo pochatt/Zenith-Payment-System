@@ -133,15 +133,9 @@ export async function getAccountByHash(
 ): Promise<BankAccountRow | null> {
   const accountId = accountHash.startsWith('h:') ? accountHash.slice(2) : accountHash
 
-  const byId = await db
+  return db
     .prepare(`SELECT * FROM BankAccounts WHERE account_id=? AND bank_id=?`)
     .bind(accountId, bankId).first<BankAccountRow>()
-  if (byId) return byId
-
-  // フォールバック: bank の最初の NORMAL SAVINGS 口座
-  return db
-    .prepare(`SELECT * FROM BankAccounts WHERE bank_id=? AND status='NORMAL' AND account_type='SAVINGS' ORDER BY account_id LIMIT 1`)
-    .bind(bankId).first<BankAccountRow>()
 }
 
 // ---------------------------------------------------------------------------

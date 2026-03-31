@@ -209,20 +209,29 @@ export async function respondToApproval(
   if (!approval) return { ok: false, reason: 'NOT_FOUND' }
   if (approval.status !== 'PENDING') return { ok: false, reason: 'ALREADY_RESPONDED' }
 
-  // 期限切れ確認
-  if (new Date(approval.expires_at) <= new Date(now)) {
-    await db.prepare(
-      `UPDATE PaymentApprovalRequests SET status='TIMEOUT', updated_at=? WHERE approval_id=?`
-    ).bind(now, approvalId).run()
+  // 期限切れ確認と状態更新をアトミックに実行
+  // TIMEOUT: status='PENDING' かつ expires_at <= now の場合のみ更新
+  const timeoutResult = await db.prepare(
+    `UPDATE PaymentApprovalRequests SET status='TIMEOUT', updated_at=?
+     WHERE approval_id=? AND status='PENDING' AND expires_at <= ?`
+  ).bind(now, approvalId, now).run()
+
+  if (timeoutResult.meta.changes > 0) {
     return { ok: false, reason: 'EXPIRED' }
   }
 
+  // APPROVED/REJECTED: status='PENDING' かつ expires_at > now の場合のみ更新
   const newStatus = req.approved ? 'APPROVED' : 'REJECTED'
-  await db.prepare(
+  const respondResult = await db.prepare(
     `UPDATE PaymentApprovalRequests
      SET status=?, responded_at=?, updated_at=?
-     WHERE approval_id=?`
-  ).bind(newStatus, now, now, approvalId).run()
+     WHERE approval_id=? AND status='PENDING' AND expires_at > ?`
+  ).bind(newStatus, now, now, approvalId, now).run()
+
+  if (respondResult.meta.changes === 0) {
+    // 期限切れか他のリクエストが先に更新した
+    return { ok: false, reason: 'ALREADY_RESPONDED' }
+  }
 
   return { ok: true, txid: approval.txid }
 }

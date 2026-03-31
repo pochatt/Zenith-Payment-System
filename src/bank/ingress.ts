@@ -356,11 +356,6 @@ async function bankExecuteCredit(
       account = await getAccountByHash(bankId, tx.payee_account_hash, db)
     }
   }
-  if (!account) {
-    account = await db
-      .prepare(`SELECT * FROM BankAccounts WHERE bank_id=? AND account_type='SAVINGS' ORDER BY account_id LIMIT 1`)
-      .bind(bankId).first<BankAccountRow>()
-  }
 
   let isCustody = false
   let custodyReason = ''
