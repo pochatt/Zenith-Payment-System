@@ -76,10 +76,13 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     .bind(gtid)
     .all<GtidLegRow>()
 
-  // GT_PRECHECKED に遷移
-  await db.prepare(
+  // GT_PRECHECKED に遷移（CAS: 並行処理による二重実行を防ぐ）
+  const toPrechecked = await db.prepare(
     `UPDATE GtidTransactions SET state='GT_PRECHECKED', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_RECEIVED'`
   ).bind(now, gtid).run()
+
+  // changes=0 は他の Worker が先に遷移済み → 二重実行しない
+  if ((toPrechecked.meta.changes ?? 0) === 0) return
 
   // 各 leg の ready-check
   let allReady = true
@@ -164,6 +167,10 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   // PAYER / PAYEE 両ロールが揃っていない場合はキャンセル（不正な GTID 構成）
   if (!payerLeg || !payeeLeg) {
     console.error(`[gtid] GTID ${gtid} is missing PAYER or PAYEE leg — cancelling`)
+    // この時点で確保済みの H 予約を解放する（リーク防止）
+    for (const resId of hReservations.values()) {
+      await releaseH(resId, db)
+    }
     await db.prepare(
       `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=?`
     ).bind(now, gtid).run()
