@@ -237,7 +237,7 @@ export async function handleCreateAccount(req: Request, bankId: string, env: Env
   const accountId = generateAccountId(bankId, nextSeq)
 
   // 顧客IDを自動生成
-  const customerId = `C${String(Date.now()).slice(-6)}`
+  const customerId = `C${newUUID().replace(/-/g, '').slice(0, 12)}`
 
   await env.DB.prepare(
     `INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
@@ -368,7 +368,7 @@ export async function handleBatchCreateAccounts(req: Request, bankId: string, en
   for (const spec of body.accounts) {
     if (!spec.customer_name?.trim()) continue
     const accountType = allowed.includes(spec.account_type ?? '') ? (spec.account_type as string) : 'SAVINGS'
-    const customerId  = `C${Date.now().toString().slice(-5)}${nextSeq}`
+    const customerId  = `C${newUUID().replace(/-/g, '').slice(0, 12)}`
     const accountId   = generateAccountId(bankId, nextSeq)
 
     stmts.push(env.DB.prepare(
