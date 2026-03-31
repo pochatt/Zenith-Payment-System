@@ -103,7 +103,7 @@ export async function deliverNotification(
     amount: { value: notif.amount_value, currency: notif.amount_currency },
     payer_bank_id: notif.payer_bank_id,
     payer_name_masked: notif.payer_name_masked ?? '',
-    purpose: notif.purpose ?? '',
+    purpose: notif.purpose ?? null,
     edi_summary: notif.edi_summary ?? undefined,
   }
 

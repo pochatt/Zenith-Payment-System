@@ -442,13 +442,22 @@ async function bankExecuteCredit(
     : undefined
   const proof = await createProof(bankId, 'PAYEE_EXEC_PROOF', req.txid, req.amount.value, custodyDetail)
 
+  // RTP 取引の場合は請求元の description を摘要として使用する
+  const rtpRow = await db
+    .prepare(`SELECT description FROM RtpRequests WHERE linked_txid_new = ? LIMIT 1`)
+    .bind(req.txid)
+    .first<{ description: string | null }>()
+  const creditDescription = rtpRow?.description
+    ? `振込入金 ${rtpRow.description}`
+    : 'ZC着金 普通預金(+)'
+
   // 正常口座の場合は即時着金（別段 → 普通預金）
   if (!isCustody) {
     await insertJournalGroup(db, {
       bankId, txGroupId: `SETTLE-${req.txid}`,
       entries: [
         { accountId: suspenseAccountId(bankId), amount: -req.amount.value, txType: 'CREDIT', txid: req.txid, description: 'ZC着金 別段(-)' },
-        { accountId: account.account_id, amount: req.amount.value, txType: 'CREDIT', txid: req.txid, description: 'ZC着金 普通預金(+)' },
+        { accountId: account.account_id, amount: req.amount.value, txType: 'CREDIT', txid: req.txid, description: creditDescription },
       ],
       valueDate: nowISO().slice(0, 10),
     })
@@ -634,7 +643,7 @@ interface BankCreditNotifyIngressRequest {
   amount: { value: number; currency: string }
   payer_bank_id: string
   payer_name_masked: string
-  purpose: string
+  purpose: string | null
   edi_summary?: string
 }
 
@@ -770,7 +779,7 @@ async function bankCreditNotify(
         amount: req.amount.value,
         txType: 'CREDIT',
         txid: req.txid,
-        description: `入金通知 ${req.payer_bank_id}→${bankId} ${req.purpose}`,
+        description: req.purpose ? `入金通知 ${req.payer_bank_id}→${bankId} ${req.purpose}` : `入金通知 ${req.payer_bank_id}→${bankId}`,
       },
       {
         accountId: zcsAccountId,
