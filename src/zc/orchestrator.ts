@@ -481,19 +481,21 @@ export async function processQueueMessage(msg: QueueMessage, env: Env): Promise<
           await onPayeeExecConfirmed(p.txid, JSON.stringify(bankResp.bank_proof_ref), env)
         } else if (bankResp.result === 'PENDING_APPROVAL') {
           // 顧客承認待ち: SUSPENDED に遷移し CASE を起票
+          // ZC_BANK_CREDIT は onPayerExecConfirmed から投入されるため直前状態は PAYER_EXEC_CONFIRMED
           await suspendTx(p.txid, 'AWAITING_PAYEE_APPROVAL', env.DB)
           await writeFinalityLog(env.DB, {
             txid: p.txid, event_type: 'FilterPending',
-            state_from: 'DECIDED_TO_SETTLE', state_to: 'SUSPENDED',
+            state_from: 'PAYER_EXEC_CONFIRMED', state_to: 'SUSPENDED',
             payload_json: JSON.stringify({ approval_id: bankResp.approval_id }),
             txid_or_gtid: p.txid,
           })
         } else if (bankResp.result === 'FILTER_REJECTED') {
           // 着金フィルタで拒否: SUSPENDED に遷移（行員が手動解決）
+          // ZC_BANK_CREDIT は onPayerExecConfirmed から投入されるため直前状態は PAYER_EXEC_CONFIRMED
           await suspendTx(p.txid, 'PAYEE_FILTER_REJECTED', env.DB)
           await writeFinalityLog(env.DB, {
             txid: p.txid, event_type: 'FilterRejected',
-            state_from: 'DECIDED_TO_SETTLE', state_to: 'SUSPENDED',
+            state_from: 'PAYER_EXEC_CONFIRMED', state_to: 'SUSPENDED',
             payload_json: JSON.stringify({ filter_id: bankResp.filter_id, reason_code: bankResp.reason_code }),
             txid_or_gtid: p.txid,
           })
@@ -526,7 +528,29 @@ export async function processQueueMessage(msg: QueueMessage, env: Env): Promise<
         if (bankResp.result === 'OK') {
           await onPayeeExecConfirmed(p.txid, JSON.stringify(bankResp.bank_proof_ref), env)
         } else {
+          // 顧客承認後のクレジット再試行が失敗（口座凍結等）。
+          // 既に SUSPENDED 状態のため suspendTx（SUSPENDED→SUSPENDED は不正遷移）は使えない。
+          // reason_code を上書きして FinalityLog + Case に記録する。
           console.error(`[ZC_RESUME_CREDIT] retry failed: ${JSON.stringify(bankResp)}`)
+          const resumeFailReason = 'EXEC_CREDIT_FAILED_ON_RESUME'
+          await env.DB.prepare(
+            `UPDATE Transactions SET reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state='SUSPENDED'`
+          ).bind(resumeFailReason, nowISO(), p.txid).run()
+          await writeFinalityLog(env.DB, {
+            txid: p.txid, event_type: 'ResumeCreditFailed',
+            state_from: 'SUSPENDED', state_to: 'SUSPENDED',
+            payload_json: JSON.stringify({
+              reason_code: resumeFailReason,
+              bank_id: p.payee_bank_id,
+              bank_result: (bankResp as unknown as Record<string, unknown>).result,
+              bank_reason_code: (bankResp as unknown as Record<string, unknown>).reason_code,
+            }),
+            txid_or_gtid: p.txid,
+          })
+          await openCase(env.DB, {
+            related_txid: p.txid, reason_code: resumeFailReason,
+            opened_by: 'ZC', description: `Resume credit failed after payee approval: ${JSON.stringify(bankResp)}`,
+          })
         }
         break
       }
