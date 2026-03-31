@@ -90,12 +90,12 @@ export async function handleGetAccountTransactions(req: Request, bankId: string,
   if (searchDateFrom) { jqlConds.push(`value_date >= ?`);    jqlParams.push(searchDateFrom) }
   if (searchDateTo)   { jqlConds.push(`value_date <= ?`);    jqlParams.push(searchDateTo) }
   jqlParams.push(limit)
-  const jql = `SELECT journal_id, amount, tx_type, txid, value_date, created_at FROM BankJournals WHERE ${jqlConds.join(' AND ')} ORDER BY created_at DESC LIMIT ?`
+  const jql = `SELECT journal_id, amount, tx_type, txid, description, value_date, created_at FROM BankJournals WHERE ${jqlConds.join(' AND ')} ORDER BY created_at DESC LIMIT ?`
 
   const journals = await env.DB
     .prepare(jql)
     .bind(...jqlParams)
-    .all<{ journal_id: string; amount: number; tx_type: string; txid: string | null; value_date: string; created_at: string }>()
+    .all<{ journal_id: string; amount: number; tx_type: string; txid: string | null; description: string | null; value_date: string; created_at: string }>()
 
   // txid → Transactions（送金人・受取人情報）をバッチ照会
   const txids = [...new Set(journals.results.map(j => j.txid).filter((t): t is string => !!t))]
@@ -136,6 +136,7 @@ export async function handleGetAccountTransactions(req: Request, bankId: string,
     }
     return {
       journal_id: j.journal_id, amount: j.amount, label, counterparty,
+      description: j.description ?? null,
       value_date: j.value_date, created_at: j.created_at,
       txid: j.txid ?? null,
       tx_state: txInfo?.state ?? null,

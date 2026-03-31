@@ -257,8 +257,8 @@ export async function respondToRtp(
       INSERT INTO Transactions
         (txid, state, lane, amount_value, amount_currency,
          payer_bank_id, payer_account_hash, payee_bank_id, payee_account_hash,
-         idempotency_key, version, created_at, updated_at)
-      VALUES (?, 'RECEIVED', 'RTP', ?, 'JPY', ?, ?, ?, ?, ?, 0, ?, ?)
+         purpose, idempotency_key, version, created_at, updated_at)
+      VALUES (?, 'RECEIVED', 'RTP', ?, 'JPY', ?, ?, ?, ?, 'P2P', ?, 0, ?, ?)
     `).bind(
       linkedTxid,
       rtp.amount_value,
@@ -316,7 +316,7 @@ export async function getRtpStatus(
 
   if (rawStatus === 'CREATED' || rawStatus === 'NOTIFIED' || rawStatus === 'ACCEPTED'
       || rawStatus === 'TX_CREATED' || rawStatus === 'COMPLETED'
-      || rawStatus === 'REJECTED' || rawStatus === 'EXPIRED') {
+      || rawStatus === 'REJECTED' || rawStatus === 'DECLINED' || rawStatus === 'EXPIRED') {
     status = rawStatus as RtpFullStatus
   } else {
     switch (row.state) {

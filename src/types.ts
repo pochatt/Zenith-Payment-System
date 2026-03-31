@@ -1542,6 +1542,7 @@ export type RtpFullStatus =
   | 'TX_CREATED'
   | 'COMPLETED'
   | 'REJECTED'
+  | 'DECLINED'
   | 'EXPIRED'
 
 export interface RtpRespondRequest {

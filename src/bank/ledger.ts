@@ -106,8 +106,8 @@ export async function applyDailyInterest(
     await insertJournalGroup(db, {
       bankId, txGroupId: `INT-${snapshotDate}-${acc.account_id}`,
       entries: [
-        { accountId: acc.account_id, amount: interest, txType: 'INTEREST', description: `Daily interest ${snapshotDate}` },
-        { accountId: suspAcctId, amount: -interest, txType: 'INTEREST', description: `Interest credit offset` },
+        { accountId: acc.account_id, amount: interest, txType: 'INTEREST', description: `利息入金 ${snapshotDate}` },
+        { accountId: suspAcctId, amount: -interest, txType: 'INTEREST', description: `利息 相殺 ${snapshotDate}` },
       ],
       valueDate: snapshotDate,
     })
