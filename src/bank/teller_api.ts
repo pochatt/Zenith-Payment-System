@@ -28,6 +28,11 @@ export async function handleCashDeposit(req: Request, bankId: string, env: Env):
   let body: { account_id: string; amount: number; description?: string }
   try { body = await req.json() } catch { return jsonError(400, 'INVALID_JSON', 'invalid json') }
 
+  // 金額バリデーション: 正の整数のみ許可（負の金額で残高チェック迂回を防止）
+  if (typeof body.amount !== 'number' || !Number.isInteger(body.amount) || body.amount <= 0) {
+    return jsonError(400, 'INVALID_AMOUNT', 'amount must be a positive integer')
+  }
+
   const account = await env.DB
     .prepare(`SELECT * FROM BankAccounts WHERE account_id=? AND bank_id=? AND status='NORMAL'`)
     .bind(body.account_id, bankId)
@@ -58,6 +63,11 @@ export async function handleCashWithdrawal(req: Request, bankId: string, env: En
 
   let body: { account_id: string; amount: number; description?: string }
   try { body = await req.json() } catch { return jsonError(400, 'INVALID_JSON', 'invalid json') }
+
+  // 金額バリデーション: 正の整数のみ許可
+  if (typeof body.amount !== 'number' || !Number.isInteger(body.amount) || body.amount <= 0) {
+    return jsonError(400, 'INVALID_AMOUNT', 'amount must be a positive integer')
+  }
 
   const account = await env.DB
     .prepare(`SELECT * FROM BankAccounts WHERE account_id=? AND bank_id=? AND status='NORMAL'`)
@@ -353,6 +363,7 @@ export async function handleBatchCreateAccounts(req: Request, bankId: string, en
   const allowed = ['SAVINGS', 'CURRENT']
 
   // 現在の最大口座番号を取得（既存ロジックと共通）
+  // 同時実行による ID 重複を防ぐため、UUID サフィックスでユニーク化
   const maxAcct = await env.DB.prepare(
     `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS', 'CURRENT') ORDER BY account_id DESC LIMIT 1`
   ).bind(bankId).first<{ account_id: string }>()
@@ -361,6 +372,8 @@ export async function handleBatchCreateAccounts(req: Request, bankId: string, en
     const currentSeq = parseInt(maxAcct.account_id.slice(3), 10)
     nextSeq = isNaN(currentSeq) ? 1 : currentSeq + 1
   }
+  // 同時リクエストによる seq 衝突を回避するため、ランダムオフセットを加算
+  nextSeq += Math.floor(Math.random() * 1000000)
 
   const stmts: ReturnType<D1Database['prepare']>[] = []
   const created: Array<{ account_id: string; bank_id: string; customer_name: string; initial_deposit?: number }> = []

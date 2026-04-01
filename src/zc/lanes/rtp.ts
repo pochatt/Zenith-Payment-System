@@ -257,8 +257,8 @@ export async function respondToRtp(
       INSERT INTO Transactions
         (txid, state, lane, amount_value, amount_currency,
          payer_bank_id, payer_account_hash, payee_bank_id, payee_account_hash,
-         purpose, idempotency_key, version, created_at, updated_at)
-      VALUES (?, 'RECEIVED', 'RTP', ?, 'JPY', ?, ?, ?, ?, 'P2P', ?, 0, ?, ?)
+         purpose, idempotency_key, schema_version, version, created_at, updated_at)
+      VALUES (?, 'RECEIVED', 'RTP', ?, 'JPY', ?, ?, ?, ?, 'P2P', ?, '1.0', 0, ?, ?)
     `).bind(
       linkedTxid,
       rtp.amount_value,

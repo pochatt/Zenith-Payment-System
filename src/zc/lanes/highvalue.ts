@@ -36,6 +36,10 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
 
   // 1. PRECHECKED
   await db.prepare(`UPDATE Transactions SET state='PRECHECKED', updated_at=?, version=version+1 WHERE txid=? AND state='RECEIVED'`).bind(now, txid).run()
+  await writeFinalityLog(db, {
+    txid, event_type: 'PreCheckPassed', state_from: 'RECEIVED', state_to: 'PRECHECKED',
+    payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
+  })
 
   // 2. AML Authority Check
   // キュー再試行で同一 request_id を保証

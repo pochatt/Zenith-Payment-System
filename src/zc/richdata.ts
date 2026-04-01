@@ -20,7 +20,8 @@ export async function storeRichData(
 ): Promise<RichDataStoreRow> {
   const dataRef = crypto.randomUUID()
   const now = new Date().toISOString()
-  const retentionDays = 2555 // 7年
+  const { RICHDATA_DEFAULT_RETENTION_DAYS } = await import('../shared/constants')
+  const retentionDays = RICHDATA_DEFAULT_RETENTION_DAYS
 
   // Compute expiry
   const expiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000).toISOString()

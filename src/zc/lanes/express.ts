@@ -144,14 +144,20 @@ async function cancelTx(txid: string, reasonCode: string, db: D1Database): Promi
   const txRow = await db
     .prepare(`SELECT h_reservation_id, state FROM Transactions WHERE txid = ?`)
     .bind(txid).first<{ h_reservation_id: string | null; state: string }>()
-  if (txRow?.h_reservation_id) {
+  if (!txRow) return
+  // state guard: キャンセル可能な状態でのみ実行（DECIDED_TO_SETTLE以降への上書き防止）
+  const cancelableStates = ['RECEIVED', 'PRECHECKED', 'PRECHECKED_SUSPENDED', 'H_RESERVED']
+  if (!cancelableStates.includes(txRow.state)) return
+  if (txRow.h_reservation_id) {
     await releaseH(txRow.h_reservation_id, db)
   }
-  await db.prepare(
-    `UPDATE Transactions SET state = 'DECIDED_CANCEL', reason_code = ?, updated_at = ?, version = version + 1 WHERE txid = ?`
+  const updated = await db.prepare(
+    `UPDATE Transactions SET state = 'DECIDED_CANCEL', reason_code = ?, updated_at = ?, version = version + 1
+     WHERE txid = ? AND state IN ('RECEIVED','PRECHECKED','PRECHECKED_SUSPENDED','H_RESERVED')`
   ).bind(reasonCode, now, txid).run()
+  if ((updated.meta.changes ?? 0) === 0) return
   await writeFinalityLog(db, {
-    txid, event_type: 'DecidedCancel', state_from: txRow?.state ?? null, state_to: 'DECIDED_CANCEL',
+    txid, event_type: 'DecidedCancel', state_from: txRow.state, state_to: 'DECIDED_CANCEL',
     payload_json: JSON.stringify({ reason_code: reasonCode }), txid_or_gtid: txid,
   })
   // DECIDED_CANCEL → CANCELLED

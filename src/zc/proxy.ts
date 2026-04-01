@@ -52,6 +52,11 @@ export async function registerProxy(
     ).run()
   }
 
+  // 更新の場合は DB から正しい registered_at を取得する
+  const saved = await db.prepare(
+    `SELECT registered_at FROM ProxyDirectory WHERE proxy_id = ?`
+  ).bind(proxyId).first<{ registered_at: string }>()
+
   return {
     proxy_id: proxyId,
     proxy_type: req.proxy_type,
@@ -60,7 +65,7 @@ export async function registerProxy(
     account_id: req.account_id,
     account_holder_name: req.account_holder_name,
     is_active: 1,
-    registered_at: existing ? now : now, // registered_at stays original on update, but we reconstruct from DB below
+    registered_at: saved?.registered_at ?? now,
     updated_at: now,
   }
 }

@@ -160,11 +160,13 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   })
 
   // 各 leg 用の Transactions レコードを作成し、Execution をキューに投入
-  // PAYER leg を先に見つけてから PAYEE の payee_bank_id を設定
-  const payerLeg = legs.results.find(l => l.role === 'PAYER')
-  const payeeLeg = legs.results.find(l => l.role === 'PAYEE')
+  // 全 PAYER/PAYEE leg を収集（複数の PAYER/PAYEE をサポート）
+  const payerLegs = legs.results.filter(l => l.role === 'PAYER')
+  const payeeLegs = legs.results.filter(l => l.role === 'PAYEE')
 
   // PAYER / PAYEE 両ロールが揃っていない場合はキャンセル（不正な GTID 構成）
+  const payerLeg = payerLegs[0]
+  const payeeLeg = payeeLegs[0]
   if (!payerLeg || !payeeLeg) {
     console.error(`[gtid] GTID ${gtid} is missing PAYER or PAYEE leg — cancelling`)
     // この時点で確保済みの H 予約を解放する（リーク防止）
@@ -184,7 +186,16 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
 
   for (const leg of legs.results) {
     const txid = `TX-GT-${leg.leg_id}`
-    const counterpartyBankId = leg.role === 'PAYER' ? payeeLeg.bank_id : payerLeg.bank_id
+    // 複数 PAYER/PAYEE の場合: 同じロールの leg 同士を index で対応付け
+    // 対応する相手方が存在しない場合はデフォルトで最初の leg を使用
+    let counterpartyBankId: string
+    if (leg.role === 'PAYER') {
+      const idx = payerLegs.indexOf(leg)
+      counterpartyBankId = (payeeLegs[idx] ?? payeeLeg).bank_id
+    } else {
+      const idx = payeeLegs.indexOf(leg)
+      counterpartyBankId = (payerLegs[idx] ?? payerLeg).bank_id
+    }
     const hReservationId = hReservations.get(leg.leg_id) ?? null
 
     // Transactions レコードを作成（execute-debit/credit が参照する）
@@ -197,9 +208,9 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     ).bind(
       txid, leg.amount_value,
       leg.role === 'PAYER' ? leg.bank_id : counterpartyBankId,
-      leg.role === 'PAYER' ? leg.account_hash : payerLeg.account_hash,
+      leg.role === 'PAYER' ? leg.account_hash : (leg.role === 'PAYEE' ? (payerLegs[payeeLegs.indexOf(leg)] ?? payerLeg).account_hash : payerLeg.account_hash),
       leg.role === 'PAYEE' ? leg.bank_id : counterpartyBankId,
-      leg.role === 'PAYEE' ? leg.account_hash : payeeLeg.account_hash,
+      leg.role === 'PAYEE' ? leg.account_hash : (leg.role === 'PAYER' ? (payeeLegs[payerLegs.indexOf(leg)] ?? payeeLeg).account_hash : payeeLeg.account_hash),
       `GTID-${gtid}-${leg.leg_id}`, decisionProofRef, hReservationId, dnsCycleId, now, now,
     ).run()
 
