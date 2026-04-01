@@ -48,6 +48,36 @@ export async function handleGetTransaction(txid: string, env: Env): Promise<Resp
     : tx.state === 'DECIDED_CANCEL' ? 'CONTACT_PAYER_BANK'
     : 'WAIT'
 
+  // ---------------------------------------------------------------------------
+  // 照会メタ情報（仕様書: 運用設計 > 照会メタ情報）
+  // ---------------------------------------------------------------------------
+
+  // watermark: この取引に関する FinalityLog の最新 event_seq
+  // 窓口が「どこまで反映された情報か」を確認できる
+  const watermarkRow = await db
+    .prepare(`SELECT MAX(event_seq) AS wm FROM FinalityLog WHERE txid = ?`)
+    .bind(txid)
+    .first<{ wm: number | null }>()
+  const watermark = watermarkRow?.wm ?? 0
+
+  // next_retry_at: 次回照会推奨時刻（状態に応じて算出）
+  // 終端状態は null（もう変わらない）、中間状態は 5-30秒後を推奨
+  const now = new Date()
+  let nextRetryAt: string | null = null
+  if (['SETTLED', 'CANCELLED', 'FAILED_EXECUTION'].includes(tx.state)) {
+    nextRetryAt = null  // terminal — no need to re-query
+  } else if (['DECIDED_TO_SETTLE', 'PAYER_EXEC_CONFIRMED', 'PAYEE_EXEC_CONFIRMED'].includes(tx.state)) {
+    nextRetryAt = new Date(now.getTime() + 5_000).toISOString()   // 5s — active execution
+  } else if (['SUSPENDED', 'PRECHECKED_SUSPENDED'].includes(tx.state)) {
+    nextRetryAt = new Date(now.getTime() + 30_000).toISOString()  // 30s — manual review
+  } else {
+    nextRetryAt = new Date(now.getTime() + 10_000).toISOString()  // 10s — default
+  }
+
+  // freshness_level: GREEN=最新、YELLOW=少し古い、RED=大幅に遅延
+  const updatedAgo = now.getTime() - new Date(tx.updated_at).getTime()
+  const freshness = updatedAgo < 10_000 ? 'GREEN' : updatedAgo < 60_000 ? 'YELLOW' : 'RED'
+
   const resp: QueryResponse = {
     txid: tx.txid,
     state: tx.state,
@@ -64,8 +94,10 @@ export async function handleGetTransaction(txid: string, env: Env): Promise<Resp
     },
     case: caseInfo ? { case_id: caseInfo.case_id, status: caseInfo.state } : undefined,
     as_of: nowISO(),
-    freshness_level: 'GREEN',
+    watermark,
+    freshness_level: freshness,
     next_action_hint: nextHint,
+    next_retry_at: nextRetryAt,
   }
 
   // UI convenience fields (not part of formal QueryResponse spec)

@@ -181,6 +181,10 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       // STANDARD と同じフローで精算処理を進める
       await env.QUEUE.send({ type: 'ZC_STATE_ADVANCE', payload: { txid: body.txid, action: 'ADVANCE_STANDARD' }, txid: body.txid, attempt: 0, enqueued_at: now })
       break
+    case 'HTLC':
+      // HTLC は専用エンドポイント POST /api/htlc/create を使用する
+      await completeIdempotency(idempKey, { result: 'REJECTED', reason_code: 'USE_HTLC_ENDPOINT' }, db)
+      return jsonError(422, 'USE_HTLC_ENDPOINT', 'HTLC lane must use POST /api/htlc/create endpoint')
     default:
       result = { result: 'INGRESS_ACCEPTED', txid: body.txid, state: 'RECEIVED' }
   }
