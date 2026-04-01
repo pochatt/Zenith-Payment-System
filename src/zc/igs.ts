@@ -261,7 +261,7 @@ export async function retryFailedIgs(db: D1Database, env: Env): Promise<void> {
   const rows = await db
     .prepare(
       `SELECT * FROM IgsRequests
-       WHERE status IN ('FAILED', 'HOLD', 'REQUESTED') AND retry_count < 3`,
+       WHERE status IN ('FAILED', 'HOLD') AND retry_count < 3`,
     )
     .all<IgsRequestRow>()
 

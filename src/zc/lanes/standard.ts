@@ -175,9 +175,11 @@ async function cancelAndLog(db: D1Database, txid: string, fromState: string, rea
   if (txForH?.h_reservation_id) {
     await releaseH(txForH.h_reservation_id, db)
   }
-  await db.prepare(
-    `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=?`
-  ).bind(reasonCode, now, txid).run()
+  // state guard: fromState で指定された状態からのみ遷移可能（並行処理による上書き防止）
+  const updated = await db.prepare(
+    `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state=?`
+  ).bind(reasonCode, now, txid, fromState).run()
+  if ((updated.meta.changes ?? 0) === 0) return
   await writeFinalityLog(db, {
     txid, event_type: 'DecidedCancel', state_from: fromState, state_to: 'DECIDED_CANCEL',
     payload_json: JSON.stringify({ reason_code: reasonCode }), txid_or_gtid: txid,

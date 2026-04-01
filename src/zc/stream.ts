@@ -139,6 +139,7 @@ export async function markEventsDelivered(db: D1Database, eventIds: string[]): P
  */
 export function createSseResponse(db: D1Database, targetBankId: string): Response {
   let lastEventId: string | undefined
+  let timerId: ReturnType<typeof setInterval> | null = null
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -169,18 +170,18 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
             controller.enqueue(new TextEncoder().encode(errMsg))
           } catch {
             // コントローラが既にクローズされている場合は無視
+            // ストリーム破棄 → タイマー停止
+            if (timerId) { clearInterval(timerId); timerId = null }
           }
         }
       }
 
       // 2 秒ごとのポーリング（Workers のイベントループ内で動作）
-      // Cloudflare Workers では setInterval が使用可能
-      const timer = setInterval(poll, 2000)
-
-      // ストリームが閉じられたらタイマーを停止
-      // cancel は ReadableStreamController では直接コールバックを持たないため、
-      // Workers の接続切断時に自動的にガベージコレクトされる
-      void timer
+      timerId = setInterval(poll, 2000)
+    },
+    cancel() {
+      // クライアント切断時にタイマーを停止（リソースリーク＆誤配信済みマーク防止）
+      if (timerId) { clearInterval(timerId); timerId = null }
     },
   })
 

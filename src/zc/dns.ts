@@ -66,7 +66,7 @@ export async function kickDns(businessDate: string, env: Env): Promise<{
     `UPDATE Transactions SET dns_cycle_id = ?
      WHERE dns_cycle_id IS NULL
        AND lane != 'HIGH_VALUE'
-       AND state IN ('DECIDED_TO_SETTLE','PAYER_EXEC_CONFIRMED','PAYEE_EXEC_CONFIRMED','SETTLED')`
+       AND state IN ('DECIDED_TO_SETTLE','PAYER_EXEC_CONFIRMED','PAYEE_EXEC_CONFIRMED')`
   ).bind(cycle.cycle_id).run()
 
   // ネットポジション計算（割当後の全TX対象）
@@ -326,8 +326,9 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
 // ---------------------------------------------------------------------------
 export async function getOrCreateDnsCycle(db: D1Database, now: string): Promise<string> {
   const today = now.slice(0, 10)
+  // OPEN サイクルのみ返す（KICKED は既にネッティング計算済みのため新規TX割当不可）
   const existing = await db
-    .prepare(`SELECT cycle_id FROM DnsCycles WHERE business_date = ? AND state IN ('OPEN','KICKED')`)
+    .prepare(`SELECT cycle_id FROM DnsCycles WHERE business_date = ? AND state = 'OPEN'`)
     .bind(today)
     .first<{ cycle_id: string }>()
   if (existing) return existing.cycle_id

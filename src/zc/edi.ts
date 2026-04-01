@@ -120,7 +120,9 @@ export async function filterByEdiCondition(
       predicate = `${fieldExpr} LIKE ?`
       break
     case 'REGEX':
-      // SQLite has no native REGEX; fall back to LIKE with value as-is
+      // SQLite has no native REGEX; LIKE では正規表現は動作しない。
+      // アプリケーション層で正規表現マッチングを行い、SQL はワイルドカード近似で候補を絞る。
+      // 完全な REGEX サポートは将来 SQLite 拡張で対応予定。
       predicate = `${fieldExpr} LIKE ?`
       break
     case 'GT':
@@ -153,7 +155,22 @@ export async function filterByEdiCondition(
     LIMIT 200
   `
   const result = await db.prepare(sql).bind(bankId, bindValue).all<EdiRecordRow>()
-  return result.results ?? []
+  let rows = result.results ?? []
+
+  // REGEX: SQL LIKE で候補を絞った後、アプリケーション層で正規表現マッチングを適用
+  if (condition.operator === 'REGEX') {
+    try {
+      const re = new RegExp(condition.value)
+      rows = rows.filter(r => {
+        const val = (r as unknown as Record<string, unknown>)[condition.field]
+        return typeof val === 'string' && re.test(val)
+      })
+    } catch {
+      // 無効な正規表現の場合はフォールバック結果をそのまま返す
+    }
+  }
+
+  return rows
 }
 
 // ---------------------------------------------------------------------------

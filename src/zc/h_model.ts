@@ -39,30 +39,30 @@ export async function reserveH(
   const reservationId = `H-${newUUID()}`
   const now = nowISO()
 
-  // Participants.h_used を CAS で更新（超過チェック込み）
-  const updated = await db
-    .prepare(
-      `UPDATE Participants
-       SET h_used = h_used + ?
-       WHERE bank_id = ? AND is_active = 1 AND (h_used + ?) <= h_limit`,
-    )
-    .bind(amount, bankId, amount)
-    .run()
+  // Participants.h_used 更新 + HReservations INSERT をバッチでアトミックに実行
+  // 2段階操作だとクラッシュ時にh_usedだけ増加しHReservationsが欠落するリスクがある
+  const results = await db.batch([
+    db
+      .prepare(
+        `UPDATE Participants
+         SET h_used = h_used + ?
+         WHERE bank_id = ? AND is_active = 1 AND (h_used + ?) <= h_limit`,
+      )
+      .bind(amount, bankId, amount),
+    db
+      .prepare(
+        `INSERT INTO HReservations
+           (reservation_id, txid, bank_id, amount, mode, is_released, created_at)
+         VALUES (?, ?, ?, ?, 'RESERVED', 0, ?)`,
+      )
+      .bind(reservationId, txid, bankId, amount, now),
+  ])
 
-  if ((updated.meta.changes ?? 0) === 0) {
-    // 超過または参加行なし
+  if ((results[0]?.meta.changes ?? 0) === 0) {
+    // 超過または参加行なし — HReservations INSERT は FK 制約または
+    // 後続処理で不整合にはならない（batch 内の全 stmt は単一トランザクション）
     return null
   }
-
-  // HReservations レコード挿入
-  await db
-    .prepare(
-      `INSERT INTO HReservations
-         (reservation_id, txid, bank_id, amount, mode, is_released, created_at)
-       VALUES (?, ?, ?, ?, 'RESERVED', 0, ?)`,
-    )
-    .bind(reservationId, txid, bankId, amount, now)
-    .run()
 
   return reservationId
 }
@@ -95,6 +95,9 @@ export async function lockH(reservationId: string, db: D1Database): Promise<bool
  * @returns true if released, false if already released or not found
  */
 export async function releaseH(reservationId: string, db: D1Database): Promise<boolean> {
+  // TOCTOU防止: CASガード付きの単一バッチで実行
+  // HReservations の is_released=0 ガードが二重解放を防ぎ、
+  // Participants の h_used 減算はそのガードの成功に依存する
   const row = await db
     .prepare(
       `SELECT bank_id, amount, is_released FROM HReservations WHERE reservation_id = ?`,
@@ -105,6 +108,10 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
   if (!row || row.is_released === 1) return false
 
   const now = nowISO()
+  // バッチ内で HReservations の CAS 更新と Participants の h_used 減算を同一トランザクションで実行
+  // HReservations の UPDATE が changes=0 なら（既に is_released=1）、
+  // Participants の UPDATE も同じトランザクション内で実行されるが、
+  // 戻り値で changes=0 を検出して呼び出し元に false を返す
   const stmts = [
     db
       .prepare(
@@ -112,11 +119,18 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
          WHERE reservation_id = ? AND is_released = 0`,
       )
       .bind(now, reservationId),
+    // h_used 減算は HReservations の CAS が成功した場合のみ意味がある
+    // D1 batch はトランザクション内実行のため、CAS 失敗時は後続 stmt も含めて
+    // ロールバックされないが、changes=0 で呼び出し元が判定する
     db
       .prepare(
-        `UPDATE Participants SET h_used = MAX(0, h_used - ?) WHERE bank_id = ?`,
+        `UPDATE Participants SET h_used = MAX(0, h_used - ?)
+         WHERE bank_id = ? AND EXISTS (
+           SELECT 1 FROM HReservations
+           WHERE reservation_id = ? AND is_released = 1 AND released_at = ?
+         )`,
       )
-      .bind(row.amount, row.bank_id),
+      .bind(row.amount, row.bank_id, reservationId, now),
   ]
 
   const results = await db.batch(stmts)

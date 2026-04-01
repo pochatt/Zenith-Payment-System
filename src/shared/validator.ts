@@ -63,7 +63,7 @@ export function validatePaymentInitiated(
     return fail('MISSING_IDEMPOTENCY_KEY', 'idempotency_key required')
   if (!req.lane || !VALID_LANES.includes(req.lane))
     return fail('INVALID_LANE', `lane must be one of ${VALID_LANES.join('|')}`)
-  if (!req.amount || typeof req.amount.value !== 'number' || req.amount.value <= 0)
+  if (!req.amount || typeof req.amount.value !== 'number' || req.amount.value <= 0 || !Number.isInteger(req.amount.value))
     return fail('INVALID_AMOUNT', 'amount.value must be positive integer')
   if (!req.amount.currency || req.amount.currency !== 'JPY')
     return fail('INVALID_CURRENCY', 'amount.currency must be JPY')

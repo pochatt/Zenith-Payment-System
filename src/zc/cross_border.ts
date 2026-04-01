@@ -19,19 +19,8 @@ import { buildPacs008 } from '../shared/iso20022'
 // 定数
 // ---------------------------------------------------------------------------
 
-/** モック固定為替レート（外貨 → JPY） */
-const MOCK_EXCHANGE_RATES: Record<string, number> = {
-  JPY: 1,
-  USD: 150,
-  EUR: 165,
-  GBP: 195,
-  CNY: 21,
-  HKD: 19,
-  SGD: 111,
-  AUD: 97,
-  CAD: 110,
-  CHF: 168,
-}
+/** モック固定為替レート（外貨 → JPY）: constants.ts を正として統一使用 */
+import { EXCHANGE_RATE_TO_JPY as MOCK_EXCHANGE_RATES } from '../shared/constants'
 
 // ---------------------------------------------------------------------------
 // クロスボーダー送金開始

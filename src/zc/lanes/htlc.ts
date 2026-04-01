@@ -275,9 +275,10 @@ export async function cancelHtlc(
       }
     }
   }
+  // state guard: DECIDED_TO_SETTLE以降の状態を上書きしないようガードする
   await db.batch([
-    db.prepare(`UPDATE HtlcContracts SET state='DECIDED_CANCEL', version=version+1, updated_at=? WHERE htlc_id=?`).bind(now, htlcId),
-    db.prepare(`UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=?`).bind(reasonCode, now, txid),
+    db.prepare(`UPDATE HtlcContracts SET state='DECIDED_CANCEL', version=version+1, updated_at=? WHERE htlc_id=? AND state NOT IN ('DECIDED_TO_SETTLE','SETTLED')`).bind(now, htlcId),
+    db.prepare(`UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state NOT IN ('DECIDED_TO_SETTLE','PAYER_EXEC_CONFIRMED','PAYEE_EXEC_CONFIRMED','SETTLED')`).bind(reasonCode, now, txid),
   ])
   await writeFinalityLog(db, {
     txid, event_type: 'HtlcCancelled', state_from: null, state_to: 'DECIDED_CANCEL',

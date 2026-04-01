@@ -248,11 +248,31 @@ export async function handleGetTransferStatus(req: Request, bankId: string, txid
   const headers = getHeaders(req)
   if (!headers) return jsonError(401, 'UNAUTHORIZED', 'headers required')
 
+  // 顧客認可チェック: payer_account_hash が顧客の口座に一致するか検証
+  // （水平権限昇格防止: 同一銀行の別顧客がtxidを推測して閲覧できないようにする）
+  const customerId = headers.customerId
   const tx = await env.DB
-    .prepare(`SELECT txid, state, reason_code, amount_value, amount_currency, created_at, updated_at FROM Transactions WHERE txid=? AND payer_bank_id=?`)
+    .prepare(`SELECT txid, state, reason_code, amount_value, amount_currency, payer_account_hash, created_at, updated_at FROM Transactions WHERE txid=? AND payer_bank_id=?`)
     .bind(txid, bankId)
-    .first()
+    .first<{ txid: string; state: string; reason_code: string | null; amount_value: number; amount_currency: string; payer_account_hash: string | null; created_at: string; updated_at: string }>()
 
   if (!tx) return jsonError(404, 'NOT_FOUND', 'transfer not found')
-  return json(200, tx)
+
+  // 顧客IDから口座を検索し、payer_account_hash と突合
+  if (customerId) {
+    const customerAccounts = await env.DB
+      .prepare(`SELECT account_id FROM BankAccounts WHERE bank_id=? AND customer_id=?`)
+      .bind(bankId, customerId)
+      .all<{ account_id: string }>()
+    const accountIds = customerAccounts.results.map(a => a.account_id)
+    const payerHash = tx.payer_account_hash ?? ''
+    // account_hash は "h:accountId" 形式または accountId そのもの
+    const payerAccountId = payerHash.startsWith('h:') ? payerHash.slice(2) : payerHash
+    if (accountIds.length > 0 && !accountIds.includes(payerAccountId)) {
+      return jsonError(403, 'FORBIDDEN', 'not authorized to view this transfer')
+    }
+  }
+
+  const { payer_account_hash: _omit, ...safeResult } = tx
+  return json(200, safeResult)
 }

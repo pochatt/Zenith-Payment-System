@@ -19,29 +19,7 @@ import type { FatfR16Data, FatfParty, FatfInstitution } from '../types'
 // 定数
 // ---------------------------------------------------------------------------
 
-/**
- * FATF R16 applicability threshold in JPY.
- * R16 applies to cross-border wire transfers >= USD 1,000 equivalent.
- * Using a fixed mock rate of USD/JPY = 150.
- */
-const FATF_THRESHOLD_JPY = 150_000
-
-/**
- * Fixed mock exchange rates to JPY.
- * A production system would query a live FX rate service.
- */
-const EXCHANGE_RATE_TO_JPY: Record<string, number> = {
-  JPY: 1,
-  USD: 150,
-  EUR: 162,
-  GBP: 189,
-  CNY: 21,
-  HKD: 19,
-  SGD: 111,
-  AUD: 97,
-  CAD: 110,
-  CHF: 168,
-}
+import { FATF_THRESHOLD_JPY, EXCHANGE_RATE_TO_JPY } from './constants'
 
 // ---------------------------------------------------------------------------
 // FATF R16 適用判定
@@ -355,7 +333,13 @@ export function createFatfDataSkeleton(params: {
 
 /** Validate ISO 3166-1 alpha-2 country code format (regex only in mock). */
 function isValidCountryCode(country: string): boolean {
+  // 大文字に正規化してから検証（小文字入力も受け入れるが正規化済みを前提とする）
   return /^[A-Z]{2}$/.test(country.toUpperCase())
+}
+
+/** Normalize a country code to uppercase ISO 3166-1 alpha-2 format. */
+export function normalizeCountryCode(country: string): string {
+  return country.toUpperCase()
 }
 
 /** Validate SWIFT BIC format: 4-char institution + 2-char country + 2-char location [+ 3-char branch]. */

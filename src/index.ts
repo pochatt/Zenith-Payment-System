@@ -138,6 +138,15 @@ export default {
       // ZC Core API: /api/...
       // -----------------------------------------------------------------------
       if (path.startsWith('/api/')) {
+        // API認証: X-Api-Key ヘッダーまたは Authorization: Bearer ヘッダーを検証
+        // モック環境では ZC_HMAC_SECRET を API キーとして使用
+        const apiKey = req.headers.get('X-Api-Key') ?? req.headers.get('Authorization')?.replace('Bearer ', '')
+        if (env.ZC_HMAC_SECRET && apiKey !== env.ZC_HMAC_SECRET) {
+          const authErr = jsonError(401, 'UNAUTHORIZED', 'Valid X-Api-Key or Authorization Bearer header required')
+          const newAuthResp = new Response(authErr.body, authErr)
+          for (const [k, v] of Object.entries(corsHeaders)) newAuthResp.headers.set(k, v)
+          return newAuthResp
+        }
         const resp = await handleZcApi(req, path, method, env)
         // Add CORS to response
         const newResp = new Response(resp.body, resp)

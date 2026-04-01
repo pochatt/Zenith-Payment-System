@@ -42,7 +42,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   const reservationId = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
   if (!reservationId) {
     await db.prepare(
-      `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code='H_LIMIT_EXCEEDED', updated_at=?, version=version+1 WHERE txid=?`
+      `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code='H_LIMIT_EXCEEDED', updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`
     ).bind(now, txid).run()
     await writeFinalityLog(db, {
       txid, event_type: 'DecidedCancel', state_from: 'PRECHECKED', state_to: 'DECIDED_CANCEL',
@@ -72,7 +72,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   if (reserveResult.result === 'ERROR') {
     await releaseH(reservationId, db)
     await db.prepare(
-      `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=?`
+      `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state='H_RESERVED'`
     ).bind(reserveResult.reason_code ?? 'RESERVE_FAILED', now, txid).run()
     await writeFinalityLog(db, {
       txid, event_type: 'DecidedCancel', state_from: 'H_RESERVED', state_to: 'DECIDED_CANCEL',

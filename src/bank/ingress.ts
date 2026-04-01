@@ -121,6 +121,18 @@ export async function handleBankIngressHttp(
 ): Promise<Response> {
   let body: unknown
   try { body = await req.json() } catch { return errorResp(400, 'INVALID_JSON') }
+
+  // HMAC署名検証: X-ZC-Signature ヘッダーを検証
+  // 内部ルーティング（同一Worker内）の場合は署名チェックをスキップ
+  const signature = req.headers.get('X-ZC-Signature')
+  if (signature && env.ZC_HMAC_SECRET) {
+    const { verifySignature } = await import('../shared/hmac')
+    const isValid = await verifySignature(body, signature, env.ZC_HMAC_SECRET)
+    if (!isValid) {
+      return errorResp(401, 'INVALID_SIGNATURE')
+    }
+  }
+
   const result = await handleBankIngress(bankId, command, body, env)
   return new Response(JSON.stringify(result), {
     status: 200,

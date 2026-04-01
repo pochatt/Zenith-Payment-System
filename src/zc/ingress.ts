@@ -61,7 +61,8 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
 
   // FATF R.16 validation for all cross-border lanes (not just HIGH_VALUE)
   if (body.is_cross_border === 1 || body.is_cross_border === true) {
-    const fatfValidation = validateFatfR16(body.fatf_data!)
+    if (!body.fatf_data) return jsonError(400, 'FATF_DATA_REQUIRED', 'fatf_data is required for cross-border transfers')
+    const fatfValidation = validateFatfR16(body.fatf_data)
     if (!fatfValidation.valid) return jsonError(400, 'FATF_VALIDATION_FAILED', fatfValidation.errors.join('; '))
   }
 
@@ -319,15 +320,8 @@ export async function handlePostCancel(req: Request, txid: string, env: Env): Pr
     return jsonError(409, 'INVALID_STATE', `Cannot cancel tx in state ${tx.state}`)
   }
 
-  // ① H解放・銀行側別段解放（状態変更より先に実行）
-  if (tx.h_reservation_id) {
-    await releaseH(tx.h_reservation_id, db)
-  }
-  await callBankReleaseReserve(tx.payer_bank_id, {
-    request_id: `CANCEL-${txid}`, txid, reservation_ref: tx.h_reservation_id ?? txid,
-  }, env).catch(e => console.error(`[cancel] release-reserve failed: ${e}`))
-
-  // ② 状態変更（CAS付き: 同時更新による TOCTOU を防止）
+  // ① 状態変更を先に実行（CAS付き: 同時更新による TOCTOU を防止）
+  // Decision/Execution分離原則: 状態遷移が確定してから副作用を実行する
   const updated = await db.prepare(
     `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1
      WHERE txid=? AND version=? AND state IN ('RECEIVED','PRECHECKED','PRECHECKED_SUSPENDED','H_RESERVED')`
@@ -335,6 +329,14 @@ export async function handlePostCancel(req: Request, txid: string, env: Env): Pr
   if ((updated.meta.changes ?? 0) === 0) {
     return jsonError(409, 'STATE_CONFLICT', `Cancel conflict: tx ${txid} was concurrently modified`)
   }
+
+  // ② CAS成功後にH解放・銀行側別段解放
+  if (tx.h_reservation_id) {
+    await releaseH(tx.h_reservation_id, db)
+  }
+  await callBankReleaseReserve(tx.payer_bank_id, {
+    request_id: `CANCEL-${txid}`, txid, reservation_ref: tx.h_reservation_id ?? txid,
+  }, env).catch(e => console.error(`[cancel] release-reserve failed: ${e}`))
 
   await writeFinalityLog(db, {
     txid, event_type: 'DecidedCancel', state_from: tx.state, state_to: 'DECIDED_CANCEL',
@@ -384,8 +386,11 @@ export async function handleSeed(env: Env): Promise<Response> {
     'EdiRecords', 'EventStream', 'IgsRequests', 'ProxyDirectory',
     'QrCodes', 'RichDataStore',
   ]
+  // テーブル名はハードコードリストのみ許可（SQL識別子インジェクション防止）
+  const ALLOWED_TABLES = new Set(deleteTargets)
   for (const t of deleteTargets) {
-    try { await db.prepare(`DELETE FROM ${t}`).run() } catch (e) {
+    if (!ALLOWED_TABLES.has(t) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) continue
+    try { await db.prepare(`DELETE FROM "${t}"`).run() } catch (e) {
       console.error(`[seed] DELETE FROM ${t} failed (table may not exist):`, e)
     }
   }

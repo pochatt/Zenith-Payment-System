@@ -88,7 +88,7 @@ const ALLOWED_TRANSITIONS: Record<TxState, TxState[]> = {
   FAILED_EXECUTION:      [],
   CANCELLED:             [],
   HTLC_LOCKED:           ['HTLC_FULFILL_REQUESTED', 'DECIDED_CANCEL'],
-  HTLC_FULFILL_REQUESTED: ['SETTLED', 'FAILED_EXECUTION'],
+  HTLC_FULFILL_REQUESTED: ['DECIDED_TO_SETTLE', 'SETTLED', 'FAILED_EXECUTION'],
 }
 
 /**
@@ -194,10 +194,15 @@ export async function onPayeeExecConfirmed(
     payload_json: JSON.stringify({ payee_bank_proof_ref: JSON.parse(bankProofRefJson) }), txid_or_gtid: txid,
   })
 
-  // SETTLED への遷移
-  await db.prepare(
-    `UPDATE Transactions SET state='SETTLED', updated_at=?, version=version+1 WHERE txid=? AND state='PAYEE_EXEC_CONFIRMED'`
-  ).bind(now, txid).run()
+  // SETTLED への遷移（CAS version guard 付き: 二重実行防止）
+  const txAfterPayee = await db.prepare(
+    `SELECT version FROM Transactions WHERE txid = ? AND state = 'PAYEE_EXEC_CONFIRMED'`
+  ).bind(txid).first<{ version: number }>()
+  if (!txAfterPayee) return
+  const settledResult = await db.prepare(
+    `UPDATE Transactions SET state='SETTLED', updated_at=?, version=version+1 WHERE txid=? AND state='PAYEE_EXEC_CONFIRMED' AND version=?`
+  ).bind(now, txid, txAfterPayee.version).run()
+  if ((settledResult.meta.changes ?? 0) === 0) return
   await writeFinalityLog(db, {
     txid, event_type: 'Settled', state_from: 'PAYEE_EXEC_CONFIRMED', state_to: 'SETTLED',
     payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
