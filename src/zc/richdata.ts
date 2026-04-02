@@ -37,15 +37,22 @@ export async function storeRichData(
   let r2Key: string | null = null
 
   if (contentBytes > R2_THRESHOLD_BYTES && env.R2_BUCKET) {
-    // Store full content in R2
+    // Store full content in R2 (with fallback to D1 on failure)
     r2Key = `richdata/${dataRef}`
-    await env.R2_BUCKET.put(r2Key, fullJson, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { data_ref: dataRef, data_type: req.data_type, content_hash: contentHash },
-    })
-    // Store only a summary in D1
-    const summary = buildSummary(req.content, req.data_type)
-    contentJson = JSON.stringify(summary)
+    try {
+      await env.R2_BUCKET.put(r2Key, fullJson, {
+        httpMetadata: { contentType: 'application/json' },
+        customMetadata: { data_ref: dataRef, data_type: req.data_type, content_hash: contentHash },
+      })
+      // R2成功: D1にはサマリーのみ保存
+      const summary = buildSummary(req.content, req.data_type)
+      contentJson = JSON.stringify(summary)
+    } catch (err) {
+      // R2失敗: フォールバックとしてD1に全データを保存
+      console.error('[richdata] R2 put failed, falling back to D1:', err)
+      r2Key = null
+      contentJson = fullJson
+    }
   } else {
     contentJson = fullJson
   }

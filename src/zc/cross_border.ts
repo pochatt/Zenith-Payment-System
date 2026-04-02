@@ -87,18 +87,22 @@ export async function initiateCrossBorderTransfer(
   ).run()
 
   // 3. 国内 Transactions レコード (DEFERRED lane) 作成
+  // payee_bank_id: クロスボーダーの場合は決済銀行（payer_bank_id）を仮設定
+  // （外部FPS経由のため国内受取銀行は存在しない → 仕向行が清算責任を負う）
   await db.prepare(`
     INSERT OR IGNORE INTO Transactions
       (txid, state, lane, amount_value, amount_currency,
        payer_bank_id, payer_account_hash, payee_bank_id, payee_account_hash,
-       idempotency_key, version, created_at, updated_at)
-    VALUES (?, 'RECEIVED', 'DEFERRED', ?, ?, ?, ?, '', '', ?, 0, ?, ?)
+       purpose, idempotency_key, version, created_at, updated_at)
+    VALUES (?, 'RECEIVED', 'DEFERRED', ?, ?, ?, ?, ?, ?, 'CROSS_BORDER', ?, 0, ?, ?)
   `).bind(
     domesticTxid,
     domesticAmount,
     'JPY',
     req.payer_bank_id,
     req.payer_account_id,
+    req.payer_bank_id,
+    `CB:${req.foreign_bank_bic}:${req.foreign_account_id}`,
     req.idempotency_key,
     now,
     now,

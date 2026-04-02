@@ -49,7 +49,16 @@ export async function processExpress(
     return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: authResult.reason_code }
   }
 
-  // 3. Name Check（PSPR参照または payeeAccount）
+  // 3. PSPR検証（指定されている場合: 署名有効性・有効期限の確認）
+  if (req.pspr_ref) {
+    const { lookupPspr } = await import('../pspr')
+    const psprResult = await lookupPspr(db, req.pspr_ref)
+    if (!psprResult) {
+      // lookupPspr は ACTIVE でないか期限切れの場合 null を返す
+      await cancelTx(txid, 'PSPR_INVALID_OR_EXPIRED', db)
+      return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: 'PSPR_INVALID_OR_EXPIRED' }
+    }
+  }
   // 決定論的 request_id
   const nameResult = await callBankNameCheck(req.payee.bank_id, {
     request_id: `NAME-${txid}`, txid, pspr_ref: req.pspr_ref, account_hash: req.payee.account_hash ?? '',

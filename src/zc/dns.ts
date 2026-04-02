@@ -344,7 +344,10 @@ export async function getOrCreateDnsCycle(db: D1Database, now: string): Promise<
 
   // INSERT IGNORE 失敗 = 当日サイクルが既に SETTLED
   // → 後着 TX 用に新規 OPEN サイクルを suffix 付きで作成
-  const lateId = `DNS-${today}-${now.slice(11, 19).replace(/:/g, '')}`
+  // ランダム接尾辞で同一秒内の衝突を回避
+  const timePart = now.slice(11, 19).replace(/:/g, '')
+  const randomSuffix = Math.random().toString(36).slice(2, 6)
+  const lateId = `DNS-${today}-${timePart}-${randomSuffix}`
   await db.prepare(
     `INSERT OR IGNORE INTO DnsCycles (cycle_id, business_date, state, igs_mode, created_at)
      VALUES (?, ?, 'OPEN', 'NORMAL', ?)`

@@ -61,29 +61,36 @@ export async function requestAccountVerification(
 
   if (cached) {
     // キャッシュヒット: 新しいレコードをキャッシュ結果でコピー作成
-    const newId = req.verification_id
-    await db.prepare(
-      `INSERT OR IGNORE INTO AccountVerifications
-       (verification_id, request_bank_id, target_bank_id, target_account_hash,
-        target_account_name, status, name_provided, match_score, fraud_warning,
-        cached_until, idempotency_key, created_at, responded_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      newId,
-      req.request_bank_id,
-      req.target_bank_id,
-      accountHash,
-      cached.target_account_name,
-      cached.status,
-      req.name_to_verify ?? null,
-      cached.match_score,
-      cached.fraud_warning,
-      cached.cached_until,
-      req.idempotency_key,
-      now,
-      now,
-    ).run()
-    return newId
+    // name_provided は今回のリクエストの値を使用（キャッシュの陳腐化を防止）
+    // ただし照合名が変わっている場合はキャッシュを無効化して銀行に再照会する
+    if (req.name_to_verify && cached.name_provided
+        && req.name_to_verify !== cached.name_provided) {
+      // 照合対象名が異なる → キャッシュ無効、銀行に再照会（下のPENDINGフローへ進む）
+    } else {
+      const newId = req.verification_id
+      await db.prepare(
+        `INSERT OR IGNORE INTO AccountVerifications
+         (verification_id, request_bank_id, target_bank_id, target_account_hash,
+          target_account_name, status, name_provided, match_score, fraud_warning,
+          cached_until, idempotency_key, created_at, responded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        newId,
+        req.request_bank_id,
+        req.target_bank_id,
+        accountHash,
+        cached.target_account_name,
+        cached.status,
+        req.name_to_verify ?? null,
+        cached.match_score,
+        cached.fraud_warning,
+        cached.cached_until,
+        req.idempotency_key,
+        now,
+        now,
+      ).run()
+      return newId
+    }
   }
 
   // 新規レコードを PENDING で挿入

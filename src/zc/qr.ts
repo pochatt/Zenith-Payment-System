@@ -101,7 +101,11 @@ export async function processQrPayment(
   // 金額検証: DYNAMIC QRは固定金額優先、なければreq.amount。STATIC QRはreq.amountが必須
   const effectiveAmount = qrRow.qr_type === 'DYNAMIC' ? (qrRow.amount_value ?? req.amount) : req.amount
   if (effectiveAmount == null || effectiveAmount <= 0) {
-    return { valid: false, error: 'QR_AMOUNT_REQUIRED' }
+    return { valid: false, error: qrRow.qr_type === 'STATIC' ? 'QR_STATIC_AMOUNT_REQUIRED' : 'QR_AMOUNT_REQUIRED' }
+  }
+  // STATIC QR で金額が0以下の場合も拒否（req.amount が明示的に必要）
+  if (qrRow.qr_type === 'STATIC' && (req.amount == null || req.amount <= 0)) {
+    return { valid: false, error: 'QR_STATIC_AMOUNT_REQUIRED' }
   }
 
   // 署名検証

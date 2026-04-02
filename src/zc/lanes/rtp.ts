@@ -206,9 +206,9 @@ export async function respondToRtp(
     return { result: 'NOT_FOUND' }
   }
 
-  // 既に応答済みの場合
+  // 既に応答済みの場合（rtp_status または linked_txid の存在で判定）
   const alreadyDone = ['ACCEPTED', 'DECLINED', 'EXPIRED', 'TX_CREATED', 'COMPLETED', 'REJECTED']
-  if (rtp.rtp_status && alreadyDone.includes(rtp.rtp_status)) {
+  if ((rtp.rtp_status && alreadyDone.includes(rtp.rtp_status)) || rtp.linked_txid) {
     return { result: 'ALREADY_RESPONDED', txid: rtp.linked_txid ?? undefined }
   }
 

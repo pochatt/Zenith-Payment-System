@@ -238,14 +238,15 @@ export async function approveAuthRequest(
     return { result: 'ERROR', reason_code: (reserveResp as { reason_code?: string }).reason_code ?? 'RESERVE_FAILED' }
   }
 
-  // Transactions レコード作成（DECIDED_TO_SETTLE 相当: 資金は既に確保済み）
-  // H予約は不要（別段預金で資金確保済みのため）
+  // Transactions レコード作成（HTLC_LOCKED: 資金は銀行別段で確保済み）
+  // claimHtlc が HTLC_LOCKED → HTLC_FULFILL_REQUESTED → DECIDED_TO_SETTLE と遷移するため
+  // Transactions も HTLC_LOCKED で作成する必要がある
   await db.prepare(
     `INSERT OR IGNORE INTO Transactions
      (txid, lane, state, amount_value, amount_currency, payer_bank_id, payer_account_hash,
       payee_bank_id, payee_account_hash, idempotency_key, schema_version,
       version, created_at, updated_at)
-     VALUES (?, 'HTLC', 'H_RESERVED', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', 0, ?, ?)`
+     VALUES (?, 'HTLC', 'HTLC_LOCKED', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', 0, ?, ?)`
   ).bind(
     txid, authReq.amount_value,
     authReq.payer_bank_id, authReq.payer_account_hash,

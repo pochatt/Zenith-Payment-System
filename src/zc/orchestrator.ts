@@ -312,11 +312,37 @@ export async function checkAndFinalizeGtid(gtid: string, db: D1Database): Promis
        WHERE gtid=? AND state='GT_DECIDED_TO_SETTLE' AND version=?`
     ).bind(now, gtid, gt.version).run()
     if ((failUpdated.meta.changes ?? 0) > 0) {
+      // 原子性保証: 成功済みlegを特定し、CASE起票で補償（reversal）を要求する
+      // 設計規範: b成立後の取消は禁止 → Reversal（別取引）で対応
+      const settledLegs = legs.results.filter(l => l.tx_state === 'SETTLED')
+      const failedLegIds = legs.results
+        .filter(l => l.tx_state === 'SUSPENDED' || l.tx_state === 'FAILED_EXECUTION')
+        .map(l => l.txid)
+      // 成功済みlegには SUSPENDED マーカーを設定し、補償対象として明示する
+      for (const leg of settledLegs) {
+        if (!leg.txid) continue
+        await db.prepare(
+          `INSERT OR IGNORE INTO ReversalRecords
+           (reversal_id, original_txid, reversal_txid, amount, reason_code, requested_by, status, created_at)
+           VALUES (?, ?, NULL, (SELECT amount_value FROM Transactions WHERE txid=?), 'GTID_PARTIAL_FAILURE', 'ZC', 'PENDING', ?)`
+        ).bind(`REV-GT-${leg.txid}`, leg.txid, leg.txid, now).run()
+      }
       await writeFinalityLog(db, {
         txid: null, event_type: 'GtidSuspended',
         state_from: 'GT_DECIDED_TO_SETTLE', state_to: 'GT_SUSPENDED',
-        payload_json: JSON.stringify({ gtid, reason: 'LEG_EXECUTION_FAILED' }),
+        payload_json: JSON.stringify({
+          gtid, reason: 'LEG_EXECUTION_FAILED',
+          settled_legs_pending_reversal: settledLegs.map(l => l.txid),
+          failed_legs: failedLegIds,
+        }),
         txid_or_gtid: gtid,
+      })
+      // CASE を自動起票して運用追跡・手動補償の起点とする
+      await openCase(db, {
+        related_gtid: gtid,
+        reason_code: 'GTID_PARTIAL_FAILURE',
+        description: `GTID ${gtid}: ${failedLegIds.length} leg(s) failed, ${settledLegs.length} settled leg(s) pending reversal`,
+        opened_by: 'ZC',
       })
     }
     return
