@@ -244,10 +244,10 @@ export async function respondToRtp(
     db.prepare(`
       UPDATE RtpRequests
       SET rtp_status = 'TX_CREATED', state = 'ATTEMPTED', attempt_count = attempt_count + 1,
-          linked_txid_new = ?, payer_account_id = ?, response_type = 'ACCEPTED',
+          linked_txid = ?, linked_txid_new = ?, payer_account_id = ?, response_type = 'ACCEPTED',
           responded_at = ?, updated_at = ?
       WHERE rtp_id = ?
-    `).bind(linkedTxid, response.payer_account_id, now, now, rtpId),
+    `).bind(linkedTxid, linkedTxid, response.payer_account_id, now, now, rtpId),
     db.prepare(`
       UPDATE RtpRequestRows SET rtp_status = 'TX_CREATED', responded_at = ?, updated_at = ?
       WHERE rtp_id = ?

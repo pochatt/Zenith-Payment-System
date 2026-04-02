@@ -59,7 +59,12 @@ export interface FinalityLogEntry {
  */
 export async function writeFinalityLog(db: D1Database, entry: FinalityLogEntry): Promise<void> {
   const logId = `FL-${newUUID()}`
-  const seq = Date.now() * 1000 + Math.floor(Math.random() * 1000)  // ms * 1000 + rand
+  // 単調増加を保証: DB 内の max(event_seq) + 1 をフォールバックに使う
+  const maxRow = await db
+    .prepare(`SELECT MAX(event_seq) AS mx FROM FinalityLog`)
+    .first<{ mx: number | null }>()
+  const candidate = Date.now() * 1000 + Math.floor(Math.random() * 1000)
+  const seq = Math.max(candidate, (maxRow?.mx ?? 0) + 1)
   const gtid = entry.txid_or_gtid?.startsWith('GT-') ? entry.txid_or_gtid : null
   await db.prepare(
     `INSERT INTO FinalityLog
@@ -88,7 +93,7 @@ const ALLOWED_TRANSITIONS: Record<TxState, TxState[]> = {
   FAILED_EXECUTION:      [],
   CANCELLED:             [],
   HTLC_LOCKED:           ['HTLC_FULFILL_REQUESTED', 'DECIDED_CANCEL'],
-  HTLC_FULFILL_REQUESTED: ['DECIDED_TO_SETTLE', 'SETTLED', 'FAILED_EXECUTION'],
+  HTLC_FULFILL_REQUESTED: ['DECIDED_TO_SETTLE', 'FAILED_EXECUTION'],
 }
 
 /**
@@ -251,6 +256,13 @@ export async function onPayeeExecConfirmed(
     }, env)
   } catch (err) {
     console.error(`[orchestrator] debit-settled notification failed for ${txid}:`, err)
+  }
+
+  // Reversal completion: 救済取引が SETTLED に到達 → ReversalRecords を COMPLETED に
+  if (txid.startsWith('TX-REV-')) {
+    const { completeReversal } = await import('./reversal')
+    await completeReversal(txid, db).catch(e =>
+      console.error(`[orchestrator] completeReversal failed for ${txid}:`, e))
   }
 
   // GTID leg 完了確認: 全 leg が SETTLED になったら GT_SETTLED へ遷移
@@ -724,7 +736,26 @@ export async function callBankNameCheck(
 async function callBankIngress<T>(
   bankId: string, command: string, payload: unknown, env: Env,
 ): Promise<T> {
+  const { allowRequest, recordSuccess, recordFailure } = await import('./circuit_breaker')
+
+  // Circuit Breaker: 参加行への送信可否を判定
+  const allowed = await allowRequest(bankId, env.DB)
+  if (!allowed) {
+    console.warn(`[orchestrator] Circuit OPEN for bank ${bankId}, fast-failing ${command}`)
+    // 送信禁止 → 即座にエラー応答を返す（再送嵐防止）
+    return { result: 'ERROR', reason_code: 'CIRCUIT_OPEN' } as unknown as T
+  }
+
   // 同一 Worker 内部呼び出し: Bank Ingress ハンドラを直接呼ぶ
   const { handleBankIngress } = await import('../bank/ingress')
-  return handleBankIngress(bankId, command, payload, env) as Promise<T>
+  try {
+    const result = await handleBankIngress(bankId, command, payload, env) as T
+    // 成功 → 回路リセット
+    await recordSuccess(bankId, env.DB)
+    return result
+  } catch (err) {
+    // 失敗 → 障害カウンタ加算（閾値超過で回路 OPEN）
+    await recordFailure(bankId, env.DB)
+    throw err
+  }
 }

@@ -92,6 +92,10 @@ import { createSseResponse } from './zc/stream'
 import { handleIgsCallback } from './zc/igs'
 import { respondToRtp } from './zc/rtp'
 
+// Reversal & Circuit Breaker
+import { requestReversal, getReversals, getReversalById } from './zc/reversal'
+import { getCircuitStatus, listCircuitStates, resetCircuit } from './zc/circuit_breaker'
+
 // Dashboard
 import dashboardHtml from './dashboard/index.html'
 import consoleHtml   from './dashboard/console.html'
@@ -390,6 +394,57 @@ async function handleZcApi(req: Request, path: string, method: string, env: Env)
     const body = await req.json() as { state: string }
     await updateCase(env.DB, caseUpdateMatch[1]!, body.state as any)
     return json(200, { result: 'UPDATED' })
+  }
+
+  // -----------------------------------------------------------------------
+  // Reversal（救済取引）
+  // -----------------------------------------------------------------------
+
+  // POST /api/reversals
+  if (method === 'POST' && path === '/api/reversals') {
+    const body = await req.json<any>()
+    const result = await requestReversal(body, env)
+    return json(result.result === 'REVERSAL_CREATED' ? 201 : 422, result)
+  }
+
+  // GET /api/reversals/:reversal_id
+  const revIdMatch = path.match(/^\/api\/reversals\/([^/]+)$/)
+  if (method === 'GET' && revIdMatch) {
+    const rev = await getReversalById(revIdMatch[1]!, env.DB)
+    if (!rev) return jsonError(404, 'NOT_FOUND', 'reversal not found')
+    return json(200, rev)
+  }
+
+  // GET /api/transactions/:txid/reversals
+  const txRevMatch = path.match(/^\/api\/transactions\/([^/]+)\/reversals$/)
+  if (method === 'GET' && txRevMatch) {
+    const revs = await getReversals(txRevMatch[1]!, env.DB)
+    return json(200, { original_txid: txRevMatch[1], reversals: revs })
+  }
+
+  // -----------------------------------------------------------------------
+  // Circuit Breaker（参加行疎通監視）
+  // -----------------------------------------------------------------------
+
+  // GET /api/circuit-breaker
+  if (method === 'GET' && path === '/api/circuit-breaker') {
+    const states = await listCircuitStates(env.DB)
+    return json(200, { circuit_breakers: states })
+  }
+
+  // GET /api/circuit-breaker/:bank_id
+  const cbMatch = path.match(/^\/api\/circuit-breaker\/([^/]+)$/)
+  if (method === 'GET' && cbMatch) {
+    const status = await getCircuitStatus(cbMatch[1]!, env.DB)
+    if (!status) return json(200, { bank_id: cbMatch[1], state: 'CLOSED', consecutive_failures: 0 })
+    return json(200, status)
+  }
+
+  // POST /api/circuit-breaker/:bank_id/reset  (ops override)
+  const cbResetMatch = path.match(/^\/api\/circuit-breaker\/([^/]+)\/reset$/)
+  if (method === 'POST' && cbResetMatch) {
+    await resetCircuit(cbResetMatch[1]!, env.DB)
+    return json(200, { result: 'RESET', bank_id: cbResetMatch[1] })
   }
 
   // POST /api/pspr/register

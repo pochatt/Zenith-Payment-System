@@ -628,9 +628,16 @@ export interface QueryResponse {
     payee_bank_proof_ref?: BankProofRef
   }
   case?: { case_id?: string; status?: CaseState }
+  /** 表示の鮮度: いつ時点のビューか (RFC 3339) */
   as_of: string
-  freshness_level: 'GREEN'
+  /** FinalityLog 反映位置: この取引に関する最新の event_seq */
+  watermark: number
+  /** 鮮度レベル: GREEN=最新、YELLOW=少し古い、RED=大幅に遅延 */
+  freshness_level: 'GREEN' | 'YELLOW' | 'RED'
+  /** 次に取るべき行動（定型化: 窓口が顧客に迷わせない定型応対を支援） */
   next_action_hint: 'WAIT' | 'RETRY_LATER' | 'CONTACT_PAYER_BANK' | 'OPEN_CASE'
+  /** 次回照会推奨時刻 (RFC 3339); 終端状態では null */
+  next_retry_at: string | null
 }
 
 // POST /api/participants/register
@@ -881,6 +888,11 @@ export function suspenseAccountId(bankCode: string): string {
  */
 export function nostroAccountId(bankCode: string): string {
   return `${bankCode}-ZCS`
+}
+
+/** 銀行コードから利益剰余金（Retained Earnings）口座番号を生成 */
+export function retainedEarningsAccountId(bankCode: string): string {
+  return `${bankCode}-RE`
 }
 
 /** 銀行コードから現金（Cash）口座番号を生成 */

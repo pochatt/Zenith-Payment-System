@@ -39,30 +39,30 @@ export async function reserveH(
   const reservationId = `H-${newUUID()}`
   const now = nowISO()
 
-  // Participants.h_used 更新 + HReservations INSERT をバッチでアトミックに実行
-  // 2段階操作だとクラッシュ時にh_usedだけ増加しHReservationsが欠落するリスクがある
-  const results = await db.batch([
-    db
-      .prepare(
-        `UPDATE Participants
-         SET h_used = h_used + ?
-         WHERE bank_id = ? AND is_active = 1 AND (h_used + ?) <= h_limit`,
-      )
-      .bind(amount, bankId, amount),
-    db
-      .prepare(
-        `INSERT INTO HReservations
-           (reservation_id, txid, bank_id, amount, mode, is_released, created_at)
-         VALUES (?, ?, ?, ?, 'RESERVED', 0, ?)`,
-      )
-      .bind(reservationId, txid, bankId, amount, now),
-  ])
+  // Step 1: h_limit 超過チェック（UPDATE の changes=0 で判定）
+  const upd = await db
+    .prepare(
+      `UPDATE Participants
+       SET h_used = h_used + ?
+       WHERE bank_id = ? AND is_active = 1 AND (h_used + ?) <= h_limit`,
+    )
+    .bind(amount, bankId, amount)
+    .run()
 
-  if ((results[0]?.meta.changes ?? 0) === 0) {
-    // 超過または参加行なし — HReservations INSERT は FK 制約または
-    // 後続処理で不整合にはならない（batch 内の全 stmt は単一トランザクション）
+  if ((upd.meta.changes ?? 0) === 0) {
+    // 超過または参加行なし — HReservations INSERT をスキップして孤児レコードを防ぐ
     return null
   }
+
+  // Step 2: h_used 増加成功後に HReservations を作成
+  await db
+    .prepare(
+      `INSERT INTO HReservations
+         (reservation_id, txid, bank_id, amount, mode, is_released, created_at)
+       VALUES (?, ?, ?, ?, 'RESERVED', 0, ?)`,
+    )
+    .bind(reservationId, txid, bankId, amount, now)
+    .run()
 
   return reservationId
 }

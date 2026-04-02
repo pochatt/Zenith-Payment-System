@@ -4,7 +4,7 @@
  * (30/360), and zero-sum verification.
  * @module bank/ledger
  */
-import { nowISO, suspenseAccountId } from '../types'
+import { nowISO, suspenseAccountId, retainedEarningsAccountId } from '../types'
 import { newUUID } from '../shared/idempotency'
 
 export interface JournalEntry {
@@ -93,7 +93,7 @@ export async function applyDailyInterest(
   if (!rate || accounts.results.length === 0) return
 
   const dailyRate = rate.annual_rate / 360  // 30/360 ルール
-  const suspAcctId = suspenseAccountId(bankId)  // 実在する別段預金口座IDを使用
+  const reAcctId = retainedEarningsAccountId(bankId) // 利益剰余金口座（別段預金を汚さない）
 
   for (const acc of accounts.results) {
     const balance = await calcBalance(acc.account_id, db)
@@ -101,13 +101,12 @@ export async function applyDailyInterest(
     const interest = Math.floor(balance * dailyRate)
     if (interest === 0) continue
 
-    // ゼロサム: 利息剰余金(負=資産) と 普通預金(正=負債)
-    // モック簡略: 利益剰余金勘定の代わりに SUSP 口座を使う
+    // ゼロサム: 利益剰余金(負=費用) と 普通預金(正=負債)
     await insertJournalGroup(db, {
       bankId, txGroupId: `INT-${snapshotDate}-${acc.account_id}`,
       entries: [
         { accountId: acc.account_id, amount: interest, txType: 'INTEREST', description: `利息入金 ${snapshotDate}` },
-        { accountId: suspAcctId, amount: -interest, txType: 'INTEREST', description: `利息 相殺 ${snapshotDate}` },
+        { accountId: reAcctId, amount: -interest, txType: 'INTEREST', description: `利息 費用計上 ${snapshotDate}` },
       ],
       valueDate: snapshotDate,
     })

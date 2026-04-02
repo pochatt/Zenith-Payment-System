@@ -953,6 +953,10 @@ async function bankInitialize(
     ).bind(`${bankId}-CASH`, bankId, now),
     db.prepare(
       `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
+       VALUES (?, ?, 'INTERNAL', '利益剰余金', 'ASSET', 'NORMAL', ?)`
+    ).bind(`${bankId}-RE`, bankId, now),
+    db.prepare(
+      `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
        VALUES (?, ?, 'BOJ', '日本銀行（預け金勘定）', 'BOJ', 'NORMAL', ?)`
     ).bind(`${bankId}-BOJ`, bankId, now),
     db.prepare(
