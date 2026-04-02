@@ -22,7 +22,7 @@ import { nowISO } from '../types'
 import { parseBody, validatePaymentInitiated, validateHtlcCreate, validateHtlcClaim, validateGtidRegister, validateRtpRequest } from '../shared/validator'
 import { acquireIdempotency, completeIdempotency, getIdempotentResponse, newUUID } from '../shared/idempotency'
 import { processExpress } from './lanes/express'
-import { processStandardIngress, advanceStandard, authorizeStandard } from './lanes/standard'
+import { processStandardIngress, advanceStandard, authorizeStandard, resumeFromNameCheckSuspended } from './lanes/standard'
 import { processBulkIngress, advanceBulk } from './lanes/bulk'
 import { createHtlc, claimHtlc } from './lanes/htlc'
 import {
@@ -351,6 +351,19 @@ export async function handlePostCancel(req: Request, txid: string, env: Env): Pr
   await finalizeCancelledTx(txid, db)
 
   return json(200, { result: 'CANCELLED', txid, state: 'CANCELLED' })
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/transfers/:txid/resume-namecheck
+// ---------------------------------------------------------------------------
+export async function handlePostResumeNameCheck(req: Request, txid: string, env: Env): Promise<Response> {
+  const result = await resumeFromNameCheckSuspended(txid, env)
+  if (!result.ok) {
+    if (result.state === 'NOT_FOUND') return jsonError(404, 'NOT_FOUND', `txid ${txid} not found`)
+    if (result.state === 'STATE_CONFLICT') return jsonError(409, 'STATE_CONFLICT', `Concurrent modification on txid ${txid}`)
+    return jsonError(409, 'INVALID_STATE', `Cannot resume txid ${txid} in state ${result.state}`)
+  }
+  return json(200, { result: 'RESUMED', txid, state: result.state })
 }
 
 // ---------------------------------------------------------------------------

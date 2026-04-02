@@ -159,8 +159,10 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     txid_or_gtid: gtid,
   })
 
-  // 各 leg 用の Transactions レコードを作成し、Execution をキューに投入
-  // 全 PAYER/PAYEE leg を収集（複数の PAYER/PAYEE をサポート）
+  // PAYERレグ用 Transaction を作成し Execution をキューへ投入する。
+  // PAYEEレグは Transaction を持たない。クレジットは PAYER Transaction の
+  // onPayerExecConfirmed → ZC_BANK_CREDIT フローで逐次実行されるため、
+  // ここで直接 ZC_BANK_CREDIT を投入すると二重着金が発生する。
   const payerLegs = legs.results.filter(l => l.role === 'PAYER')
   const payeeLegs = legs.results.filter(l => l.role === 'PAYEE')
 
@@ -185,20 +187,19 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   }
 
   for (const leg of legs.results) {
+    // PAYEEレグは Transaction を作らず ZC_BANK_CREDIT も送らない。
+    // クレジットは対応する PAYERレグ Transaction の onPayerExecConfirmed で投入される。
+    if (leg.role === 'PAYEE') continue
+
     const txid = `TX-GT-${leg.leg_id}`
-    // 複数 PAYER/PAYEE の場合: 同じロールの leg 同士を index で対応付け
-    // 対応する相手方が存在しない場合はデフォルトで最初の leg を使用
-    let counterpartyBankId: string
-    if (leg.role === 'PAYER') {
-      const idx = payerLegs.indexOf(leg)
-      counterpartyBankId = (payeeLegs[idx] ?? payeeLeg).bank_id
-    } else {
-      const idx = payeeLegs.indexOf(leg)
-      counterpartyBankId = (payerLegs[idx] ?? payerLeg).bank_id
-    }
+    // PAYER の対応 PAYEE を index で決定（存在しない場合は先頭 PAYEE を使用）
+    const idx = payerLegs.indexOf(leg)
+    const counterpartyPayeeLeg = payeeLegs[idx] ?? payeeLeg
     const hReservationId = hReservations.get(leg.leg_id) ?? null
 
     // Transactions レコードを作成（execute-debit/credit が参照する）
+    // payer_bank_id / payee_bank_id に PAYER と対応 PAYEE の情報を格納し、
+    // onPayerExecConfirmed がそのまま ZC_BANK_CREDIT に使えるようにする。
     await db.prepare(
       `INSERT OR IGNORE INTO Transactions
        (txid, lane, state, amount_value, amount_currency, payer_bank_id, payer_account_hash,
@@ -207,31 +208,28 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
        VALUES (?, 'DEFERRED', 'DECIDED_TO_SETTLE', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', ?, ?, ?, 0, ?, ?)`
     ).bind(
       txid, leg.amount_value,
-      leg.role === 'PAYER' ? leg.bank_id : counterpartyBankId,
-      leg.role === 'PAYER' ? leg.account_hash : (leg.role === 'PAYEE' ? (payerLegs[payeeLegs.indexOf(leg)] ?? payerLeg).account_hash : payerLeg.account_hash),
-      leg.role === 'PAYEE' ? leg.bank_id : counterpartyBankId,
-      leg.role === 'PAYEE' ? leg.account_hash : (leg.role === 'PAYER' ? (payeeLegs[payerLegs.indexOf(leg)] ?? payeeLeg).account_hash : payeeLeg.account_hash),
+      leg.bank_id,                    // payer_bank_id
+      leg.account_hash,               // payer_account_hash
+      counterpartyPayeeLeg.bank_id,   // payee_bank_id
+      counterpartyPayeeLeg.account_hash, // payee_account_hash
       `GTID-${gtid}-${leg.leg_id}`, decisionProofRef, hReservationId, dnsCycleId, now, now,
     ).run()
 
-    // GtidLegs に txid を紐付け
+    // PAYERレグの GtidLegs に txid を紐付け
     await db.prepare(
       `UPDATE GtidLegs SET txid=?, updated_at=?, version=version+1 WHERE leg_id=?`
     ).bind(txid, now, leg.leg_id).run()
 
-    if (leg.role === 'PAYER') {
-      await env.QUEUE.send({
-        type: 'ZC_BANK_DEBIT',
-        payload: { gtid, leg_id: leg.leg_id, payer_bank_id: leg.bank_id, payee_bank_id: counterpartyBankId, txid, amount: { value: leg.amount_value, currency: 'JPY' }, decision_proof_ref: decisionProofRef },
-        gtid, attempt: 0, enqueued_at: now,
-      })
-    } else {
-      await env.QUEUE.send({
-        type: 'ZC_BANK_CREDIT',
-        payload: { gtid, leg_id: leg.leg_id, payee_bank_id: leg.bank_id, txid, amount: { value: leg.amount_value, currency: 'JPY' }, decision_proof_ref: decisionProofRef },
-        gtid, attempt: 0, enqueued_at: now,
-      })
-    }
+    await env.QUEUE.send({
+      type: 'ZC_BANK_DEBIT',
+      payload: {
+        gtid, leg_id: leg.leg_id,
+        payer_bank_id: leg.bank_id, payee_bank_id: counterpartyPayeeLeg.bank_id,
+        txid, amount: { value: leg.amount_value, currency: 'JPY' },
+        decision_proof_ref: decisionProofRef,
+      },
+      gtid, attempt: 0, enqueued_at: now,
+    })
   }
 }
 

@@ -9,7 +9,6 @@ import { nowISO } from '../../types'
 import { writeFinalityLog, callBankAuthorityCheck, callBankNameCheck, finalizeCancelledTx } from '../orchestrator'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { newUUID } from '../../shared/idempotency'
-import { initiateIgsSettlement } from '../igs'
 import { calcBalance } from '../../bank/ledger'
 
 export function processHighValueIngress(req: PaymentInitiatedRequest) {
@@ -104,6 +103,9 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
 
   // 6. ExecuteDebit（a_HV: proof_type=PAYER_HV_ISOLATION_PROOF）
   // payer_account_hash を渡す（HVは reserve-funds を経由しないため Bank 側で account を特定できない）
+  // IGS決済開始はデビット確認後（onPayerExecConfirmed）に行う。
+  // ここで initiateIgsSettlement を呼ぶと ZC_BANK_DEBIT より先に ZC_IGS_CALLBACK が
+  // 処理される競合状態が発生し、BOJ清算仕訳が欠落する可能性がある。
   await env.QUEUE.send({
     type: 'ZC_BANK_DEBIT',
     payload: {
@@ -114,11 +116,4 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
     },
     txid, attempt: 0, enqueued_at: now,
   })
-
-  // 7. IGS決済開始（debit キュー投入後、external_settlement_status を PENDING に設定）
-  // payee credit は handleIgsCallback（igs.ts）が IGS確定後に実行する
-  await db.prepare(
-    `UPDATE Transactions SET external_settlement_status='PENDING', updated_at=? WHERE txid=?`
-  ).bind(now, txid).run()
-  await initiateIgsSettlement(db, txid, { value: tx.amount_value, currency: 'JPY' }, tx.payer_bank_id, tx.payee_bank_id, env)
 }
