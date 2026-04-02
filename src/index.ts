@@ -27,7 +27,7 @@ import { runTimeoutSweep } from './cron/timeout_sweep'
 import {
   handlePostTransfers, handlePostHtlcCreate, handlePostHtlcClaim,
   handlePostGtidRegister, handlePostRtpRequest,
-  handlePostAuthorize, handlePostCancel,
+  handlePostAuthorize, handlePostCancel, handlePostResumeNameCheck,
   handlePostParticipantRegister, handleSeed,
   handleAddBank, handleDeleteBank, handleListBanks, handleBankAccounts,
   handleAccountNameLookup, handleSimSetup, handleSimSetupOneBank,
@@ -356,6 +356,11 @@ async function handleZcApi(req: Request, path: string, method: string, env: Env)
   const cancelMatch = path.match(/^\/api\/transfers\/([^/]+)\/cancel$/)
   if (method === 'POST' && cancelMatch)
     return handlePostCancel(req, cancelMatch[1]!, env)
+
+  // POST /api/transfers/:txid/resume-namecheck
+  const resumeNamecheckMatch = path.match(/^\/api\/transfers\/([^/]+)\/resume-namecheck$/)
+  if (method === 'POST' && resumeNamecheckMatch)
+    return handlePostResumeNameCheck(req, resumeNamecheckMatch[1]!, env)
 
   // GET /api/transactions (list)
   if (method === 'GET' && path === '/api/transactions')

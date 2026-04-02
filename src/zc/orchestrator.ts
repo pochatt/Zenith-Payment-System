@@ -127,9 +127,9 @@ export async function onPayerExecConfirmed(
   const now = nowISO()
 
   const tx = await db
-    .prepare(`SELECT state, payee_bank_id, payee_account_hash, amount_value, decision_proof_ref, version FROM Transactions WHERE txid = ?`)
+    .prepare(`SELECT state, lane, payee_bank_id, payee_account_hash, amount_value, decision_proof_ref, version FROM Transactions WHERE txid = ?`)
     .bind(txid)
-    .first<{ state: TxState; payee_bank_id: string; payee_account_hash: string | null; amount_value: number; decision_proof_ref: string | null; version: number }>()
+    .first<{ state: TxState; lane: string; payee_bank_id: string; payee_account_hash: string | null; amount_value: number; decision_proof_ref: string | null; version: number }>()
   if (!tx) return
 
   if (!isValidTransition(tx.state, 'PAYER_EXEC_CONFIRMED')) {
@@ -149,17 +149,22 @@ export async function onPayerExecConfirmed(
     payload_json: JSON.stringify({ payer_bank_proof_ref: JSON.parse(bankProofRefJson) }), txid_or_gtid: txid,
   })
 
-  // b（PAYEE_EXEC_CONFIRMED）をキューに投入（payee_account_hash を伝播し execute-credit のフォールバック参照を排除）
-  await env.QUEUE.send({
-    type: 'ZC_BANK_CREDIT',
-    payload: {
-      txid, payee_bank_id: tx.payee_bank_id,
-      payee_account_hash: tx.payee_account_hash ?? undefined,
-      amount: { value: tx.amount_value, currency: 'JPY' },
-      decision_proof_ref: tx.decision_proof_ref ?? '',
-    },
-    txid, attempt: 0, enqueued_at: now,
-  })
+  // HIGH_VALUE レーンは IGS コールバック（handleIgsCallback）が ZC_BANK_CREDIT を投入する。
+  // ここで投入すると IGS コールバックと二重送信になり BOJ 清算仕訳が欠落するリスクがある。
+  // IGS はこの後 processQueueMessage の ZC_BANK_DEBIT 完了フックで開始される。
+  if (tx.lane !== 'HIGH_VALUE') {
+    // b（PAYEE_EXEC_CONFIRMED）をキューに投入（payee_account_hash を伝播し execute-credit のフォールバック参照を排除）
+    await env.QUEUE.send({
+      type: 'ZC_BANK_CREDIT',
+      payload: {
+        txid, payee_bank_id: tx.payee_bank_id,
+        payee_account_hash: tx.payee_account_hash ?? undefined,
+        amount: { value: tx.amount_value, currency: 'JPY' },
+        decision_proof_ref: tx.decision_proof_ref ?? '',
+      },
+      txid, attempt: 0, enqueued_at: now,
+    })
+  }
 }
 
 /**
@@ -322,8 +327,9 @@ export async function checkAndFinalizeGtid(gtid: string, db: D1Database): Promis
     return
   }
 
-  // length > 0 ガードを除去: 0-legs GTID は vacuous truth で即 GT_SETTLED へ
-  const allSettled = legs.results.every(l => l.tx_state === 'SETTLED')
+  // PAYEEレグは Transaction を持たないため txid=null になる。
+  // null txid レグは PAYER Transaction の着金フローで実質的に完了済みとみなす。
+  const allSettled = legs.results.every(l => l.tx_state === 'SETTLED' || l.txid === null)
   if (!allSettled) return
 
   // legs_settled_count を leg_count に更新
@@ -467,6 +473,21 @@ export async function processQueueMessage(msg: QueueMessage, env: Env): Promise<
         })
         if (bankResp.result === 'OK') {
           await onPayerExecConfirmed(p.txid, JSON.stringify(bankResp.bank_proof_ref), env)
+          // HIGH_VALUE: デビット確認後に IGS 決済を開始する。
+          // advanceHighValue ではなくここで呼ぶことで、IGS コールバックが
+          // PAYER_EXEC_CONFIRMED 状態を確実に見られるようにする。
+          if (p.lane === 'HIGH_VALUE') {
+            const { initiateIgsSettlement } = await import('./igs')
+            await env.DB.prepare(
+              `UPDATE Transactions SET external_settlement_status='PENDING', updated_at=? WHERE txid=?`
+            ).bind(nowISO(), p.txid).run()
+            await initiateIgsSettlement(
+              env.DB, p.txid,
+              { value: p.amount.value, currency: p.amount.currency },
+              p.payer_bank_id, p.payee_bank_id,
+              env,
+            )
+          }
         } else {
           await suspendTx(p.txid, 'EXEC_DEBIT_FAILED', env.DB, {
             bank_id: p.payer_bank_id,

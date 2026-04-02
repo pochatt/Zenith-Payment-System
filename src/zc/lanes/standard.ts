@@ -71,6 +71,10 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     await db.prepare(
       `UPDATE Transactions SET state='PRECHECKED_SUSPENDED', reason_code='SUSPEND_NAMECHECK_PENDING', updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`
     ).bind(now, txid).run()
+    await writeFinalityLog(db, {
+      txid, event_type: 'PreCheckSuspended', state_from: 'PRECHECKED', state_to: 'PRECHECKED_SUSPENDED',
+      payload_json: JSON.stringify({ reason_code: 'SUSPEND_NAMECHECK_PENDING' }), txid_or_gtid: txid,
+    })
     return
   }
 
@@ -164,6 +168,63 @@ export async function authorizeStandard(
   })
 
   return { ok: true, state: 'DECIDED_TO_SETTLE', decision_proof_ref: decisionProofRef }
+}
+
+/**
+ * 名義不一致サスペンド後の再開: PRECHECKED_SUSPENDED → H_RESERVED
+ * 送金行が顧客確認を経て /resume-namecheck を呼び出した際に実行される。
+ */
+export async function resumeFromNameCheckSuspended(
+  txid: string,
+  env: Env,
+): Promise<{ ok: boolean; state: string }> {
+  const db = env.DB
+  const now = nowISO()
+
+  const tx = await db
+    .prepare(`SELECT * FROM Transactions WHERE txid = ?`)
+    .bind(txid)
+    .first<{ state: string; payer_bank_id: string; amount_value: number; payer_account_hash: string; version: number }>()
+  if (!tx) return { ok: false, state: 'NOT_FOUND' }
+  if (tx.state !== 'PRECHECKED_SUSPENDED') return { ok: false, state: tx.state }
+
+  // PRECHECKED_SUSPENDED → PRECHECKED（名義チェック上書き承認）
+  const updated = await db.prepare(
+    `UPDATE Transactions SET state='PRECHECKED', reason_code=NULL, updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED_SUSPENDED'`
+  ).bind(now, txid).run()
+  if ((updated.meta.changes ?? 0) === 0) return { ok: false, state: 'STATE_CONFLICT' }
+
+  await writeFinalityLog(db, {
+    txid, event_type: 'NameCheckOverridden', state_from: 'PRECHECKED_SUSPENDED', state_to: 'PRECHECKED',
+    payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
+  })
+
+  // H予約
+  const reservationId = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
+  if (!reservationId) {
+    await cancelAndLog(db, txid, 'PRECHECKED', 'H_LIMIT_EXCEEDED')
+    return { ok: true, state: 'DECIDED_CANCEL' }
+  }
+
+  await db.prepare(
+    `UPDATE Transactions SET state='H_RESERVED', h_reservation_id=?, updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`
+  ).bind(reservationId, now, txid).run()
+  await writeFinalityLog(db, {
+    txid, event_type: 'HReserved', state_from: 'PRECHECKED', state_to: 'H_RESERVED',
+    payload_json: JSON.stringify({ reservation_id: reservationId }), txid_or_gtid: txid,
+  })
+
+  // Bank reserve-funds
+  const reserveResult = await callBankReserveFunds(tx.payer_bank_id, {
+    request_id: `RESERVE-${txid}`, txid, amount: { value: tx.amount_value, currency: 'JPY' },
+    account_hash: tx.payer_account_hash,
+  }, env)
+  if (reserveResult.result === 'ERROR') {
+    await cancelAndLog(db, txid, 'H_RESERVED', reserveResult.reason_code ?? 'RESERVE_FAILED')
+    return { ok: true, state: 'DECIDED_CANCEL' }
+  }
+
+  return { ok: true, state: 'H_RESERVED' }
 }
 
 async function cancelAndLog(db: D1Database, txid: string, fromState: string, reasonCode: string): Promise<void> {
