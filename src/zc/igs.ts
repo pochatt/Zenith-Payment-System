@@ -141,8 +141,12 @@ export async function handleIgsCallback(
     // BOJ決済仕訳（プレファンドRTGS: 即時グロス清算）
     // DNS清算を経由せず、IGS確定時点でBOJ当座を直接振替
     //
-    // 支払行: ZCS(-amount) / BOJ(+amount)  [ZCS積立義務解消、BOJ当座減]
-    // 受取行: ZCS(+amount) / BOJ(-amount)  [ZCS受取権計上、BOJ当座増]
+    // 支払行: ZCS(-amount) / BOJ(+amount)  [ZCS積立義務解消、BOJ事前拠出残消費（|残|↓）]
+    // 受取行: ZCS(+amount) / BOJ(-amount)  [ZCS受取権計上、BOJ当座残回復（|残|↑）]
+    //
+    // ※ BOJ口座の符号規約: 事前拠出残 = 負値 で管理。
+    //   支払行 BOJ(+amount) → 負の残高が 0 に近づく → 事前拠出枠を消費。
+    //   受取行 BOJ(-amount) → 負の残高が増す     → 当座残高が回復。
     //
     // 各グループはゼロサム ✓ かつ bank_id が各行に対応
     // ---------------------------------------------------------------------------
@@ -166,7 +170,7 @@ export async function handleIgsCallback(
           amount: amount,
           txType: 'TRANSFER',
           txid: igsRow.txid,
-          description: `HV RTGS IGS決済 支払行BOJ当座減`,
+          description: `HV RTGS IGS決済 支払行BOJ事前拠出残消費`,
         },
       ],
       valueDate,
@@ -189,7 +193,7 @@ export async function handleIgsCallback(
           amount: -amount,
           txType: 'TRANSFER',
           txid: igsRow.txid,
-          description: `HV RTGS IGS決済 受取行BOJ当座増`,
+          description: `HV RTGS IGS決済 受取行BOJ当座残回復`,
         },
       ],
       valueDate,

@@ -222,7 +222,7 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
   // AND state='HTLC_FULFILL_REQUESTED' の状態ガードを追加
   await db.batch([
     db.prepare(`UPDATE HtlcContracts SET state='DECIDED_TO_SETTLE', secret_verified=1, version=version+1, updated_at=? WHERE htlc_id=?`).bind(now, req.htlc_id),
-    db.prepare(`UPDATE Transactions SET state='DECIDED_TO_SETTLE', decision_proof_ref=?, finality_log_ref=?, dns_cycle_id=?, updated_at=?, version=version+1 WHERE txid=? AND state IN ('HTLC_FULFILL_REQUESTED','HTLC_LOCKED')`).bind(decisionProofRef, finalityLogRef, dnsCycleId, now, htlc.txid),
+    db.prepare(`UPDATE Transactions SET state='DECIDED_TO_SETTLE', decision_proof_ref=?, finality_log_ref=?, dns_cycle_id=?, updated_at=?, version=version+1 WHERE txid=? AND state='HTLC_FULFILL_REQUESTED'`).bind(decisionProofRef, finalityLogRef, dnsCycleId, now, htlc.txid),
   ])
 
   await writeFinalityLog(db, {
