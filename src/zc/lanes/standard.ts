@@ -168,18 +168,20 @@ export async function authorizeStandard(
 
 async function cancelAndLog(db: D1Database, txid: string, fromState: string, reasonCode: string): Promise<void> {
   const now = nowISO()
-  // h_reservation_id を取得してH解放
+  // state guard を先に評価し、遷移が成立した場合のみ H 解放する。
+  // 先に H 解放すると並行して DECIDED_TO_SETTLE へ進んだ場合に
+  // LOCKED 予約が誤って解放されるため、順序を逆にする。
+  const updated = await db.prepare(
+    `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state=?`
+  ).bind(reasonCode, now, txid, fromState).run()
+  if ((updated.meta.changes ?? 0) === 0) return
+  // 状態遷移確定後にH解放（二重解放は releaseH 内の is_released=0 ガードで防護）
   const txForH = await db
     .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)
     .bind(txid).first<{ h_reservation_id: string | null }>()
   if (txForH?.h_reservation_id) {
     await releaseH(txForH.h_reservation_id, db)
   }
-  // state guard: fromState で指定された状態からのみ遷移可能（並行処理による上書き防止）
-  const updated = await db.prepare(
-    `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state=?`
-  ).bind(reasonCode, now, txid, fromState).run()
-  if ((updated.meta.changes ?? 0) === 0) return
   await writeFinalityLog(db, {
     txid, event_type: 'DecidedCancel', state_from: fromState, state_to: 'DECIDED_CANCEL',
     payload_json: JSON.stringify({ reason_code: reasonCode }), txid_or_gtid: txid,

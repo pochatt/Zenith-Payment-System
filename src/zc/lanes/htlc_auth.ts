@@ -427,7 +427,8 @@ export async function voidHtlcAuth(
   }
 
   // cancelHtlc を内部呼び出し（H 解放 + 銀行側別段解放）
-  await cancelHtlc(htlcId, authReq.txid!, req.reason ?? 'VOID_REQUESTED', db)
+  // env を渡して callBankReleaseReserve を実行し、承認済み別段預金を解放する
+  await cancelHtlc(htlcId, authReq.txid!, req.reason ?? 'VOID_REQUESTED', db, env)
 
   // Vault の preimage を無効化
   if (authReq.vault_ref) {
