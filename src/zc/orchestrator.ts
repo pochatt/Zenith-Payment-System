@@ -65,7 +65,8 @@ export async function writeFinalityLog(db: D1Database, entry: FinalityLogEntry):
     .first<{ mx: number | null }>()
   const candidate = Date.now() * 1000 + Math.floor(Math.random() * 1000)
   const seq = Math.max(candidate, (maxRow?.mx ?? 0) + 1)
-  const gtid = entry.txid_or_gtid?.startsWith('GT-') ? entry.txid_or_gtid : null
+  const gtid = (entry.txid_or_gtid?.startsWith('GT-') || entry.txid_or_gtid?.startsWith('GTID-'))
+    ? entry.txid_or_gtid : null
   await db.prepare(
     `INSERT INTO FinalityLog
      (log_id, txid, gtid, event_type, state_from, state_to, payload_json, event_seq, occurred_at)

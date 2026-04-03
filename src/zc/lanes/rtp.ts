@@ -221,24 +221,47 @@ export async function respondToRtp(
   }
 
   if (response.response === 'REJECTED') {
-    await db.batch([
-      db.prepare(`
-        UPDATE RtpRequests
-        SET rtp_status = 'DECLINED', state = 'FAILED', response_type = 'REJECTED',
-            payer_account_id = ?, responded_at = ?, updated_at = ?
-        WHERE rtp_id = ?
-      `).bind(response.payer_account_id, now, now, rtpId),
-      db.prepare(`
-        UPDATE RtpRequestRows SET rtp_status = 'DECLINED', responded_at = ?, updated_at = ?
-        WHERE rtp_id = ?
-      `).bind(now, now, rtpId),
-    ])
+    // RtpRequests は ZC 側で必ず存在するため UPDATE は成功する。
+    // RtpRequestRows は支払銀行側の通知テーブルのため、rtp-notify 未到達時には
+    // レコードが存在しない場合がある。batch 内の UPDATE 空振りは D1 ではエラーに
+    // ならないが、状態不整合を防ぐためレコードが無くても安全に動作するようにする。
+    await db.prepare(`
+      UPDATE RtpRequests
+      SET rtp_status = 'DECLINED', state = 'FAILED', response_type = 'REJECTED',
+          payer_account_id = ?, responded_at = ?, updated_at = ?
+      WHERE rtp_id = ?
+    `).bind(response.payer_account_id, now, now, rtpId).run()
+    // RtpRequestRows は存在する場合のみ更新（INSERT OR IGNORE で通知テーブルを補完）
+    await db.prepare(`
+      INSERT OR IGNORE INTO RtpRequestRows
+        (rtp_id, payee_bank_id, payer_bank_id, amount_value, rtp_status,
+         expires_at, responded_at, response_type, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'DECLINED', ?, ?, 'REJECTED', ?, ?)
+    `).bind(
+      rtpId, rtp.payee_bank_id, rtp.payer_bank_id, rtp.amount_value,
+      rtp.expires_at, now, now, now,
+    ).run()
+    await db.prepare(`
+      UPDATE RtpRequestRows SET rtp_status = 'DECLINED', responded_at = ?, updated_at = ?
+      WHERE rtp_id = ?
+    `).bind(now, now, rtpId).run()
 
     return { result: 'DECLINED' }
   }
 
   // ACCEPTED: 送金取引を自動生成
   const linkedTxid = `TX-${crypto.randomUUID()}`
+
+  // RtpRequestRows が未作成の場合に備え、INSERT OR IGNORE で補完してから UPDATE する
+  await db.prepare(`
+    INSERT OR IGNORE INTO RtpRequestRows
+      (rtp_id, payee_bank_id, payer_bank_id, amount_value, rtp_status,
+       expires_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'CREATED', ?, ?, ?)
+  `).bind(
+    rtpId, rtp.payee_bank_id, rtp.payer_bank_id, rtp.amount_value,
+    rtp.expires_at, now, now,
+  ).run()
 
   await db.batch([
     db.prepare(`

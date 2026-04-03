@@ -624,7 +624,9 @@ async function bankNameCheck(
     }
     return { result: 'MATCH', customer_name: account.customer_name }
   }
-  return { result: 'MATCH' }
+  // pspr_ref も account_hash も未指定の場合は名義照合不能
+  // 安全側に倒して MISMATCH を返す（仕様上、名義確認は必須ステップ）
+  return { result: 'MISMATCH', reason_code: 'NO_IDENTIFIER_PROVIDED' }
 }
 
 /**
