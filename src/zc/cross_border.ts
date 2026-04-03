@@ -87,18 +87,23 @@ export async function initiateCrossBorderTransfer(
   ).run()
 
   // 3. 国内 Transactions レコード (DEFERRED lane) 作成
+  // payee 側は外部 FPS の情報を設定する（空文字列だと execute-credit で口座特定不可）
+  // クロスボーダーでは foreign_bank_bic を payee_bank_id、foreign_account_id を
+  // payee_account_hash に格納し、着金処理で参照可能にする
   await db.prepare(`
     INSERT OR IGNORE INTO Transactions
       (txid, state, lane, amount_value, amount_currency,
        payer_bank_id, payer_account_hash, payee_bank_id, payee_account_hash,
        idempotency_key, version, created_at, updated_at)
-    VALUES (?, 'RECEIVED', 'DEFERRED', ?, ?, ?, ?, '', '', ?, 0, ?, ?)
+    VALUES (?, 'RECEIVED', 'DEFERRED', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
   `).bind(
     domesticTxid,
     domesticAmount,
     'JPY',
     req.payer_bank_id,
     req.payer_account_id,
+    req.foreign_bank_bic,
+    req.foreign_account_id,
     req.idempotency_key,
     now,
     now,

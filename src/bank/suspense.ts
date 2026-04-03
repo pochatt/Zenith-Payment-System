@@ -146,9 +146,19 @@ export async function settleSuspenseForDns(
 ): Promise<void> {
   const now = nowISO()
   // 当該サイクルのTXのみに限定（他サイクルの別段を誤って清算しない）
+  // PAY方向: RESERVED → EXECUTED → SETTLED（支払側の別段清算）
   await db.prepare(
     `UPDATE SuspenseDetails SET status='SETTLED', settled_at=?, dns_cycle_id=?, updated_at=?
      WHERE bank_id=? AND status='EXECUTED' AND direction='PAY'
        AND txid IN (SELECT txid FROM Transactions WHERE dns_cycle_id=?)`
   ).bind(now, dnsCycleId, now, bankId, dnsCycleId).run()
+  // RECEIVE方向: CUSTODY ステータスの受取側レコードもDNS清算対象とする
+  // CUSTODYは口座凍結/閉鎖で着金できなかった資金。DNS清算が完了しても
+  // 資金自体はcustodyに留まるが、清算ステータスは記録する必要がある
+  await db.prepare(
+    `UPDATE SuspenseDetails SET dns_cycle_id=?, updated_at=?
+     WHERE bank_id=? AND status='CUSTODY' AND direction='RECEIVE'
+       AND dns_cycle_id IS NULL
+       AND txid IN (SELECT txid FROM Transactions WHERE dns_cycle_id=?)`
+  ).bind(dnsCycleId, now, bankId, dnsCycleId).run()
 }
