@@ -120,22 +120,30 @@ export async function processExpress(
 // ---------------------------------------------------------------------------
 // ヘルパー（Express専用）
 // ---------------------------------------------------------------------------
-// 状態ガードを追加（AND state=? で許可遷移のみ実行可能に）
+// 状態ガード＋楽観ロック（AND state=? AND version=? で許可遷移のみ実行可能に）
+// Bug #4 fix: version チェックを追加し、キュー再配信時の二重 H 予約を防止する
 async function transitionTx(
   txid: string, state: string, reservationId: string | null, reasonCode: string | null, db: D1Database,
   fromState?: string,
 ): Promise<void> {
-  const whereClause = fromState
-    ? `WHERE txid = ? AND state = ?`
-    : `WHERE txid = ?`
-  const bindings = fromState
-    ? [state, reservationId, reasonCode, nowISO(), txid, fromState]
-    : [state, reservationId, reasonCode, nowISO(), txid]
-  await db.prepare(
-    `UPDATE Transactions SET state = ?, h_reservation_id = COALESCE(?, h_reservation_id),
-     reason_code = COALESCE(?, reason_code), updated_at = ?, version = version + 1
-     ${whereClause}`
-  ).bind(...bindings).run()
+  if (fromState) {
+    // version を取得して CAS UPDATE（楽観ロック）
+    const cur = await db
+      .prepare(`SELECT version FROM Transactions WHERE txid = ? AND state = ?`)
+      .bind(txid, fromState).first<{ version: number }>()
+    if (!cur) return  // 既に状態が変わっている: 冪等処理としてスキップ
+    await db.prepare(
+      `UPDATE Transactions SET state = ?, h_reservation_id = COALESCE(?, h_reservation_id),
+       reason_code = COALESCE(?, reason_code), updated_at = ?, version = version + 1
+       WHERE txid = ? AND state = ? AND version = ?`
+    ).bind(state, reservationId, reasonCode, nowISO(), txid, fromState, cur.version).run()
+  } else {
+    await db.prepare(
+      `UPDATE Transactions SET state = ?, h_reservation_id = COALESCE(?, h_reservation_id),
+       reason_code = COALESCE(?, reason_code), updated_at = ?, version = version + 1
+       WHERE txid = ?`
+    ).bind(state, reservationId, reasonCode, nowISO(), txid).run()
+  }
 }
 
 async function cancelTx(txid: string, reasonCode: string, db: D1Database): Promise<void> {

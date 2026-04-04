@@ -117,6 +117,25 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     return
   }
 
+  // Bug #6 fix: PAYER/PAYEE 両ロールの存在確認を Decision 確定前に実施
+  // Decision後に検証すると GT_DECIDED_TO_SETTLE → GT_DECIDED_CANCEL という不正遷移が FinalityLog に記録される
+  const payerLegs = legs.results.filter(l => l.role === 'PAYER')
+  const payeeLegs = legs.results.filter(l => l.role === 'PAYEE')
+  const payerLeg = payerLegs[0]
+  const payeeLeg = payeeLegs[0]
+  if (!payerLeg || !payeeLeg) {
+    console.error(`[gtid] GTID ${gtid} is missing PAYER or PAYEE leg — cancelling`)
+    await db.prepare(
+      `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
+    ).bind(now, gtid).run()
+    await writeFinalityLog(db, {
+      txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
+      payload_json: JSON.stringify({ gtid, reason: 'MISSING_LEG_ROLE' }), txid_or_gtid: gtid,
+    })
+    await finalizeGtidCancelled(gtid, db)
+    return
+  }
+
   // Decision 確定前に PAYER leg の H 予約を取得・ロック
   const hReservations = new Map<string, string>() // leg_id → reservationId
   for (const leg of legs.results) {
@@ -129,7 +148,7 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
         await releaseH(resId, db)
       }
       await db.prepare(
-        `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=?`
+        `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
       ).bind(now, gtid).run()
       await writeFinalityLog(db, {
         txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
@@ -149,9 +168,20 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   // dns_cycle_id を設定（DNS清算でのH解放に必要）
   const dnsCycleId = await getOrCreateDnsCycle(db, now)
 
-  await db.prepare(
-    `UPDATE GtidTransactions SET state='GT_DECIDED_TO_SETTLE', legs_ready_count=leg_count, updated_at=?, version=version+1 WHERE gtid=?`
+  // Bug #5 fix: AND state='GT_PRECHECKED' でステートガードを追加し、
+  // 並行タイムアウトキャンセルが先に GT_DECIDED_CANCEL に遷移していた場合に上書きしない
+  const decisionUpdated = await db.prepare(
+    `UPDATE GtidTransactions SET state='GT_DECIDED_TO_SETTLE', legs_ready_count=leg_count, updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
   ).bind(now, gtid).run()
+
+  if ((decisionUpdated.meta.changes ?? 0) === 0) {
+    // 並行処理で既にキャンセル等に遷移済み → 確保済みH予約を解放してスキップ
+    for (const resId of hReservations.values()) {
+      await releaseH(resId, db)
+    }
+    console.warn(`[gtid] advanceGtid: decision CAS failed for ${gtid} (already transitioned from GT_PRECHECKED)`)
+    return
+  }
 
   await writeFinalityLog(db, {
     txid: null, event_type: 'GtidDecided', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_TO_SETTLE',
@@ -163,28 +193,6 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   // PAYEEレグは Transaction を持たない。クレジットは PAYER Transaction の
   // onPayerExecConfirmed → ZC_BANK_CREDIT フローで逐次実行されるため、
   // ここで直接 ZC_BANK_CREDIT を投入すると二重着金が発生する。
-  const payerLegs = legs.results.filter(l => l.role === 'PAYER')
-  const payeeLegs = legs.results.filter(l => l.role === 'PAYEE')
-
-  // PAYER / PAYEE 両ロールが揃っていない場合はキャンセル（不正な GTID 構成）
-  const payerLeg = payerLegs[0]
-  const payeeLeg = payeeLegs[0]
-  if (!payerLeg || !payeeLeg) {
-    console.error(`[gtid] GTID ${gtid} is missing PAYER or PAYEE leg — cancelling`)
-    // この時点で確保済みの H 予約を解放する（リーク防止）
-    for (const resId of hReservations.values()) {
-      await releaseH(resId, db)
-    }
-    await db.prepare(
-      `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=?`
-    ).bind(now, gtid).run()
-    await writeFinalityLog(db, {
-      txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_DECIDED_TO_SETTLE', state_to: 'GT_DECIDED_CANCEL',
-      payload_json: JSON.stringify({ gtid, reason: 'MISSING_LEG_ROLE' }), txid_or_gtid: gtid,
-    })
-    await finalizeGtidCancelled(gtid, db)
-    return
-  }
 
   for (const leg of legs.results) {
     // PAYEEレグは Transaction を作らず ZC_BANK_CREDIT も送らない。

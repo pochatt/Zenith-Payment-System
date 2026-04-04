@@ -252,11 +252,23 @@ export async function cancelHtlc(
   htlcId: string, txid: string, reasonCode: string, db: D1Database, env?: Env,
 ): Promise<void> {
   const now = nowISO()
-  // h_reservation_id を取得してH解放
+
+  // h_reservation_id を事前に取得（H解放に使用するが、解放はstate guard成功後）
   const txForH = await db
     .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)
     .bind(txid).first<{ h_reservation_id: string | null }>()
-  if (txForH?.h_reservation_id) {
+
+  // state guard: DECIDED_TO_SETTLE以降の状態を上書きしないようガードする
+  // Bug #1 fix: H解放はステートガード付きUPDATE成功後に実行（TOCTOU防止）
+  // changes=0 は DECIDED_TO_SETTLE 等に既に遷移済みであることを示す → H解放もスキップ
+  const batchResults = await db.batch([
+    db.prepare(`UPDATE HtlcContracts SET state='DECIDED_CANCEL', version=version+1, updated_at=? WHERE htlc_id=? AND state NOT IN ('DECIDED_TO_SETTLE','SETTLED')`).bind(now, htlcId),
+    db.prepare(`UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state NOT IN ('DECIDED_TO_SETTLE','PAYER_EXEC_CONFIRMED','PAYEE_EXEC_CONFIRMED','SETTLED')`).bind(reasonCode, now, txid),
+  ])
+
+  // 少なくとも一方のUPDATEが成功した場合のみH解放を実行
+  const anyUpdated = ((batchResults[0]?.meta.changes ?? 0) + (batchResults[1]?.meta.changes ?? 0)) > 0
+  if (anyUpdated && txForH?.h_reservation_id) {
     await releaseH(txForH.h_reservation_id, db)
     // HTLC_LOCKED 時点で reserve-funds が実行済みのため、銀行側の別段預金も解放する。
     // ZC が一方的に解放するのではなく、銀行に通知して銀行自身が解放する（基本思想遵守）。
@@ -275,11 +287,13 @@ export async function cancelHtlc(
       }
     }
   }
-  // state guard: DECIDED_TO_SETTLE以降の状態を上書きしないようガードする
-  await db.batch([
-    db.prepare(`UPDATE HtlcContracts SET state='DECIDED_CANCEL', version=version+1, updated_at=? WHERE htlc_id=? AND state NOT IN ('DECIDED_TO_SETTLE','SETTLED')`).bind(now, htlcId),
-    db.prepare(`UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state NOT IN ('DECIDED_TO_SETTLE','PAYER_EXEC_CONFIRMED','PAYEE_EXEC_CONFIRMED','SETTLED')`).bind(reasonCode, now, txid),
-  ])
+
+  if (!anyUpdated) {
+    // 既に DECIDED_TO_SETTLE 等に遷移済みのため、キャンセルも H 解放も不要
+    console.warn(`[cancelHtlc] state guard prevented cancel for htlc_id=${htlcId} (already settled or decided)`)
+    return
+  }
+
   await writeFinalityLog(db, {
     txid, event_type: 'HtlcCancelled', state_from: null, state_to: 'DECIDED_CANCEL',
     payload_json: JSON.stringify({ htlc_id: htlcId, reason_code: reasonCode }), txid_or_gtid: txid,

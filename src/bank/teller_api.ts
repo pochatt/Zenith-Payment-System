@@ -239,6 +239,12 @@ export async function handleCreateAccount(req: Request, bankId: string, env: Env
   if (!allowed.includes(accountType))
     return jsonError(400, 'INVALID_TYPE', 'account_type must be SAVINGS or CURRENT')
 
+  if (body.initial_deposit !== undefined && body.initial_deposit !== null) {
+    if (typeof body.initial_deposit !== 'number' || !Number.isInteger(body.initial_deposit) || body.initial_deposit <= 0) {
+      return jsonError(400, 'INVALID_AMOUNT', 'initial_deposit must be a positive integer')
+    }
+  }
+
   const now = nowISO()
 
   // 次の口座番号を算出: 同一銀行の最大口座番号 + 1

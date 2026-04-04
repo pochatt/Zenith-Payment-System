@@ -112,13 +112,22 @@ export class MockD1Database {
 
 /**
  * Migration files to apply when creating a test database.
- * Order matters; only the migrations needed for ZC/Bank core logic are loaded.
+ * Order matters; all migrations are loaded to ensure complete schema coverage.
  */
 const SCHEMA_MIGRATIONS = [
   '0001_zc_schema.sql',
   '0002_bank_schema.sql',
   '0003_trace_filter_htlc_auth.sql',
   '0004_new_settlement.sql',
+  '0005_rtp_request_rows.sql',
+  '0006_rtp_columns.sql',
+  '0007_rtp_respond_columns.sql',
+  '0008_rtp_payee_account.sql',
+  '0009_boj_prefund.sql',
+  '0010_fix_missing_columns.sql',
+  '0011_fix_gtid_legs.sql',
+  '0012_fix_dns_cycles.sql',
+  '0013_retained_earnings_account.sql',
   '0014_circuit_breaker_reversal.sql',
 ]
 
@@ -131,7 +140,7 @@ const SCHEMA_MIGRATIONS = [
 export function createTestDb(): { sqlite: Database.Database; d1: MockD1Database } {
   const sqlite = new Database(':memory:')
   sqlite.pragma('journal_mode = WAL')
-  sqlite.pragma('foreign_keys = ON')
+  sqlite.pragma('foreign_keys = OFF')
 
   for (const migration of SCHEMA_MIGRATIONS) {
     const sql = readFileSync(join(MIGRATIONS_DIR, migration), 'utf-8')

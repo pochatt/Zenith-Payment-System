@@ -81,7 +81,7 @@ export async function writeFinalityLog(db: D1Database, entry: FinalityLogEntry):
 
 /** Exhaustive map of allowed state transitions in the transaction lifecycle. */
 const ALLOWED_TRANSITIONS: Record<TxState, TxState[]> = {
-  RECEIVED:              ['PRECHECKED', 'DECIDED_CANCEL'],
+  RECEIVED:              ['PRECHECKED', 'HTLC_LOCKED', 'DECIDED_CANCEL'],
   PRECHECKED:            ['PRECHECKED_SUSPENDED', 'H_RESERVED', 'DECIDED_CANCEL', 'DECIDED_TO_SETTLE'],  // HIGH_VALUE は PRECHECKED → DECIDED_TO_SETTLE
   PRECHECKED_SUSPENDED:  ['PRECHECKED', 'DECIDED_CANCEL'],
   H_RESERVED:            ['DECIDED_TO_SETTLE', 'DECIDED_CANCEL'],

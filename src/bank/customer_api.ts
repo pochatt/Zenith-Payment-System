@@ -155,7 +155,7 @@ export async function handleGetAccountTransactions(req: Request, bankId: string,
 }
 
 function journalDisplayLabel(txType: string, amount: number, lane: string | null, purpose: string | null): string {
-  if (txType === 'CASH')       return 'ご新規'
+  if (txType === 'CASH')       return amount >= 0 ? '現金入金' : '現金払い戻し'
   if (txType === 'INTEREST')   return '利息'
   if (txType === 'CORRECTION') return '訂正'
 
