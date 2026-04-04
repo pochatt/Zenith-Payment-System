@@ -203,14 +203,23 @@ export async function handleTellerListAccounts(req: Request, bankId: string, env
   if (statusFilter) { query += ` AND status=?`; params.push(statusFilter) }
   query += ` ORDER BY opened_at ASC`
 
-  const rows = await env.DB.prepare(query).bind(...params).all<BankAccountRow>()
-  const result = noBalance
-    ? rows.results
-    : await Promise.all(rows.results.map(async acc => ({
-        ...acc,
-        balance: await calcBalanceLedger(acc.account_id, env.DB),
-      })))
-  return json(200, { accounts: result })
+  if (noBalance) {
+    const rows = await env.DB.prepare(query).bind(...params).all<BankAccountRow>()
+    return json(200, { accounts: rows.results })
+  }
+
+  // Use LEFT JOIN to aggregate balances, avoiding the N+1 problem that causes D1 limits to crash the API
+  let joinQuery = `
+    SELECT a.*, COALESCE(SUM(j.amount), 0) AS balance
+    FROM BankAccounts a
+    LEFT JOIN BankJournals j ON a.account_id = j.account_id
+    WHERE a.bank_id=?
+  `
+  if (statusFilter) { joinQuery += ` AND a.status=?` }
+  joinQuery += ` GROUP BY a.account_id ORDER BY a.opened_at ASC`
+
+  const joinedRows = await env.DB.prepare(joinQuery).bind(...params).all()
+  return json(200, { accounts: joinedRows.results })
 }
 
 // ---------------------------------------------------------------------------

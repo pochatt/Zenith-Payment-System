@@ -25,19 +25,27 @@ export async function handleGetAccounts(req: Request, bankId: string, env: Env):
   const headers = getHeaders(req)
   if (!headers) return jsonError(401, 'UNAUTHORIZED', 'X-Bank-Id and X-Customer-Id required')
 
+  // Use LEFT JOIN to aggregate balances, avoiding N+1 parallel DB queries
   const accounts = await env.DB
-    .prepare(`SELECT * FROM BankAccounts WHERE bank_id=? AND customer_id=? AND status != 'CLOSED'`)
+    .prepare(`
+      SELECT a.*, COALESCE(SUM(j.amount), 0) AS balance
+      FROM BankAccounts a
+      LEFT JOIN BankJournals j ON a.account_id = j.account_id
+      WHERE a.bank_id=? AND a.customer_id=? AND a.status != 'CLOSED'
+      GROUP BY a.account_id
+      ORDER BY a.opened_at ASC
+    `)
     .bind(bankId, headers.customerId)
-    .all<BankAccountRow>()
+    .all()
 
-  const result = await Promise.all(accounts.results.map(async acc => ({
+  const result = accounts.results.map((acc: any) => ({
     account_id: acc.account_id,
     account_type: acc.account_type,
     status: acc.status,
     customer_name: acc.customer_name,
-    balance: await calcBalanceLedger(acc.account_id, env.DB),
+    balance: acc.balance,
     currency: 'JPY',
-  })))
+  }))
 
   return json(200, { accounts: result })
 }
