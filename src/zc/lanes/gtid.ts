@@ -202,9 +202,12 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     if (leg.role === 'PAYEE') continue
 
     const txid = `TX-GT-${leg.leg_id}`
-    // PAYER の対応 PAYEE を index で決定（存在しない場合は先頭 PAYEE を使用）
-    const idx = payerLegs.indexOf(leg)
-    const counterpartyPayeeLeg = payeeLegs[idx] ?? payeeLeg
+    // PAYER の対応 PAYEE を leg_id の辞書順で決定。
+    // 配列 index に依存すると PAYER/PAYEE の数が不等な場合に
+    // 誤った銀行へ着金するため、leg_id による安定的なマッピングを使用する。
+    // 対応する PAYEE が見つからない場合は先頭 PAYEE をフォールバックとする。
+    const payerIdx = payerLegs.filter(p => p.leg_id <= leg.leg_id).length - 1
+    const counterpartyPayeeLeg = payeeLegs[payerIdx] ?? payeeLeg
     const hReservationId = hReservations.get(leg.leg_id) ?? null
 
     // Transactions レコードを作成（execute-debit/credit が参照する）
