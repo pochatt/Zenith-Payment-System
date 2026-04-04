@@ -398,6 +398,8 @@ GTID照会
 #### GET /api/gtid
 GTID一覧
 
+Query: `?limit=20&offset=0`
+
 #### GET /api/gtid/:gtid/events
 GTIDイベントログ照会
 
@@ -406,6 +408,8 @@ HTLC照会
 
 #### GET /api/htlc
 HTLC一覧
+
+Query: `?limit=50&offset=0`
 
 #### GET /api/dns/:business_date/status
 DNS状態照会 → `{ "state": "OPEN|KICKED|SETTLED|HOLD_ACTIVE", "igs_mode": "NORMAL|...", "cycle_id": "..." }`

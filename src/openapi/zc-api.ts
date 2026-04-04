@@ -219,6 +219,9 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
       responses:
         "200":
           description: HTLC list
@@ -453,6 +456,13 @@ paths:
     get:
       tags: [gtid]
       summary: List GTIDs
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
       responses:
         "200":
           description: GTID list
@@ -554,6 +564,9 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
         - name: bank_id
           in: query
           schema: { type: string }
