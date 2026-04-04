@@ -245,7 +245,7 @@ export async function handleCreateAccount(req: Request, bankId: string, env: Env
   // IN ('SAVINGS','CURRENT') に限定 — '003-ZCS' 等のシステム口座を除外し
   //           parseInt('-ZCS') = NaN → NaN+1 = NaN で口座番号が壊れる問題を防ぐ
   const maxAcct = await env.DB.prepare(
-    `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS', 'CURRENT') ORDER BY account_id DESC LIMIT 1`
+    `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS', 'CURRENT') ORDER BY CAST(SUBSTR(account_id, 4) AS INTEGER) DESC LIMIT 1`
   ).bind(bankId).first<{ account_id: string }>()
 
   let nextSeq = 1
@@ -374,7 +374,7 @@ export async function handleBatchCreateAccounts(req: Request, bankId: string, en
   // 現在の最大口座番号を取得（既存ロジックと共通）
   // 同時実行による ID 重複を防ぐため、UUID サフィックスでユニーク化
   const maxAcct = await env.DB.prepare(
-    `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS', 'CURRENT') ORDER BY account_id DESC LIMIT 1`
+    `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS', 'CURRENT') ORDER BY CAST(SUBSTR(account_id, 4) AS INTEGER) DESC LIMIT 1`
   ).bind(bankId).first<{ account_id: string }>()
   let nextSeq = 1
   if (maxAcct) {

@@ -215,7 +215,13 @@ export async function handlePostCustomerTransfer(req: Request, bankId: string, e
 
   // payee_account_id から payee_bank_id を導出
   const payeeAccountId = body.payee_account_id ?? body.payee_account_hash ?? ''
-  const payeeBankId = body.payee_bank_id ?? bankCodeFromAccount(payeeAccountId)
+  let payeeBankId = body.payee_bank_id
+  if (!payeeBankId) {
+    if (payeeAccountId.startsWith('h:')) {
+      return jsonError(400, 'MISSING_BANK_ID', 'payee_bank_id is required when using an account hash')
+    }
+    payeeBankId = bankCodeFromAccount(payeeAccountId)
+  }
 
   // 顧客口座を特定（customer_id で SAVINGS 口座を検索）
   const account = await env.DB

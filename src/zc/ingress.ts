@@ -677,7 +677,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
     const stmts: ReturnType<D1Database['prepare']>[] = []
     // 既存口座の最大連番を取得（既存ロジックと共通）
     const maxAcct = await db.prepare(
-      `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS','CURRENT') ORDER BY account_id DESC LIMIT 1`
+      `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS','CURRENT') ORDER BY CAST(SUBSTR(account_id, 4) AS INTEGER) DESC LIMIT 1`
     ).bind(bankId).first<{ account_id: string }>()
     let seq = 1
     if (maxAcct) {
