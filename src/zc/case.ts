@@ -60,3 +60,27 @@ export async function updateCase(
     `UPDATE Cases SET state=?, resolved_at=COALESCE(?, resolved_at), updated_at=? WHERE case_id=?`
   ).bind(newState, resolvedAt ?? null, now, caseId).run()
 }
+
+/**
+ * CASE を解決状態へ自動遷移させる（状態進展による自動収束）
+ */
+export async function autoResolveCaseForTx(db: D1Database, txid: string): Promise<void> {
+  const row = await db.prepare(
+    `SELECT case_id FROM Transactions WHERE txid=? AND case_id IS NOT NULL`
+  ).bind(txid).first<{ case_id: string }>()
+  if (row?.case_id) {
+    const c = await db.prepare(`SELECT state FROM Cases WHERE case_id=?`).bind(row.case_id).first<{state: string}>()
+    if (c && (c.state === 'OPEN' || c.state === 'IN_PROGRESS')) {
+       await updateCase(db, row.case_id, 'RESOLVED', nowISO())
+    }
+  }
+}
+
+export async function autoResolveCaseForGtid(db: D1Database, gtid: string): Promise<void> {
+  const cases = await db.prepare(
+    `SELECT case_id FROM Cases WHERE related_gtid=? AND state IN ('OPEN', 'IN_PROGRESS')`
+  ).bind(gtid).all<{ case_id: string }>()
+  for (const c of cases?.results ?? []) {
+    await updateCase(db, c.case_id, 'RESOLVED', nowISO())
+  }
+}

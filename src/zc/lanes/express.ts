@@ -138,11 +138,16 @@ async function transitionTx(
        WHERE txid = ? AND state = ? AND version = ?`
     ).bind(state, reservationId, reasonCode, nowISO(), txid, fromState, cur.version).run()
   } else {
+    // fromState指定なしでも楽観ロックを適用
+    const cur = await db
+      .prepare(`SELECT version FROM Transactions WHERE txid = ?`)
+      .bind(txid).first<{ version: number }>()
+    if (!cur) return
     await db.prepare(
       `UPDATE Transactions SET state = ?, h_reservation_id = COALESCE(?, h_reservation_id),
        reason_code = COALESCE(?, reason_code), updated_at = ?, version = version + 1
-       WHERE txid = ?`
-    ).bind(state, reservationId, reasonCode, nowISO(), txid).run()
+       WHERE txid = ? AND version = ?`
+    ).bind(state, reservationId, reasonCode, nowISO(), txid, cur.version).run()
   }
 }
 

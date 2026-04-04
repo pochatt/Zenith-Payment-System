@@ -31,7 +31,7 @@ import { nowISO } from '../types'
 import { newUUID } from '../shared/idempotency'
 import { deserializeProof } from '../shared/proof'
 import { releaseH } from './h_model'
-import { openCase } from './case'
+import { openCase, autoResolveCaseForTx, autoResolveCaseForGtid } from './case'
 import { logTxEvent } from './trace'
 import { createCreditNotification, deliverNotification } from './credit_notify'
 import { publishEvent } from './stream'
@@ -150,6 +150,9 @@ export async function onPayerExecConfirmed(
     payload_json: JSON.stringify({ payer_bank_proof_ref: JSON.parse(bankProofRefJson) }), txid_or_gtid: txid,
   })
 
+  // 状態の進展による CASE の自動収束
+  await autoResolveCaseForTx(db, txid)
+
   // HIGH_VALUE レーンは IGS コールバック（handleIgsCallback）が ZC_BANK_CREDIT を投入する。
   // ここで投入すると IGS コールバックと二重送信になり BOJ 清算仕訳が欠落するリスクがある。
   // IGS はこの後 processQueueMessage の ZC_BANK_DEBIT 完了フックで開始される。
@@ -204,6 +207,9 @@ export async function onPayeeExecConfirmed(
     txid, event_type: 'PayeeExecConfirmed', state_from: tx.state, state_to: 'PAYEE_EXEC_CONFIRMED',
     payload_json: JSON.stringify({ payee_bank_proof_ref: JSON.parse(bankProofRefJson) }), txid_or_gtid: txid,
   })
+
+  // 状態の進展による CASE の自動収束
+  await autoResolveCaseForTx(db, txid)
 
   // SETTLED への遷移（CAS version guard 付き: 二重実行防止）
   const txAfterPayee = await db.prepare(
@@ -349,6 +355,9 @@ export async function checkAndFinalizeGtid(gtid: string, db: D1Database): Promis
       txid: null, event_type: 'GtidSettled', state_from: 'GT_DECIDED_TO_SETTLE', state_to: 'GT_SETTLED',
       payload_json: JSON.stringify({ gtid }), txid_or_gtid: gtid,
     })
+
+    // 状態の進展による GTID CASE の自動収束
+    await autoResolveCaseForGtid(db, gtid)
   }
 }
 
@@ -369,6 +378,9 @@ export async function finalizeCancelledTx(txid: string, db: D1Database): Promise
       txid, event_type: 'Cancelled', state_from: 'DECIDED_CANCEL', state_to: 'CANCELLED',
       payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
     })
+
+    // キャンセル完了への進展も自動収束条件とみなす
+    await autoResolveCaseForTx(db, txid)
   }
 }
 

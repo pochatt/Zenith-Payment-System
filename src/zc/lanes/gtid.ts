@@ -95,20 +95,22 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
 
     if (checkResult.result === 'OK') {
       await db.prepare(
-        `UPDATE GtidLegs SET state='LEG_READY_CHECKED', updated_at=?, version=version+1 WHERE leg_id=?`
+        `UPDATE GtidLegs SET state='LEG_READY_CHECKED', updated_at=?, version=version+1 WHERE leg_id=? AND state='LEG_REGISTERED'`
       ).bind(now, leg.leg_id).run()
     } else {
       allReady = false
       await db.prepare(
-        `UPDATE GtidLegs SET state='LEG_FAILED', updated_at=?, version=version+1 WHERE leg_id=?`
+        `UPDATE GtidLegs SET state='LEG_FAILED', updated_at=?, version=version+1 WHERE leg_id=? AND state='LEG_REGISTERED'`
       ).bind(now, leg.leg_id).run()
     }
   }
 
   if (!allReady) {
-    await db.prepare(
-      `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=?`
+    // Bug fix: AND state='GT_PRECHECKED' を追加して並行処理の上書きを防ぐ
+    const cancelUpdated = await db.prepare(
+      `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
     ).bind(now, gtid).run()
+    if ((cancelUpdated.meta.changes ?? 0) === 0) return
     await writeFinalityLog(db, {
       txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
       payload_json: JSON.stringify({ gtid, reason: 'LEG_READY_CHECK_NG' }), txid_or_gtid: gtid,
