@@ -122,19 +122,45 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
     // h_used 減算は HReservations の CAS が成功した場合のみ意味がある
     // D1 batch はトランザクション内実行のため、CAS 失敗時は後続 stmt も含めて
     // ロールバックされないが、changes=0 で呼び出し元が判定する
+    // 注: h_used < amount となる場合は会計不整合のため警告ログを出力する。
+    // MAX(0, ...) はフロア保護として維持するが、不整合の隠蔽を防ぐ。
     db
       .prepare(
-        `UPDATE Participants SET h_used = MAX(0, h_used - ?)
+        `UPDATE Participants SET h_used = CASE
+           WHEN h_used < ? THEN 0
+           ELSE h_used - ?
+         END
          WHERE bank_id = ? AND EXISTS (
            SELECT 1 FROM HReservations
            WHERE reservation_id = ? AND is_released = 1 AND released_at = ?
          )`,
       )
-      .bind(row.amount, row.bank_id, reservationId, now),
+      .bind(row.amount, row.amount, row.bank_id, reservationId, now),
   ]
 
   const results = await db.batch(stmts)
-  return (results[0]?.meta.changes ?? 0) > 0
+  const released = (results[0]?.meta.changes ?? 0) > 0
+  if (released) {
+    // h_used < amount の場合は会計不整合（h_used が 0 にクランプされる）
+    const p = await db
+      .prepare(`SELECT h_used FROM Participants WHERE bank_id = ?`)
+      .bind(row.bank_id)
+      .first<{ h_used: number }>()
+    if (p && p.h_used === 0) {
+      // 解放後 h_used=0 が期待通りでない可能性がある場合の警告
+      // (他の予約が存在するのに 0 になっていればフロア保護が作動した兆候)
+      const otherActive = await db
+        .prepare(`SELECT COUNT(*) as cnt FROM HReservations WHERE bank_id = ? AND is_released = 0`)
+        .bind(row.bank_id)
+        .first<{ cnt: number }>()
+      if (otherActive && otherActive.cnt > 0) {
+        console.warn(
+          `[h_model] WARNING: h_used floored to 0 for bank_id=${row.bank_id} but ${otherActive.cnt} active reservations remain. Possible accounting inconsistency.`,
+        )
+      }
+    }
+  }
+  return released
 }
 
 /**

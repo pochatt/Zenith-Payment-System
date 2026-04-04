@@ -153,22 +153,26 @@ async function transitionTx(
 
 async function cancelTx(txid: string, reasonCode: string, db: D1Database): Promise<void> {
   const now = nowISO()
-  // キャンセル前に h_reservation_id と現在状態を取得してH解放・FinalityLog に state_from を記録
+  // キャンセル前に現在状態を取得して FinalityLog に state_from を記録
   const txRow = await db
-    .prepare(`SELECT h_reservation_id, state FROM Transactions WHERE txid = ?`)
-    .bind(txid).first<{ h_reservation_id: string | null; state: string }>()
+    .prepare(`SELECT state FROM Transactions WHERE txid = ?`)
+    .bind(txid).first<{ state: string }>()
   if (!txRow) return
-  // state guard: キャンセル可能な状態でのみ実行（DECIDED_TO_SETTLE以降への上書き防止）
-  const cancelableStates = ['RECEIVED', 'PRECHECKED', 'PRECHECKED_SUSPENDED', 'H_RESERVED']
-  if (!cancelableStates.includes(txRow.state)) return
-  if (txRow.h_reservation_id) {
-    await releaseH(txRow.h_reservation_id, db)
-  }
+  // state guard を先に評価し、遷移が成立した場合のみ H 解放する。
+  // 先に H 解放すると並行して DECIDED_TO_SETTLE へ進んだ場合に
+  // LOCKED 予約が誤って解放されるため、順序を逆にする（standard.ts cancelAndLog と同一パターン）。
   const updated = await db.prepare(
     `UPDATE Transactions SET state = 'DECIDED_CANCEL', reason_code = ?, updated_at = ?, version = version + 1
      WHERE txid = ? AND state IN ('RECEIVED','PRECHECKED','PRECHECKED_SUSPENDED','H_RESERVED')`
   ).bind(reasonCode, now, txid).run()
   if ((updated.meta.changes ?? 0) === 0) return
+  // 状態遷移確定後にH解放（二重解放は releaseH 内の is_released=0 ガードで防護）
+  const txForH = await db
+    .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)
+    .bind(txid).first<{ h_reservation_id: string | null }>()
+  if (txForH?.h_reservation_id) {
+    await releaseH(txForH.h_reservation_id, db)
+  }
   await writeFinalityLog(db, {
     txid, event_type: 'DecidedCancel', state_from: txRow.state, state_to: 'DECIDED_CANCEL',
     payload_json: JSON.stringify({ reason_code: reasonCode }), txid_or_gtid: txid,

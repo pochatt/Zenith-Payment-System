@@ -285,7 +285,7 @@ export async function respondToRtp(
     `).bind(
       linkedTxid,
       rtp.amount_value,
-      response.payer_bank_id,
+      rtp.payer_bank_id,
       response.payer_account_id,
       rtp.payee_bank_id,
       rtp.payee_account_hash ?? null,

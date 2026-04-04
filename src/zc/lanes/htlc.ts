@@ -90,7 +90,8 @@ export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
   if (!htlc || htlc.state !== 'HTLC_RECEIVED') return
 
   // timelockが過去なら即DECIDED_CANCEL（この時点では銀行サスペンス未作成のため env 不要）
-  if (new Date(htlc.timelock) <= new Date(now)) {
+  // 標準HTLCセマンティクス: timelock時刻ちょうどはまだ有効（厳密に過去の場合のみ期限切れ）
+  if (new Date(htlc.timelock) < new Date(now)) {
     await cancelHtlc(htlcId, htlc.txid, 'TIMELOCK_EXPIRED', db)
     return
   }
@@ -155,7 +156,8 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
   if (htlc.state !== 'HTLC_LOCKED') return { result: 'REJECTED', htlc_id: req.htlc_id, state: htlc.state, reason_code: 'INVALID_STATE' }
 
   // timelock 期限確認（HTLC_LOCKED 後: 銀行サスペンス存在 → env を渡して銀行に解放通知）
-  if (new Date(htlc.timelock) <= new Date(now)) {
+  // 標準HTLCセマンティクス: timelock時刻ちょうどはまだ有効（厳密に過去の場合のみ期限切れ）
+  if (new Date(htlc.timelock) < new Date(now)) {
     await cancelHtlc(req.htlc_id, htlc.txid, 'TIMELOCK_EXPIRED', db, env)
     return { result: 'REJECTED', htlc_id: req.htlc_id, state: 'DECIDED_CANCEL', reason_code: 'TIMELOCK_EXPIRED' }
   }
