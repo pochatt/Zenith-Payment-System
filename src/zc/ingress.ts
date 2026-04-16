@@ -416,9 +416,9 @@ export async function handleSeed(env: Env): Promise<Response> {
   await db.batch([
     // Participants（ZC参加行）
     db.prepare(`INSERT INTO Participants (bank_id, bank_name, ingress_base_url, h_limit, h_used, is_active, registered_at)
-      VALUES ('001','みずほ銀行','/bank/001',100000000,0,1,?)`).bind(now),
+      VALUES ('001','長岡銀行','/bank/001',100000000,0,1,?)`).bind(now),
     db.prepare(`INSERT INTO Participants (bank_id, bank_name, ingress_base_url, h_limit, h_used, is_active, registered_at)
-      VALUES ('002','三菱UFJ銀行','/bank/002',100000000,0,1,?)`).bind(now),
+      VALUES ('002','尾張銀行','/bank/002',100000000,0,1,?)`).bind(now),
 
     // BankAccounts（口座番号: 銀行コード3桁 + 連番7桁, 別段=BBB0000000, ZCS=BBB-ZCS）
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
@@ -748,11 +748,11 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
   const nextCode = String(3 + bankIndex).padStart(3, '0')
   // フロントの SIM_BANKS と同じ銀行名マッピング
   const BANK_NAMES: Record<string, string> = {
-    '003': '三井住友銀行', '004': 'りそな銀行',
-    '005': 'ゆうちょ銀行', '006': '横浜銀行', '007': '千葉銀行', '008': '埼玉りそな銀行',
-    '009': '静岡銀行', '010': '福岡銀行', '011': '広島銀行', '012': '北海道銀行',
-    '013': '七十七銀行', '014': '百十四銀行', '015': '南都銀行', '016': '十六銀行',
-    '017': '北陸銀行', '018': '伊予銀行', '019': '肥後銀行', '020': '琉球銀行',
+    '003': '加賀銀行', '004': '肥前銀行',
+    '005': '薩摩銀行', '006': '越後銀行', '007': '讃岐銀行', '008': '備後銀行',
+    '009': '淡路銀行', '010': '日向銀行', '011': '紀伊銀行', '012': '相模銀行',
+    '013': '駿河銀行', '014': '甲斐銀行', '015': '信濃銀行', '016': '近江銀行',
+    '017': '丹波銀行', '018': '大隅銀行', '019': '播磨銀行', '020': '美作銀行',
   }
   const bankName = BANK_NAMES[nextCode] || `テスト銀行${nextCode}`
 

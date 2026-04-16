@@ -762,8 +762,8 @@ CREATE INDEX idx_approval_txid    ON PaymentApprovalRequests(txid);
 ### ZC側（0001_zc_schema.sql）
 ```sql
 INSERT OR IGNORE INTO Participants (...) VALUES
-  ('001', 'みずほ銀行',    '/bank/001', 100000000, 0, 1, '2025-01-01T00:00:00Z'),
-  ('002', '三菱UFJ銀行',   '/bank/002', 100000000, 0, 1, '2025-01-01T00:00:00Z');
+  ('001', '長岡銀行',    '/bank/001', 100000000, 0, 1, '2025-01-01T00:00:00Z'),
+  ('002', '尾張銀行',   '/bank/002', 100000000, 0, 1, '2025-01-01T00:00:00Z');
 ```
 
 ### Bank側（0002_bank_schema.sql）
