@@ -32,7 +32,7 @@ const BIC_TO_BANK_ID: Record<string, string> = {
   'YUKBJPJT': '007',   // 讃岐銀行（国際BIC）
   'SFJPJPJT': '008',   // 備後銀行
   'AOZOBJPJT': '009',  // 淡路銀行
-  'OKHBJPJT': '010',   // 阿波銀行（仮）
+  'OKHBJPJT': '010',   // 日向銀行（仮）
   'HOKBJPJT': '011',
   'TOHOJPJT': '012',
   'CHUBJPJT': '013',
@@ -40,7 +40,7 @@ const BIC_TO_BANK_ID: Record<string, string> = {
   'HIRBJPJT': '015',
   'SHKBJPJT': '016',
   'FUKBJPJT': '017',
-  'KUMBJPJT': '018',
+  'KUMBJPJT': '018',   // 大隅銀行
   'KAGBJPJT': '019',
   'OKNBJPJT': '020',
   // 海外主要銀行（クロスボーダー用）
