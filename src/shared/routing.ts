@@ -23,16 +23,16 @@ import type { LaneType, MessageFormat } from '../types'
  */
 const BIC_TO_BANK_ID: Record<string, string> = {
   // 日本国内参加銀行
-  'MHCBJPJT': '001',   // みずほ銀行
-  'BOTKJPJT': '002',   // 三菱UFJ銀行
-  'SMTBJPJT': '003',   // 三井住友銀行
-  'RZSBJPJT': '004',   // りそな銀行
-  'HANGJPJT': '005',   // 埼玉りそな銀行
-  'SMBCJPJT': '006',   // SMBC信託
-  'YUKBJPJT': '007',   // ゆうちょ銀行（国際BIC）
-  'SFJPJPJT': '008',   // 新生銀行
-  'AOZOBJPJT': '009',  // あおぞら銀行
-  'OKHBJPJT': '010',   // 沖縄海邦銀行（仮）
+  'MHCBJPJT': '001',   // 長岡銀行
+  'BOTKJPJT': '002',   // 尾張銀行
+  'SMTBJPJT': '003',   // 加賀銀行
+  'RZSBJPJT': '004',   // 肥前銀行
+  'HANGJPJT': '005',   // 薩摩銀行
+  'SMBCJPJT': '006',   // 越後銀行
+  'YUKBJPJT': '007',   // 讃岐銀行（国際BIC）
+  'SFJPJPJT': '008',   // 備後銀行
+  'AOZOBJPJT': '009',  // 淡路銀行
+  'OKHBJPJT': '010',   // 阿波銀行（仮）
   'HOKBJPJT': '011',
   'TOHOJPJT': '012',
   'CHUBJPJT': '013',

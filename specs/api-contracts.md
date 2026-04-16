@@ -463,7 +463,7 @@ Request: `{ "pspr_ref": "...", "payee_bank_id": "001", "account_hash": "h:...", 
 #### POST /api/participants/register
 参加行登録（初期投入用）
 
-Request: `{ "bank_id": "001", "bank_name": "みずほ銀行", "ingress_base_url": "/bank/001", "h_limit": 100000000 }`
+Request: `{ "bank_id": "001", "bank_name": "長岡銀行", "ingress_base_url": "/bank/001", "h_limit": 100000000 }`
 
 #### GET /api/banks
 参加行一覧
@@ -471,7 +471,7 @@ Request: `{ "bank_id": "001", "bank_name": "みずほ銀行", "ingress_base_url"
 #### POST /api/banks/add
 参加行追加（シミュレーター用: 銀行＋システム勘定を一括作成）
 
-Request: `{ "bank_id": "003", "bank_name": "テスト銀行", "h_limit": 100000000 }`
+Request: `{ "bank_id": "003", "bank_name": "加賀銀行", "h_limit": 100000000 }`
 
 #### DELETE /api/banks/:bankId
 参加行削除
