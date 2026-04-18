@@ -42,10 +42,11 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
 
   if (tx.state !== 'RECEIVED') return  // 既に進んでいる
 
-  // 1. PRECHECKED
-  await db.prepare(
+  // 1. PRECHECKED — CAS ガード: 並行キュー再配信で二重実行を防ぐ
+  const toPrechecked = await db.prepare(
     `UPDATE Transactions SET state='PRECHECKED', updated_at=?, version=version+1 WHERE txid=? AND state='RECEIVED'`
   ).bind(now, txid).run()
+  if ((toPrechecked.meta.changes ?? 0) === 0) return  // 別コールが先に遷移済み
   await writeFinalityLog(db, {
     txid, event_type: 'PreCheckPassed', state_from: 'RECEIVED', state_to: 'PRECHECKED',
     payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
