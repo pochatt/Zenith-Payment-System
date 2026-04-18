@@ -84,6 +84,10 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
   beneficiaryInstErrors.forEach(e => errors.push(`beneficiary_institution: ${e}`))
 
   // 国をまたぐ取引であることの整合性確認
+  // NOTE: This validator checks consistency between fatf16_applicable and is_cross_border flags.
+  // The fatf16_applicable flag should logically only be true when is_cross_border is true.
+  // Amount threshold checking (JPY 150,000) occurs in ingress.ts, not here, so this validator
+  // only ensures structural consistency, not amount-based applicability.
   if (data.fatf16_applicable && !data.is_cross_border) {
     errors.push('fatf16_applicable=true だが is_cross_border=false: 矛盾した設定です')
   }

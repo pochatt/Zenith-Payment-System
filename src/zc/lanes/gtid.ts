@@ -138,6 +138,29 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     return
   }
 
+  // Bug #2 fix: Validate amount balance between PAYER and PAYEE legs.
+  // Atomic settlement requires that total PAYER amount == total PAYEE amount.
+  // Without this check, multi-leg transactions could settle with unbalanced amounts,
+  // causing accounting inconsistencies and potential fund loss/gain.
+  const totalPayerAmount = payerLegs.reduce((sum, leg) => sum + leg.amount_value, 0)
+  const totalPayeeAmount = payeeLegs.reduce((sum, leg) => sum + leg.amount_value, 0)
+  if (totalPayerAmount !== totalPayeeAmount) {
+    console.error(`[gtid] GTID ${gtid} amount mismatch: PAYER total=${totalPayerAmount}, PAYEE total=${totalPayeeAmount} — cancelling`)
+    await db.prepare(
+      `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
+    ).bind(now, gtid).run()
+    await writeFinalityLog(db, {
+      txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
+      payload_json: JSON.stringify({
+        gtid, reason: 'AMOUNT_BALANCE_MISMATCH',
+        total_payer_amount: totalPayerAmount,
+        total_payee_amount: totalPayeeAmount,
+      }), txid_or_gtid: gtid,
+    })
+    await finalizeGtidCancelled(gtid, db)
+    return
+  }
+
   // Decision 確定前に PAYER leg の H 予約を取得・ロック
   const hReservations = new Map<string, string>() // leg_id → reservationId
   for (const leg of legs.results) {

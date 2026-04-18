@@ -105,6 +105,17 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
   if (participant?.daily_amount_limit != null) {
     let success = false;
     try {
+      // Bug #4 fix (partial): Daily limit reset mechanism.
+      // Primary reset: EOD cron job (scheduled handler '30 7 * * *' in wrangler.toml, ~7:30 AM JST)
+      //   - File: src/cron/eod.ts, lines 83-93
+      //   - Executes: UPDATE Participants SET daily_amount_used = 0
+      // If cron job fails or is delayed, the limit may not reset until the next EOD run.
+      // For production systems, consider implementing:
+      //   1. Persistent last_reset_date field to detect missed resets
+      //   2. Middleware to auto-reset if date changes between requests
+      //   3. Monitoring alerts if daily_amount_used persists beyond EOD window
+      // For now, relying on scheduled cron job with manual override via /internal/cron/eod endpoint.
+
       // アトミックに加算し、超過時は rows=0 になる
       const upd = await db.prepare(
         `UPDATE Participants SET daily_amount_used = daily_amount_used + ?
