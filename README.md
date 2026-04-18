@@ -271,15 +271,23 @@ npm run type-check          # TypeScript 型チェック
 
 ```
 zenith-mock/
-├── migrations/              # D1 SQLマイグレーション（0001〜順番に適用）
+├── migrations/              # D1 SQLマイグレーション（0001〜0014、番号順に適用）
+├── schema/
+│   └── baseline.sql         # 全マイグレーション適用後のスキーマ断面（参照用）
+├── specs/                   # 仕様書・設計ドキュメント
 ├── src/
-│   ├── index.ts             # Workerエントリーポイント・ルーター
-│   ├── types.ts             # 全共通型定義（唯一の型定義ファイル）
-│   ├── zc/                  # Zenith Coordinator ロジック
-│   ├── bank/                # 銀行モック（勘定系・顧客API）
-│   ├── shared/              # 共通ユーティリティ
+│   ├── index.ts             # Workerエントリーポイント・HTTP/Queue/Cron ディスパッチ
+│   ├── types.ts             # 型定義バレル（types/ を re-export）
+│   ├── types/               # 型定義（primitives / states / rows / api）
+│   ├── shared/              # 共通ユーティリティ（HMAC, ISO20022, FATF, routing 等）
 │   ├── cron/                # EODバッチ・タイムアウト巡回
-│   └── dashboard/           # 管理画面 HTML
+│   ├── dashboard/           # 管理画面 HTML（Alpine.js + Tailwind）
+│   ├── openapi/             # OpenAPI スキーマ定義（zc-api / bank-api）
+│   ├── zc/                  # Zenith Coordinator ロジック
+│   │   ├── lanes/           # Express / Standard / HTLC / RTP / GTID / High-Value / Bulk
+│   │   └── orchestrator/    # 状態遷移・FinalityLog・銀行ハブ・GTID ファイナライズ
+│   └── bank/                # 銀行モック（勘定系・顧客API・AMLフィルタ）
+├── test/                    # vitest 統合テスト（in-memory SQLite）
 ├── wrangler.toml.example    # 設定テンプレート（Git管理）
 └── wrangler.toml            # 実際の設定（.gitignore 対象・各自が作成）
 ```
