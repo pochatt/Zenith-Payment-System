@@ -3,429 +3,335 @@ SEO Keywords: payment system, payment settlement, fintech, cloudflare workers, t
 Recommended GitHub Topics: payment-system, fintech, cloudflare-workers, typescript, settlement, banking, financial-infrastructure, payment-rails, settlement-engine
 -->
 
-<div align="center">
+# Zenith Payment System
 
-# ⚡ Zenith Payment System
+Reference implementation of the Zenith Coordinator—a next-generation payment settlement architecture designed for transparency, auditability, and distributed coordination.
 
-### The next-generation payment coordination layer — **fully explainable, radically transparent, ready to run.**
-
-[![TypeScript](https://img.shields.io/badge/TypeScript-blue?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Cloudflare Workers](https://img.shields.io/badge/Cloudflare%20Workers-orange?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
-[![MIT License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Zero Cost](https://img.shields.io/badge/Deployment%20Cost-%240-brightgreen)](README.md#-zero-operational-cost)
-
-</div>
+**Status:** Reference Implementation | **License:** MIT | **Cost:** Zero operational cost (Cloudflare free tier)
 
 ---
 
-## 🎯 The Problem We're Solving
+## Overview
 
-Modern payment systems are **black boxes**. You send money, it vanishes into the infrastructure, and nobody can tell you what's happening.
+Traditional payment systems operate as black boxes. Money is sent, disappears into infrastructure, and neither the customer nor support staff can explain what happened or where funds are at any moment.
 
-- **You have no visibility** — Is your payment stuck? Lost? Pending? You don't know.
-- **Failures are inexplicable** — When something breaks, the system can't articulate what went wrong.
-- **Support is powerless** — Customer service can only say "please wait" because the infrastructure itself is opaque.
+Zenith treats payments as explicable state sequences rather than opaque transactions:
 
-This isn't negligence. **This is a design pattern from an era before real-time transparency became possible.**
-
----
-
-## 💡 The Zenith Vision
-
-**Treat payments not as black boxes, but as sequences of explicable states.**
-
-Instead of:
-```
-Payment Sent → ??? → ??? → Arrived (maybe)
-```
-
-Zenith provides:
 ```
 RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE 
 → PAYER_EXEC_CONFIRMED → PAYEE_EXEC_CONFIRMED → SETTLED
 ```
 
-Every step is logged, auditable, and **explainable in real time.**
+Every state change is logged in an append-only FinalityLog, making the entire settlement process auditable and real-time transparent.
+
+### Core Principles
+
+- **Explicability** — Every state transition is recorded, auditable, and understandable
+- **Coordination** — Multi-bank settlements with atomic guarantees where possible
+- **Auditability** — Append-only event log with full context for each state change
+- **Resilience** — Circuit breaker patterns, graceful degradation, automatic health monitoring
+- **Idempotency** — Safe retry semantics for all operations
 
 ---
 
-## 🚀 Why This Implementation?
+## Use Cases
 
-Zenith is more than a specification—**it's a reference architecture proven to work.**
+### For Financial Institutions
 
-This codebase lets you:
+Reference implementation for modernizing settlement infrastructure. Demonstrates best practices for:
+- State machine design under concurrency
+- Auditability and compliance logging
+- Multi-bank coordination protocols
+- Graceful failure and recovery
 
-✅ **Understand** — Not just read specs; trace real state transitions in a working system
-✅ **Prototype** — Spin up a full multi-bank settlement network in minutes
-✅ **Integrate** — Use this as a reference for your own payment infrastructure
-✅ **Experiment** — Test new settlement patterns without regulatory friction (sandbox)
-✅ **Deploy** — Run on Cloudflare Workers with **zero fixed costs**
+### For Fintech Builders
 
-### Who This Is For
+Pre-integration testing environment before connecting to real bank APIs. Validate:
+- Settlement lane behavior
+- Edge cases and failure modes
+- API contract compliance
+- Performance characteristics under load
 
-| User | Why |
-|------|-----|
-| **Fintech Founders** | Pre-integration testing before connecting to real bank APIs |
-| **Bank Engineering Teams** | Reference implementation for settlement layer redesign |
-| **Payment Researchers** | Working sandbox to explore novel settlement architectures |
-| **Developer Learning** | Deep understanding of how modern payments actually work |
+### For Payment Researchers
 
----
+Sandbox for exploring novel settlement architectures without regulatory constraints. Experiment with:
+- New lane patterns
+- Alternative state machines
+- Cross-border settlement mechanisms
+- Netting and clearing strategies
 
-## ⚙️ Core Architecture
+### For Developers
 
-### Payment Lanes (7 settlement patterns)
-
-| Lane | Use Case | Speed | Finality |
-|------|----------|-------|----------|
-| **EXPRESS** | Retail, instant pay-out | ⚡ Immediate | H-reserve backed |
-| **STANDARD** | General P2P, bills | 📋 1-2 min | Name check + auth |
-| **HTLC** | Conditional escrow | 🔐 Event-based | Hash-lock release |
-| **RTP** | Invoice pull payments | 📥 Minutes | Payee initiates |
-| **GTID** | Multi-bank atomic transfer | 🔗 Coordinated | All-or-nothing |
-| **HIGH-VALUE** | Large RTGS transfers | 🏦 Real-time | BOJ settlement |
-| **BULK** | Batch processing | 📦 EOD | Netting cleared |
-
-### End-to-End Features
-
-```
-┌─────────────────────────────────────────────────────────┐
-│  Zenith Coordinator (Central Settlement Hub)           │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│  State Machine      │  Finality Log      │  Bank Hub    │
-│  ────────────────   │  ─────────────     │  ─────────── │
-│  • 50+ transitions  │  Append-only       │  Circuit     │
-│  • Optimistic lock  │  audit trail       │  breaker     │
-│  • Idempotency      │  Post-decision     │  Health      │
-│                     │  immutable         │  monitoring  │
-│                                                         │
-├─────────────────────────────────────────────────────────┤
-│  Settlement Lanes   │  Advanced Features   │  Bank APIs  │
-│  ───────────────   │  ──────────────────  │  ────────── │
-│  • Express        │  • QR payments       │  • Ingress  │
-│  • Standard       │  • Proxy resolution  │  • Ledger   │
-│  • HTLC           │  • Cross-border      │  • Custody  │
-│  • RTP            │  • EDI/Rich data     │  • Filters  │
-│  • GTID           │  • Account verify    │  • SSE      │
-│  • High-Value     │  • Reversals         │             │
-│  • Bulk           │  • DNS (netting)     │             │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-         ↓               ↓                ↓
-    Bank A          Bank B           Bank C
-   (Payer)        (Gateway)       (Payee)
-```
-
-### Database (28 optimized tables)
-
-- **Core Settlement** — Transactions, Participants, H-Reserves
-- **Traceability** — FinalityLog (append-only), TxEventLog, AuditLog
-- **Specialized Lanes** — HTLC, GTID, RTP tables with constraints
-- **Bank Operations** — Accounts, Journals (zero-sum), Suspense, Filters
-- **Advanced Features** — Proxies, QR codes, EDI, Cross-border
+Educational codebase for understanding modern payment system design. Learn:
+- How payments actually flow through settlement infrastructure
+- Distributed consensus under financial constraints
+- Database design for auditability
+- Concurrency control in financial systems
 
 ---
 
-## 🏃 5-Minute Quick Start
+## Getting Started
 
-### 1️⃣ Clone & Install
+### Requirements
+
+- Node.js 18+
+- npm 8+
+- Cloudflare account (free tier eligible)
+
+### 5-Minute Deploy
+
 ```bash
+# 1. Clone and install
 git clone https://github.com/pochatt/zenith-mock.git
 cd zenith-mock
 npm install
-```
 
-### 2️⃣ Authenticate with Cloudflare
-```bash
+# 2. Authenticate with Cloudflare
 npx wrangler login
-```
 
-### 3️⃣ Create Database & Queue
-```bash
+# 3. Create resources
 npx wrangler d1 create zenith-db
 npx wrangler queues create zenith-mock-queue
 npx wrangler r2 bucket create zenith-mock-r2
-```
 
-### 4️⃣ Configure & Deploy
-```bash
+# 4. Configure
 cp wrangler.toml.example wrangler.toml
-# ← Edit wrangler.toml with your database_id
+# Edit wrangler.toml with your database_id
 
+# 5. Apply migrations
+npm run db:migrate:remote
+
+# 6. Deploy
 npm run deploy
-```
 
-### 5️⃣ Seed Data & Explore
-```bash
+# 7. Seed initial data
 curl -X POST https://zenith-mock.<your-domain>.workers.dev/internal/seed
 ```
 
-**Done.** Dashboard is live at `https://zenith-mock.<your-domain>.workers.dev`
+Dashboard is now live at `https://zenith-mock.<your-domain>.workers.dev`
 
-👉 **Full deployment guide** → [See details below](#deployment-guide)
+### Local Development
 
----
-
-## 📊 Live Dashboard
-
-The UI provides **real-time visibility** into settlement operations:
-
-- **Overview** — Transaction states, settlement lanes, network health
-- **Operations** — Manual settlement, DNS cycle management, case handling
-- **Monitoring** — Liquidity tracking, network topology, per-bank metrics
-- **Experimentation** — Simulator with configurable settlement weights
-- **Documentation** — Integrated spec browser
-
-Access at `/`, `/console`, `/bank-app` after deployment.
+```bash
+npm run db:migrate:local
+npm run dev  # http://localhost:8787
+```
 
 ---
 
-## 🔍 Deep Features
+## Features
 
-### Real-Time Traceability
-Every payment generates a **FinalityLog entry**—immutable, timestamped, with full context.
-```json
+### Settlement Lanes
+
+| Lane | Purpose | Finality Model |
+|------|---------|---|
+| EXPRESS | Instant retail payments | H-reserve backed |
+| STANDARD | General P2P transfers | Name verification + authorization |
+| HTLC | Conditional escrow settlement | Hash-time-lock release |
+| RTP | Invoice-initiated collections | Payee-initiated pull |
+| GTID | Multi-bank atomic transfers | Coordinated all-or-nothing |
+| HIGH-VALUE | Large RTGS transfers | BOJ real-time gross settlement |
+| BULK | Batch processing | End-of-day netting |
+
+### Advanced Features
+
+- **Daily Net Settlement (DNS)** — EOD cycle with position netting
+- **QR Payments** — Static and dynamic codes with HMAC validation
+- **Alias Resolution** — Phone, email, corporate ID routing
+- **Cross-Border** — FATF R.16 compliant international transfers
+- **Account Verification** — Pre-settlement name and account matching
+- **EDI / Rich Data** — Structured commercial data integration
+- **Circuit Breaker** — Automatic health monitoring with graceful degradation
+- **Event Stream** — Real-time SSE notifications to participating banks
+
+---
+
+## Architecture
+
+### State Machine
+
+All transactions follow a deterministic state machine with explicit allowed transitions. Prevents invalid state combinations and ensures consistency across concurrent writes.
+
+```typescript
+// From src/zc/orchestrator/state_machine.ts
+const ALLOWED_TRANSITIONS = {
+  'RECEIVED': ['PRECHECKED', 'REJECTED'],
+  'PRECHECKED': ['H_RESERVED', 'REJECTED'],
+  'H_RESERVED': ['DECIDED_TO_SETTLE', 'H_RELEASED'],
+  'DECIDED_TO_SETTLE': ['PAYER_EXEC_CONFIRMED', 'DECIDED_CANCEL'],
+  'PAYER_EXEC_CONFIRMED': ['PAYEE_EXEC_CONFIRMED'],
+  'PAYEE_EXEC_CONFIRMED': ['SETTLED'],
+  // ... more transitions
+};
+```
+
+### Request Flow
+
+```
+HTTP Request
+    ↓
+[Validation & Schema Check]
+    ↓
+[Lane-Specific Logic]
+    ↓
+[State Machine Verification]
+    ↓
+[FinalityLog Append]
+    ↓
+[Queue Enqueue]
+    ↓
+HTTP 202 Accepted
+    ↓
+[Async Processing]
+    ↓
+[Bank Calls via Circuit Breaker]
+    ↓
+[Finality Confirmation]
+```
+
+### Database Design
+
+28 optimized tables across core settlement, traceability, and bank operations:
+
+**Core Settlement**
+- `Transactions` — Payment records with state tracking
+- `Participants` — Participating banks with H-limits
+- `HReservations` — H-model funds reservation
+
+**Traceability**
+- `FinalityLog` — Append-only state change log
+- `TxEventLog` — Detailed processing events and audit trail
+- `BankAuditLog` — Per-bank command history
+
+**Specialized Lanes**
+- `HtlcContracts`, `GtidTransactions`, `RtpRequests`
+
+**Bank Operations**
+- `BankAccounts` — Account master
+- `BankJournals` — Zero-sum double-entry ledger
+- `SuspenseDetails` — Custody and suspense handling
+
+See `specs/schema.md` for full schema documentation.
+
+---
+
+## API
+
+All endpoints are documented in `specs/api-contracts.md`.
+
+### Core Endpoints
+
+**Initiate Payment**
+```bash
+POST /api/transfers
+Content-Type: application/json
+
 {
-  "log_id": "...",
-  "txid": "TX-001234",
-  "event_type": "DECIDED_TO_SETTLE",
-  "state_from": "PRECHECKED",
-  "state_to": "DECIDED_TO_SETTLE",
-  "occurred_at": "2026-04-18T12:34:56Z",
-  "payload": { /* full context */ }
+  "schema_version": "1.0",
+  "message_type": "EVENT",
+  "name": "PaymentInitiated",
+  "txid": "TX-...",
+  "lane": "EXPRESS",
+  "amount": { "value": 5000, "currency": "JPY" },
+  "payer": { "bank_id": "001", "account_hash": "h:..." },
+  "payee": { "bank_id": "002", "account_hash": "h:..." }
 }
 ```
 
-### Optimistic Concurrency
-Multi-version transactions prevent race conditions without locking.
-```typescript
-// Transactions use a `version` column
-// Only succeeds if version matches at update time
-UPDATE Transactions SET state = ?, version = version + 1 
-WHERE txid = ? AND version = ?
+**Query Transaction**
+```bash
+GET /api/transactions/TX-123
+
+{
+  "txid": "TX-123",
+  "state": "SETTLED",
+  "decision": { "status": "DECIDED_TO_SETTLE" },
+  "execution": {
+    "a": "OK",
+    "b": "OK",
+    "payer_bank_proof_ref": "PROOF-...",
+    "payee_bank_proof_ref": "PROOF-..."
+  },
+  "as_of": "2026-04-18T12:34:56Z"
+}
 ```
 
-### Circuit Breaker
-Automatic health monitoring with graceful degradation:
-- ⚫ **NORMAL** — Full service
-- 🟡 **DEGRADED** — Slow responses, increased timeouts
-- 🔴 **ISOLATED** — Bank excluded; reversals initiated
-- 🟢 **RECOVERING** — Health check passed, re-admitting gradually
-
-### Idempotency by Design
-Every API call has an `idempotency_key`. Retry safely.
-```
-Request 1: idempotency_key=abc → PROCESSED → TX-123
-Request 1 (retry): idempotency_key=abc → CACHED RESPONSE → TX-123
-Request 2: idempotency_key=def → NEW TRANSACTION → TX-124
+**List Transactions**
+```bash
+GET /api/transactions?state=SETTLED&lane=EXPRESS&limit=50&offset=0
 ```
 
 ---
 
-## 🛠️ Technology Stack
+## Performance
 
-| Layer | Technology | Why |
-|-------|-----------|-----|
-| **Runtime** | Cloudflare Workers | Zero cold starts, global edge deployment |
-| **Database** | D1 (SQLite) | ACID compliance, embedded, serverless |
-| **Queue** | Cloudflare Queues | Durable async task processing |
-| **Storage** | R2 | Cost-effective blob storage for EDI/rich data |
-| **Language** | TypeScript | Type safety for financial logic |
-| **Framework** | Hono | Minimal overhead, edge-optimized routing |
-| **Testing** | vitest + better-sqlite3 | In-memory SQLite integration tests |
-| **Frontend** | Alpine.js + Tailwind | Lightweight SPA, zero build required |
+Measured on Cloudflare Workers (shared infrastructure):
 
-### Why Zero Cost?
+| Operation | Latency (p99) | Throughput |
+|-----------|---|---|
+| Payment initiation → decision | 120–180ms | - |
+| Bank ingress call + response | 200–300ms | - |
+| Query transaction | <50ms | - |
+| Single Worker | - | ~500 TPS |
 
-Cloudflare's free tier covers:
-- 100,000 requests/day
-- D1 database with generous quotas
-- Queues with 100K messages/month
-- R2 with 1 GB storage + egress
-- Workers CPU time (shared)
-
-**This is production-grade infrastructure—free tier is real, not a trap.**
+Horizontal scaling available across Cloudflare's global edge.
 
 ---
 
-## 📈 Performance Characteristics
-
-Typical latency (p99):
-- **Payment initiation** → decision: 120–180ms
-- **Bank ingress calls** → finality: 200–300ms
-- **DNS settlement cycle** → completion: 2–5 seconds
-- **Query response**: <50ms
-
-Throughput:
-- **Single Worker** → ~500 TPS
-- **Scale horizontally** on Cloudflare's global network
-
----
-
-## 🧪 Testing & Quality
+## Testing
 
 ```bash
-# Run all tests
-npm run test
-
-# Watch mode during development
-npm run test:watch
-
-# Single test file
-npx vitest test/zc/express.test.ts
+npm run test              # Run all tests
+npm run test:watch       # Watch mode
+npx vitest test/zc/express.test.ts  # Single file
 ```
 
-- **Integration tests** — against in-memory SQLite
-- **Scenario-based** — real settlement flows end-to-end
-- **Mock banks** — simulated network failures, delays, rejections
-- **Edge cases** — concurrent writes, timeouts, state conflicts
+Integration tests run against in-memory SQLite (via better-sqlite3), with full schema and realistic settlement scenarios including:
+- Concurrent transaction processing
+- Network failures and retries
+- State machine constraint violations
+- Circuit breaker activation/recovery
 
 ---
 
-## 📚 Documentation
+## Deployment
 
-| Document | Purpose |
-|----------|---------|
-| **[Zenith Architecture](specs/zenith_public.md)** | Design philosophy, state machines, settlement flows |
-| **[API Contracts](specs/api-contracts.md)** | All endpoints, request/response formats, error codes |
-| **[Database Schema](specs/schema.md)** | Table definitions, relationships, constraints |
-| **[Business Policy](specs/zenith_policy.md)** | Transaction rules, limits, exceptions |
-| **[File Structure](specs/file_structure.md)** | Codebase layout and module responsibilities |
+### Production Considerations
 
-**English versions available** as `*.en.md` in `specs/`
+This reference implementation is suitable for:
+- Development and testing environments
+- Integration testing before production deployment
+- Sandbox/training systems
+- Research prototypes
 
----
+**Not suitable for production without:**
+- TLS termination
+- Authentication and authorization
+- Encryption at rest
+- Regulatory audit and compliance review
+- Formal security assessment
 
-## 🌍 International Deployment
+### Production Deployment Pattern
 
-### Multi-Currency Support
-```
-JPY ← → SGD (FX conversion, FATF R.16 compliant)
-JPY ← → EUR (via settlement bank netting)
-```
+Use this implementation as a reference for building your own settlement system:
 
-### Cross-Border Settlement
-- FATF R.16 originator/beneficiary validation
-- Foreign FPS integration (SG PayNow, HK FPS, etc.)
-- Nostro account management
-
----
-
-## 🔐 Security Considerations
-
-✅ **HMAC-SHA256** signature validation on all bank calls
-✅ **Idempotency** prevents duplicate credit
-✅ **Append-only audit log** (FinalityLog, TxEventLog)
-✅ **Optimistic locking** for concurrent writes
-✅ **AML/sanctions screening** hooks (mock implementation)
-✅ **Name verification** before settlement
-⚠️ **Not suitable for production** without: TLS termination, auth, encryption, regulatory audit
-
-**Use this as a reference for your own compliance framework.**
+1. **Study the state machines** — `src/zc/orchestrator/state_machine.ts`
+2. **Understand the protocols** — `specs/zenith_public.md`
+3. **Review the data model** — `specs/schema.md`
+4. **Implement in your stack** — Apply the patterns to your infrastructure
+5. **Apply compliance framework** — Add regulatory controls for your jurisdiction
 
 ---
 
-## 📖 How to Use This
+## Configuration
 
-### For Learning
-1. Deploy locally: `npm run dev`
-2. Explore the dashboard: http://localhost:8787
-3. Read `specs/zenith_public.md` to understand the design
-4. Trace a payment through the code: `src/zc/lanes/express.ts`
+Configuration lives in `wrangler.toml` (created from template `wrangler.toml.example`):
 
-### For Prototyping
-1. Modify settlement rules in `src/zc/lanes/*.ts`
-2. Add new bank filters in `src/bank/filter.ts`
-3. Test changes with `npm run test`
-4. Deploy to Cloudflare: `npm run deploy`
-
-### For Integration Testing
-1. Use the API endpoints in `specs/api-contracts.md`
-2. Seed test data: `/internal/sim/setup`
-3. Simulate failures: Circuit breaker configs
-4. Query results: `/api/transactions`, `/api/events`
-
-### For Contributing
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Write tests first
-4. Ensure `npm run test` passes
-5. Submit a PR with a clear description
-
----
-
-## 🚀 What You Can Build
-
-- **Payment API** — Wrap Zenith as a RESTful microservice
-- **Dashboard** — Custom UI for settlement monitoring
-- **Compliance Tool** — Real-time audit and exception handling
-- **Educational Platform** — Interactive payment system courses
-- **Mock for Testing** — Pre-integration testing before real bank connections
-- **Research Prototype** — Novel settlement mechanisms without regulatory burden
-
----
-
-## ⚡ Getting Help
-
-- **Questions?** Open an [issue](https://github.com/pochatt/zenith-mock/issues)
-- **Found a bug?** [Bug report](https://github.com/pochatt/zenith-mock/issues/new?template=bug.md)
-- **Want to contribute?** See [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Technical deep dive?** See [specs/](specs/) for detailed documentation
-
----
-
-## 📋 Deployment Guide
-
-### Prerequisites
-
-| Tool | Version |
-|------|---------|
-| Node.js | 18+ |
-| npm | 8+ |
-| Cloudflare Account | Free tier OK |
-
-### Step-by-Step
-
-#### 1. Clone Repository
-```bash
-git clone https://github.com/pochatt/zenith-mock.git
-cd zenith-mock
-npm install
-```
-
-#### 2. Cloudflare Setup
-```bash
-npx wrangler login
-```
-
-#### 3. Create Resources
-
-```bash
-# Database
-npx wrangler d1 create zenith-db
-
-# Queue
-npx wrangler queues create zenith-mock-queue
-
-# Storage
-npx wrangler r2 bucket create zenith-mock-r2
-```
-
-Copy the database_id from the D1 output.
-
-#### 4. Configure wrangler.toml
-
-```bash
-cp wrangler.toml.example wrangler.toml
-```
-
-Edit `wrangler.toml`:
 ```toml
 [[d1_databases]]
 binding = "DB"
 database_name = "zenith-db"
-database_id = "YOUR_DATABASE_ID"  # ← Paste here
+database_id = "YOUR_DATABASE_ID"
 
 [[queues.producers]]
 binding = "QUEUE"
@@ -433,367 +339,343 @@ queue = "zenith-mock-queue"
 
 [[queues.consumers]]
 queue = "zenith-mock-queue"
+max_batch_size = 100
+max_batch_timeout = 30
 
 [[r2_buckets]]
 binding = "R2"
 bucket_name = "zenith-mock-r2"
-```
 
-#### 5. Apply Migrations
-
-```bash
-npm run db:migrate:remote
-```
-
-Verify 28 tables created:
-```bash
-npx wrangler d1 execute zenith-db --remote \
-  --command "SELECT COUNT(*) as table_count FROM sqlite_master WHERE type='table'"
-```
-
-#### 6. Deploy
-
-```bash
-npm run deploy
-```
-
-You'll get a URL: `https://zenith-mock.<your-subdomain>.workers.dev`
-
-#### 7. Seed Initial Data
-
-```bash
-curl -X POST https://zenith-mock.<your-subdomain>.workers.dev/internal/seed
-```
-
-#### 8. Access Dashboard
-
-Open: `https://zenith-mock.<your-subdomain>.workers.dev`
-
----
-
-## 🔄 Local Development
-
-```bash
-# Apply migrations locally
-npm run db:migrate:local
-
-# Start dev server
-npm run dev
-```
-
-Dashboard: http://localhost:8787
-
----
-
-## 🛠️ Available Commands
-
-```bash
-npm run dev                 # Start local server
-npm run deploy              # Deploy to Cloudflare
-npm run db:migrate:local    # Apply migrations to local D1
-npm run db:migrate:remote   # Apply migrations to remote D1
-npm run type-check          # TypeScript type checking
-npm run test                # Run tests once
-npm run test:watch          # Run tests in watch mode
+[env.production]
+vars = { LOG_LEVEL = "info" }
 ```
 
 ---
 
-## 📊 Schema Changes
+## Database Migrations
 
-**Never edit existing migration files.**
-
-For new schema:
+Migrations are sequential and immutable. New schema changes always go in a new numbered file:
 
 ```bash
-cat > migrations/0015_my_feature.sql << 'EOF'
-ALTER TABLE Transactions ADD COLUMN my_column TEXT;
-CREATE INDEX idx_my_column ON Transactions(my_column);
+cat > migrations/0015_add_feature.sql << 'EOF'
+ALTER TABLE Transactions ADD COLUMN feature_flag TEXT;
+CREATE INDEX idx_feature ON Transactions(feature_flag);
 EOF
 
 npm run db:migrate:remote
 ```
 
----
-
-## 🎓 Architecture Deep Dive
-
-### Request Flow
-
-```
-HTTP Request (e.g., POST /api/transfers)
-    ↓
-[src/index.ts] — Route dispatch
-    ↓
-[src/zc/ingress.ts] — Validation & pre-checks
-    ↓
-[src/zc/lanes/*.ts] — Lane-specific logic
-    ↓
-[State Machine] — Validate transition
-    ↓
-[FinalityLog] — Append immutable event
-    ↓
-[Queue] — Enqueue async work
-    ↓
-HTTP 202 (Accepted)
+To reset database (development only):
+```bash
+npx wrangler d1 delete zenith-db --yes
+npx wrangler d1 create zenith-db
+# Update database_id in wrangler.toml
+npm run db:migrate:remote
 ```
 
-### Async Processing
+---
 
-```
-Queue Consumer ([src/zc/orchestrator.ts])
-    ↓
-[orchestrator/*] — Dispatch to handlers
-    ↓
-[Bank Hub] — Call participating banks
-    ↓
-[Circuit Breaker] — Health monitoring
-    ↓
-[Finality] — Mark as settled
-    ↓
-[EventStream] — Notify banks via SSE
+## Commands
+
+```bash
+npm run dev              # Local dev server
+npm run deploy           # Deploy to Cloudflare
+npm run type-check       # TypeScript type checking
+npm run test             # Run test suite
+npm run test:watch       # Test watch mode
+npm run db:migrate:local # Apply migrations locally
+npm run db:migrate:remote # Apply migrations to remote D1
 ```
 
-### Database Constraints
-
-- **Transactions** — indexed by state, payer, payee, DNS cycle
-- **HReservations** — per-bank, with is_released flag
-- **FinalityLog** — append-only, indexed by txid
-- **DnsCycles** — one per business date
-- **BankJournals** — zero-sum (every debit has a matching credit)
-
 ---
 
-## 💰 Cost Estimate (Real)
+## Directory Structure
 
-| Operation | Cost/Month |
-|-----------|-----------|
-| 10,000 payments/day × 30 | **$0** (within free tier) |
-| 100,000 API calls | **$0** |
-| 100 GB storage (R2) | **$1.50** |
-| **Total** | **~$1.50** (optional) |
-
----
-
-## 🏆 Reference Implementations
-
-- **Express Lane** — Synchronous end-to-end settlement
-- **HTLC** — Conditional escrow with hash-time-lock
-- **GTID** — Multi-leg atomic coordination
-- **DNS** — Daily net settlement netting
-
-Each is a complete, testable state machine.
-
----
-
-## 📝 License
-
-MIT License — See [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Acknowledgments
-
-Built for the global fintech community. Contributions welcome.
-
----
-
-<div align="center">
-
-### Ready to explore the future of payment settlement?
-
-**[Deploy Now](#-5-minute-quick-start)** • **[Read Specs](specs/)** • **[Join the Discussion](https://github.com/pochatt/zenith-mock/issues)**
-
-</div>
-
----
-
----
-
-# 日本語版 (Japanese Version)
-
-*English version above. 日本語ドキュメントは下記をご参照ください。*
-
-## 🎯 解決する問題
-
-現代の決済システムは**ブラックボックス**です。お金を送ると、インフラに吸い込まれ、何が起きているのか誰も教えてくれません。
-
-- **可視性がない** — 送金が止まっているのか、失われているのか、保留中なのか。分かりません。
-- **障害が説明できない** — 何か壊れても、システムそのものが何が起きたのか言えません。
-- **サポートが無力** — カスタマーサービスは「お待ちください」としか言えません。なぜなら、インフラ自体が不透明だから。
-
-これは怠慢ではなく、**リアルタイム透明性が可能になる前の設計パターンが、時代遅れになった結果**です。
-
-## 💡 Zenithの構想
-
-**決済を「ブラックボックス」ではなく、「説明可能な状態の連なり」として扱う。**
-
-従来は：
 ```
-送金実行 → ??? → ??? → 到着（たぶん）
+zenith-mock/
+├── migrations/           # D1 SQL migrations (0001–0014)
+├── schema/
+│   └── baseline.sql      # Schema snapshot (reference)
+├── specs/                # Documentation
+│   ├── zenith_public.md  # Architecture & design
+│   ├── api-contracts.md  # Endpoint reference
+│   ├── schema.md         # Database reference
+│   └── zenith_policy.md  # Business rules
+├── src/
+│   ├── index.ts          # Worker entry point
+│   ├── types.ts          # Type definitions barrel
+│   ├── types/            # Type modules
+│   ├── shared/           # Shared utilities
+│   ├── cron/             # Scheduled jobs
+│   ├── dashboard/        # Frontend UI
+│   ├── openapi/          # OpenAPI schemas
+│   ├── zc/               # Coordinator logic
+│   │   ├── lanes/        # Settlement lanes
+│   │   ├── orchestrator/ # Async processing
+│   │   └── [features]    # HTLC, DNS, etc.
+│   └── bank/             # Bank mock implementation
+├── test/                 # Test suite
+├── package.json
+├── tsconfig.json
+├── vitest.config.ts
+└── wrangler.toml         # Cloudflare configuration
 ```
 
-Zenithは：
+---
+
+## Documentation
+
+### Reference
+
+- **[Zenith Architecture](specs/zenith_public.md)** — Design philosophy, state machines, settlement flows
+- **[API Contracts](specs/api-contracts.md)** — Complete endpoint reference
+- **[Database Schema](specs/schema.md)** — Table definitions and relationships
+- **[Business Policy](specs/zenith_policy.md)** — Transaction rules and constraints
+- **[File Structure](specs/file_structure.md)** — Codebase organization
+
+### Getting Started
+
+1. Read `specs/zenith_public.md` for architectural overview
+2. Deploy locally with `npm run dev`
+3. Explore dashboard at http://localhost:8787
+4. Review `specs/api-contracts.md` for API usage
+5. Check `test/` for realistic usage examples
+
+---
+
+## Security
+
+Security measures in this implementation:
+
+- HMAC-SHA256 signature validation on all bank-to-coordinator calls
+- Idempotency key tracking prevents duplicate settlement
+- Append-only audit log (FinalityLog) for non-repudiation
+- Optimistic versioning for optimistic locking under concurrency
+- Name verification before settlement confirmation
+- AML/sanctions screening hooks (mock implementation)
+
+**Important:** This is a reference implementation. Before production use:
+
+- Implement TLS/mTLS for all network calls
+- Add authentication and authorization layers
+- Encrypt sensitive data at rest and in transit
+- Conduct security audit and penetration testing
+- Implement regulatory compliance controls
+- Review and test failure scenarios thoroughly
+
+---
+
+## Contributing
+
+Contributions are welcome. Please:
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/my-feature`
+3. Write tests first (test-driven development)
+4. Ensure tests pass: `npm run test`
+5. Submit a pull request with clear description
+
+---
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+## Support
+
+- **Questions?** Open an [issue](https://github.com/pochatt/zenith-mock/issues)
+- **Bug report?** Use [bug template](https://github.com/pochatt/zenith-mock/issues/new?template=bug.md)
+- **Technical discussion?** See `specs/` for detailed documentation
+
+---
+
+---
+
+# 日本語版
+
+## 概要
+
+従来の決済システムはブラックボックスです。送金されたお金はインフラに吸い込まれ、顧客もサポート担当者も、何が起きたのか、資金がどこにあるのかを説明することができません。
+
+Zenithは決済を不透明なトランザクションではなく、説明可能な状態の連なりとして扱います：
+
 ```
 RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE 
 → PAYER_EXEC_CONFIRMED → PAYEE_EXEC_CONFIRMED → SETTLED
 ```
 
-すべてのステップが記録され、監査可能で、**リアルタイムに説明可能**です。
+すべての状態変化は追記型のFinalityLogに記録され、決済プロセス全体が監査可能で、リアルタイム透明性を持ちます。
 
-## 🚀 このモック実装が必要な理由
+### 基本原則
 
-Zenithは仕様書ではなく、**動くリファレンス実装**です。
+- **説明可能性** — すべての状態遷移が記録され、監査可能で、理解できる
+- **協調性** — 複数銀行による決済、原子性保証を可能な限り
+- **監査性** — 完全なコンテキストを持つ追記型イベントログ
+- **回復性** — サーキットブレーカーパターン、段階的機能低下、自動ヘルス監視
+- **冪等性** — すべての操作に対して安全な再試行セマンティクス
 
-このコードで：
+## 利用シーン
 
-✅ **理解** — 仕様を読むだけでなく、動作中のシステムで状態遷移を追跡
-✅ **プロトタイプ** — 複数銀行の決済ネットワークを分単位で立ち上げ
-✅ **統合** — 独自の決済インフラ実装のリファレンスに
-✅ **実験** — 規制の制約なく、サンドボックスで新しい清算パターンをテスト
-✅ **デプロイ** — Cloudflare Workers上で**ゼロコスト稼働**
+### 金融機関向け
 
-### 向いている方々
+決済インフラの現代化のためのリファレンス実装。以下のベストプラクティスを実証：
+- 並行処理下での状態機械設計
+- 監査性とコンプライアンスロギング
+- 複数銀行間の協調プロトコル
+- 優雅なフェイルオーバーと回復
 
-| ユーザー | 理由 |
-|---------|------|
-| **FinTechスタートアップ** | 実銀行API接続前の統合試験 |
-| **銀行システム部門** | 清算層の再設計時のリファレンス |
-| **決済研究者** | 新しい清算アーキテクチャの検証サンドボックス |
-| **開発者の学習** | 現代の決済がいかに動いているかの深い理解 |
+### Fintech開発者向け
 
-## ⚙️ コア機能
+実銀行API接続前の統合試験環境。以下を検証：
+- 送金レーンの挙動
+- エッジケースと障害モード
+- APIコントラクト適合性
+- 負荷下でのパフォーマンス特性
 
-### 7つの送金レーン
+### 決済研究者向け
 
-| レーン | 用途 | 速度 | 確定 |
-|--------|------|------|------|
-| **EXPRESS** | 店舗決済・即座払い | ⚡ 即時 | H予約担保 |
-| **STANDARD** | 一般P2P・請求 | 📋 1-2分 | 名義確認+承認 |
-| **HTLC** | 条件付きエスクロー | 🔐 イベント | ハッシュロック解放 |
-| **RTP** | 請求払い | 📥 数分 | 受取人起点 |
-| **GTID** | 多銀行原子送金 | 🔗 協調 | All or Nothing |
-| **HIGH-VALUE** | 大口RTGS | 🏦 即時 | 日銀清算 |
-| **BULK** | 一括処理 | 📦 EOD | ネッティング |
+規制制約なしで新しい決済アーキテクチャを検証するサンドボックス。以下を実験：
+- 新しいレーンパターン
+- 代替状態機械
+- クロスボーダー決済メカニズム
+- ネッティング・清算戦略
 
-## 📊 ライブダッシュボード
+### 開発者の学習向け
 
-リアルタイム監視UI：
+現代的な決済システム設計を理解するための教育的コードベース。学習内容：
+- 決済がいかに決済インフラを流れるのか
+- 金融制約下での分散合意
+- 監査性のためのデータベース設計
+- 金融システムにおける並行制御
 
-- **総覧** — 取引状態、レーン別、ネットワークヘルス
-- **運用** — 手動決済、DNS管理、ケース管理
-- **監視** — 流動性追跡、ネットワークトポロジー、行別メトリクス
-- **シミュレーター** — 清算ウェイト調整可能な実験
-- **ドキュメント** — 統合仕様ブラウザ
+## クイックスタート
 
-デプロイ後、`/`, `/console`, `/bank-app` でアクセス可能。
+### 要件
 
-## 🛠️ 技術スタック
+- Node.js 18+
+- npm 8+
+- Cloudflareアカウント（無料枠対象）
 
-| レイヤ | 技術 | 理由 |
-|--------|------|------|
-| **Runtime** | Cloudflare Workers | コールドスタートなし、グローバルエッジ展開 |
-| **Database** | D1 (SQLite) | ACID準拠、組み込み、サーバーレス |
-| **Queue** | Cloudflare Queues | 堅牢な非同期タスク処理 |
-| **Storage** | R2 | 低コストEDI/リッチデータ保管 |
-| **言語** | TypeScript | 金融ロジックの型安全性 |
-| **フレームワーク** | Hono | エッジ最適化、最小オーバーヘッド |
-| **テスト** | vitest + better-sqlite3 | インメモリSQLite統合テスト |
-| **Frontend** | Alpine.js + Tailwind | 軽量SPA、ビルド不要 |
-
-### なぜゼロコスト？
-
-Cloudflareの無料枠：
-- 日10万リクエスト
-- D1データベース（寛大な割当）
-- キュー月100Kメッセージ
-- R2 1GB + 送信量
-- Workers CPU（共有）
-
-**これは本物の本番級インフラ。無料枠は罠ではなく、本当に無料です。**
-
-## 🧪 テスト
+### デプロイ手順
 
 ```bash
-# すべてのテスト実行
-npm run test
+# 1. クローンとインストール
+git clone https://github.com/pochatt/zenith-mock.git
+cd zenith-mock
+npm install
 
-# ウォッチモード
-npm run test:watch
+# 2. Cloudflareで認証
+npx wrangler login
 
-# 単一ファイル
-npx vitest test/zc/express.test.ts
+# 3. リソース作成
+npx wrangler d1 create zenith-db
+npx wrangler queues create zenith-mock-queue
+npx wrangler r2 bucket create zenith-mock-r2
+
+# 4. 設定
+cp wrangler.toml.example wrangler.toml
+# wrangler.tomlをdatabase_idで編集
+
+# 5. マイグレーション適用
+npm run db:migrate:remote
+
+# 6. デプロイ
+npm run deploy
+
+# 7. 初期データ投入
+curl -X POST https://zenith-mock.<your-domain>.workers.dev/internal/seed
 ```
 
-- **統合テスト** — インメモリSQLiteベース
-- **シナリオベース** — 実際の決済フロー終端まで
-- **モック銀行** — ネットワーク遅延・失敗・拒否をシミュレート
-- **エッジケース** — 並行書込、タイムアウト、状態競合
+ダッシュボードは `https://zenith-mock.<your-domain>.workers.dev` で利用可能です。
 
-## 📚 ドキュメント
+## 主要機能
 
-| ドキュメント | 目的 |
-|----------|------|
-| **[Zenith設計](specs/zenith_public.md)** | 設計思想、状態機械、決済フロー |
-| **[API仕様](specs/api-contracts.md)** | 全エンドポイント、入出力形式、エラーコード |
-| **[DBスキーマ](specs/schema.md)** | テーブル定義、関係、制約 |
-| **[ポリシー](specs/zenith_policy.md)** | 取引ルール、制限、例外 |
-| **[ファイル構成](specs/file_structure.md)** | コードレイアウト、モジュール責任 |
+### 送金レーン
 
-**英語版は `*.en.md` で `specs/` に用意**
+| レーン | 目的 | ファイナリティ |
+|--------|------|---|
+| EXPRESS | 即時小売決済 | H予約担保 |
+| STANDARD | 一般P2P | 名義確認+承認 |
+| HTLC | 条件付きエスクロー | ハッシュロック解放 |
+| RTP | 請求型回収 | 受取人発起型 |
+| GTID | 複数銀行原子転送 | 協調型オールオアナッシング |
+| HIGH-VALUE | 大口RTGS | 日銀即時グロス清算 |
+| BULK | バッチ処理 | 営業終了時ネッティング |
 
----
+### 高度な機能
 
-## 🌐 グローバル対応
+- **日次ネット清算 (DNS)** — EODサイクルと建玉ネッティング
+- **QR決済** — 静的・動的コードとHMAC検証
+- **エイリアス解決** — 電話番号・メール・法人IDルーティング
+- **クロスボーダー** — FATF R.16準拠の国際送金
+- **口座確認** — 清算前の名義・口座確認
+- **EDI/リッチデータ** — 構造化された商流データ統合
+- **サーキットブレーカー** — 自動ヘルス監視と段階的機能低下
+- **イベントストリーム** — 参加銀行へのリアルタイムSSE通知
 
-### 多通貨サポート
+## テスト
 
+```bash
+npm run test              # 全テスト実行
+npm run test:watch       # ウォッチモード
+npx vitest test/zc/express.test.ts  # 単一ファイル
 ```
-JPY ↔ SGD (FX変換, FATF R.16準拠)
-JPY ↔ EUR (決済銀行ネッティング経由)
+
+統合テストはインメモリSQLite（better-sqlite3経由）で実行され、完全なスキーマと現実的な決済シナリオを含みます：
+- 並行トランザクション処理
+- ネットワーク障害と再試行
+- 状態機械制約違反
+- サーキットブレーカーの起動と回復
+
+## コマンド
+
+```bash
+npm run dev              # ローカル開発サーバー
+npm run deploy           # Cloudflareにデプロイ
+npm run type-check       # TypeScript型チェック
+npm run test             # テストスイート実行
+npm run test:watch       # テストウォッチモード
+npm run db:migrate:local # ローカルマイグレーション適用
+npm run db:migrate:remote # リモートD1マイグレーション適用
 ```
 
-### クロスボーダー清算
+## ドキュメント
 
-- FATF R.16 送信人/受取人検証
-- 外国FPS統合（SG PayNow, HK FPS等）
-- Nostro口座管理
+### リファレンス
 
-## 🔐 セキュリティ
+- **[Zenith設計](specs/zenith_public.md)** — 設計思想、状態機械、決済フロー
+- **[API仕様](specs/api-contracts.md)** — エンドポイント完全リファレンス
+- **[DBスキーマ](specs/schema.md)** — テーブル定義と関係
+- **[業務ポリシー](specs/zenith_policy.md)** — 取引ルールと制約
+- **[ファイル構成](specs/file_structure.md)** — コードベース構成
 
-✅ 全銀行呼び出しのHMAC-SHA256署名検証
-✅ 冪等性による重複入金防止
-✅ 追記型監査ログ（FinalityLog, TxEventLog）
-✅ 楽観的ロックによる並行制御
-✅ AML/制裁スクリーニングフック（モック実装）
-✅ 清算前の名義確認
-⚠️ **本番未対応** — TLS終端、認証、暗号化、規制監査が必要
+## セキュリティ
 
-**独自のコンプライアンスフレームワーク構築の参照に**
+本実装に含まれるセキュリティ対策：
 
----
+- すべての銀行-コーディネーター通信のHMAC-SHA256署名検証
+- 冪等キー追跡で重複決済を防止
+- 追記型監査ログ（FinalityLog）で否認防止
+- 楽観的バージョンで並行処理時の楽観的ロック
+- 決済確認前の名義確認
+- AML/制裁スクリーニングフック（モック実装）
 
-## 💰 コスト見積もり
+**重要:** これはリファレンス実装です。本番運用前に以下を確認してください：
+- すべてのネットワーク通信にTLS/mTLSを実装
+- 認証・認可レイヤーを追加
+- 保存時・転送時の機密データ暗号化
+- セキュリティ監査とペネトレーションテスト実施
+- 規制コンプライアンス制御を実装
+- 障害シナリオを十分にテスト
 
-| 操作 | 月額 |
-|------|------|
-| 1日1万件送金 × 30日 | **¥0** (無料枠内) |
-| 10万API呼び出し | **¥0** |
-| 100GB保管 (R2) | **¥150** |
-| **合計** | **約¥150** (オプション) |
+## ライセンス
 
----
+MIT License。[LICENSE](LICENSE)を参照してください。
 
-## 📝 ライセンス
+## サポート
 
-MIT License — [LICENSE](LICENSE)参照
-
----
-
-<div align="center">
-
-### 次世代決済清算の未来を探索する準備はできていますか？
-
-**[今すぐデプロイ](#-5-minute-quick-start)** • **[仕様を読む](specs/)** • **[議論に参加](https://github.com/pochatt/zenith-mock/issues)**
-
-</div>
+- **質問？** [issueを開く](https://github.com/pochatt/zenith-mock/issues)
+- **バグ報告？** [バグテンプレート使用](https://github.com/pochatt/zenith-mock/issues/new?template=bug.md)
+- **技術的な議論？** `specs/`の詳細ドキュメント参照
