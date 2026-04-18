@@ -75,16 +75,17 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
   }
 
   // 金額上限チェック / RECEIVE_ONLY 参加形態チェック
-  // 一部のモックDB環境でマイグレーション未適用による 'no such column' エラーを回避するため、フォールバックを追加
+  // マイグレーション未適用による 'no such column' エラー時は詳細をログ出力してフォールバック
   let participant: { tx_amount_limit?: number | null; daily_amount_limit?: number | null; daily_amount_used?: number; participation_mode?: string | null } | null = null
   try {
     participant = await db.prepare(
       `SELECT tx_amount_limit, daily_amount_limit, daily_amount_used, participation_mode FROM Participants WHERE bank_id = ?`,
     ).bind(body.payer.bank_id).first<{ tx_amount_limit: number | null; daily_amount_limit: number | null; daily_amount_used: number; participation_mode: string | null }>()
   } catch (e: any) {
-    if (e.message && e.message.includes('no such column: tx_amount_limit')) {
-      console.warn(`[ingress] tx_amount_limit column missing in Participants table. Skipping limit checks.`);
-      participant = { tx_amount_limit: null, daily_amount_limit: null, daily_amount_used: 0 };
+    if (e.message && e.message.includes('no such column')) {
+      // マイグレーション未適用時: limits は適用されず、RECEIVE_ONLY チェックも実施されない
+      console.error(`[ingress] Schema incomplete: missing columns in Participants table. Migration 0010+ may not have been applied. Error: ${e.message}`);
+      participant = { tx_amount_limit: null, daily_amount_limit: null, daily_amount_used: 0, participation_mode: null };
     } else {
       throw e;
     }
@@ -112,7 +113,8 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       success = upd.meta.changes > 0;
     } catch (e: any) {
       if (e.message && e.message.includes('no such column')) {
-        console.warn(`[ingress] daily_amount_used column missing in Participants table. Skipping daily limit updates.`);
+        // スキーマ不完全時: 警告をログして制限なしとして続行（開発環境での利便性のため）
+        console.error(`[ingress] Schema incomplete: daily_amount_used column missing. Migration 0010+ may not have been applied. Daily limits will be ignored. Error: ${e.message}`);
         success = true; // フォールバック: スキーマがない場合は制限なしとして続行
       } else {
         throw e;
