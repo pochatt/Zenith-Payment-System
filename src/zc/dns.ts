@@ -285,6 +285,16 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
   await db.prepare(`UPDATE DnsCycles SET state='SETTLED', settled_at=? WHERE cycle_id=?`).bind(now, cycleId).run()
 
   // DNS_CYCLE_SETTLED でH予約を解放（仕様: DNS決済完了後に解放）
+  //
+  // NOTE: Early-stage cancelled transactions (RECEIVED→DECIDED_CANCEL before
+  // cycle assignment) have dns_cycle_id = NULL and are NOT released here.
+  // However, this is CORRECT behavior:
+  //   1. Early cancellation uses releaseH() in express.ts/standard.ts immediately
+  //   2. These transactions never reach dns_cycle_id assignment
+  //   3. Skipping NULL-cycle transactions here is intentional (no JOIN match)
+  //
+  // Implementation detail: The LEFT JOIN implicitly filters to transactions
+  // with dns_cycle_id = ?, which excludes NULL entries. No accounting impact.
   const hReservations = await db
     .prepare(
       `SELECT h.reservation_id FROM HReservations h

@@ -52,6 +52,13 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
   if (body.proxy_type && body.proxy_value && !body.payee.account_hash) {
     const proxyResult = await resolveProxy(env.DB, body.proxy_type, body.proxy_value)
     if (!proxyResult) return jsonError(422, 'PROXY_NOT_FOUND', `proxy ${body.proxy_type}:${body.proxy_value} not found`)
+
+    // Proxy resolve 後の account_id をバリデーション（10 桁形式を強制）
+    // proxy resolve による値も標準的な account_hash と同じ形式である必要がある
+    if (!/^\d{10}$/.test(proxyResult.account_id)) {
+      return jsonError(422, 'INVALID_PROXY_ACCOUNT_HASH', `proxy-resolved account_id must be 10-digit, got: ${proxyResult.account_id}`)
+    }
+
     body.payee.account_hash = 'h:' + proxyResult.account_id
     if (!body.payee.bank_id) body.payee.bank_id = proxyResult.bank_id
   }
@@ -105,23 +112,37 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
   if (participant?.daily_amount_limit != null) {
     let success = false;
     try {
-      // Bug #4 fix (partial): Daily limit reset mechanism.
-      // Primary reset: EOD cron job (scheduled handler '30 7 * * *' in wrangler.toml, ~7:30 AM JST)
+      // Daily limit reset mechanism (fallback-safe):
+      // Primary reset: EOD cron job (scheduled '30 7 * * *' in wrangler.toml, ~7:30 AM JST)
       //   - File: src/cron/eod.ts, lines 83-93
       //   - Executes: UPDATE Participants SET daily_amount_used = 0
-      // If cron job fails or is delayed, the limit may not reset until the next EOD run.
-      // For production systems, consider implementing:
-      //   1. Persistent last_reset_date field to detect missed resets
-      //   2. Middleware to auto-reset if date changes between requests
-      //   3. Monitoring alerts if daily_amount_used persists beyond EOD window
-      // For now, relying on scheduled cron job with manual override via /internal/cron/eod endpoint.
+      //
+      // Secondary auto-reset (cron failure recovery):
+      // Before accepting the transfer, check if the calendar day has changed
+      // from the last usage record. If day has passed, atomically reset used amount.
+      //
+      // Implementation: Two-step atomicity via D1 batch
+      // Step 1: Check if daily_amount_used_date < TODAY, and reset if needed
+      // Step 2: Increment daily_amount_used if within limit
 
-      // アトミックに加算し、超過時は rows=0 になる
-      const upd = await db.prepare(
-        `UPDATE Participants SET daily_amount_used = daily_amount_used + ?
-         WHERE bank_id = ? AND daily_amount_used + ? <= daily_amount_limit`,
-      ).bind(body.amount.value, body.payer.bank_id, body.amount.value).run()
-      success = upd.meta.changes > 0;
+      const today = now.split('T')[0]  // YYYY-MM-DD format
+      const stmts = [
+        // Step 1: Reset if day boundary has passed
+        db.prepare(
+          `UPDATE Participants
+           SET daily_amount_used = 0, daily_amount_used_date = ?
+           WHERE bank_id = ? AND (daily_amount_used_date IS NULL OR daily_amount_used_date < ?)`
+        ).bind(today, body.payer.bank_id, today),
+        // Step 2: Increment only if within limit (after potential reset)
+        db.prepare(
+          `UPDATE Participants
+           SET daily_amount_used = daily_amount_used + ?
+           WHERE bank_id = ? AND daily_amount_used + ? <= daily_amount_limit AND daily_amount_used_date = ?`
+        ).bind(body.amount.value, body.payer.bank_id, body.amount.value, today),
+      ]
+
+      const results = await db.batch(stmts)
+      success = (results[1]?.meta.changes ?? 0) > 0
     } catch (e: any) {
       if (e.message && e.message.includes('no such column')) {
         // スキーマ不完全時: 警告をログして制限なしとして続行（開発環境での利便性のため）

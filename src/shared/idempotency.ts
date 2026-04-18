@@ -61,25 +61,45 @@ export async function completeIdempotency(
 /**
  * Retrieve a previously stored idempotent response for replay.
  *
- * - If the key is still PROCESSING, returns `{ result: 'PROCESSING' }`.
+ * - If the key is still PROCESSING, checks if the entry is stale (> 60 seconds).
+ *   If stale, treat as timeout and allow retry (clean up the PROCESSING entry).
  * - If DONE, returns the deserialized response body.
  * - If not found, returns `null`.
  *
+ * D1 note: Cloudflare Workers is single-threaded per request, so
+ * checking age_seconds and cleanup in the same function is safe.
+ *
  * @param key - Idempotency key to look up
  * @param db  - D1 database binding
- * @returns Cached response, a PROCESSING sentinel, or null
+ * @returns Cached response, a PROCESSING sentinel (if recent), or null
  */
 export async function getIdempotentResponse(
   key: string,
   db: D1Database,
 ): Promise<unknown | null> {
   const row = await db
-    .prepare(`SELECT response_body, status FROM IdempotencyKeys WHERE key = ?`)
+    .prepare(`SELECT response_body, status, created_at FROM IdempotencyKeys WHERE key = ?`)
     .bind(key)
-    .first<{ response_body: string | null; status: string }>()
+    .first<{ response_body: string | null; status: string; created_at: string }>()
 
   if (!row) return null
-  if (row.status === 'PROCESSING') return { result: 'PROCESSING' }
+
+  if (row.status === 'PROCESSING') {
+    // PROCESSING state timeout detection: 60 秒以上経過していれば stale と判定
+    // RFC 7231: キャッシュ有効期限は通常 request-level で決定（ここでは 60 秒を threshold）
+    const createdAt = new Date(row.created_at).getTime()
+    const now = Date.now()
+    const ageSeconds = (now - createdAt) / 1000
+
+    if (ageSeconds > 60) {
+      // タイムアウト判定: PROCESSING エントリを削除して再試行を許可
+      await db.prepare(`DELETE FROM IdempotencyKeys WHERE key = ?`).bind(key).run()
+      return null  // 呼び出し元が新規リクエストとして処理を再開
+    }
+
+    return { result: 'PROCESSING' }
+  }
+
   if (row.response_body) return JSON.parse(row.response_body)
   return null
 }

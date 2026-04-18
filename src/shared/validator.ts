@@ -47,7 +47,8 @@ function fail(reason_code: string, message: string): ValidationResult {
 /**
  * Validate a payment initiation request (POST /api/transfers).
  *
- * Checks schema_version, txid format, lane, amount, payer/payee, and purpose.
+ * Checks schema_version, txid format, lane, amount, payer/payee, purpose,
+ * and account_hash format consistency across all lanes.
  *
  * @param req - Partial request body to validate
  * @returns Validation result with reason_code on failure
@@ -73,6 +74,18 @@ export function validatePaymentInitiated(
     return fail('MISSING_PAYEE', 'payee.bank_id required')
   if (!req.purpose || !VALID_PURPOSES.includes(req.purpose))
     return fail('INVALID_PURPOSE', `purpose must be one of ${VALID_PURPOSES.join('|')}`)
+
+  // Account hash format validation (unified across all lanes)
+  // Payer account_hash: format 'h:' prefix + 10-digit OR 10-digit only
+  if (!/^(h:)?\d{10}$/.test(req.payer.account_hash)) {
+    return fail('INVALID_PAYER_ACCOUNT', `payer account_hash must be 10-digit or h:XXXXXXXXXX, got: ${req.payer.account_hash}`)
+  }
+
+  // Payee account_hash: when present, must follow same format
+  if (req.payee?.account_hash && !/^(h:)?\d{10}$/.test(req.payee.account_hash)) {
+    return fail('INVALID_PAYEE_ACCOUNT', `payee account_hash must be 10-digit or h:XXXXXXXXXX, got: ${req.payee.account_hash}`)
+  }
+
   return { ok: true }
 }
 

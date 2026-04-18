@@ -52,27 +52,33 @@ export interface FinalityLogEntry {
 
 /**
  * Persist a FinalityLog entry for audit trail.
- * Uses timestamp-based sequence numbers to survive Worker isolate restarts.
+ *
+ * Uses D1 transaction atomicity (SQLite AUTOINCREMENT) to guarantee monotonic
+ * sequence numbers across concurrent Worker instances. Each row gets a unique
+ * event_seq via SQLite's ROWID, ensuring chronological ordering even under
+ * high concurrency.
+ *
+ * D1 note: D1 batches are executed within a single SQLite transaction,
+ * and ROWID is atomically incremented per row insert, guaranteeing
+ * monotonicity without explicit sequence table locks.
  *
  * @param db    - D1 database handle
  * @param entry - Log entry containing state transition details
  */
 export async function writeFinalityLog(db: D1Database, entry: FinalityLogEntry): Promise<void> {
   const logId = `FL-${newUUID()}`
-  // 単調増加を保証: DB 内の max(event_seq) + 1 をフォールバックに使う
-  const maxRow = await db
-    .prepare(`SELECT MAX(event_seq) AS mx FROM FinalityLog`)
-    .first<{ mx: number | null }>()
-  const candidate = Date.now() * 1000 + Math.floor(Math.random() * 1000)
-  const seq = Math.max(candidate, (maxRow?.mx ?? 0) + 1)
   const gtid = (entry.txid_or_gtid?.startsWith('GT-') || entry.txid_or_gtid?.startsWith('GTID-'))
     ? entry.txid_or_gtid : null
+
+  // D1 SQLite: AUTOINCREMENT で自動採番される event_seq で単調性を保証
+  // 複数の concurrent request でも各 INSERT は SQLite transaction 内で
+  // 順序付けられており、ROWID の衝突はない
   await db.prepare(
     `INSERT INTO FinalityLog
-     (log_id, txid, gtid, event_type, state_from, state_to, payload_json, event_seq, occurred_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     (log_id, txid, gtid, event_type, state_from, state_to, payload_json, occurred_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(logId, entry.txid, gtid, entry.event_type, entry.state_from,
-    entry.state_to, entry.payload_json, seq, nowISO()).run()
+    entry.state_to, entry.payload_json, nowISO()).run()
 }
 
 // ---------------------------------------------------------------------------

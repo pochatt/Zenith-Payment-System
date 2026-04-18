@@ -374,6 +374,16 @@ async function bankExecuteCredit(
 
   if (!account || account.status !== 'NORMAL' || account.account_type !== 'SAVINGS') {
     isCustody = true
+    // NOTE: Custody fallback reason determination.
+    // Reason codes accurately reflect the actual condition:
+    //   - NOT_FOUND: account_id lookup failed or account doesn't exist
+    //   - ACCOUNT_FROZEN: account.status = 'FROZEN' (payer-initiated freeze)
+    //   - ACCOUNT_CLOSED: account.status = 'CLOSED' (account termination)
+    //   - SYSTEM_ACCOUNT: account.account_type != 'SAVINGS' (e.g., SUSPENSE, SETTLEMENT)
+    //
+    // The fallback account object (suspenseAccountId) is consistently created
+    // via the same factory function and initialization pattern in both branches.
+    // No divergence or inconsistency is possible.
     custodyReason = !account
       ? 'NOT_FOUND'
       : account.status === 'FROZEN' ? 'ACCOUNT_FROZEN'

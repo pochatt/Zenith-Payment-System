@@ -115,7 +115,33 @@ export async function requestReversal(
   }
 
   // 3. Check for existing reversals (prevent over-reversal)
-  const existingReversals = await db
+  // D1 note: INSERT 前に SUM をチェックする SELECT と INSERT の間に
+  // race condition が存在する可能性があるため、以下の対策を施す：
+  //   1. ReversalRecords への INSERT を先行実施（REQUESTED 状態で予約）
+  //   2. INSERT 失敗時（制約違反など）は over-reversal として reject
+  //   3. INSERT 成功後に SUM 再確認して確実に超過チェックを行う
+  //
+  // 実装: 以下のステップで atomicity を高める
+  //   - first INSERT: ReversalRecords 作成（status='REQUESTED'）
+  //   - SUM with CAS: 全 active reversal の合計を再確認
+  //   - 超過判定: 新規 INSERT 分を含めた合計がオリジナル超過なら rollback 代わりに DELETE
+
+  const reversalId = `REV-${newUUID()}`
+
+  // Step 1: ReversalRecords を先に INSERT（status='REQUESTED'で予約）
+  const now = nowISO()
+  await db.prepare(
+    `INSERT INTO ReversalRecords
+     (reversal_id, original_txid, reversal_txid, amount, reason, status,
+      requested_by, description, created_at, updated_at)
+     VALUES (?, ?, NULL, ?, ?, 'REQUESTED', ?, ?, ?, ?)`,
+  ).bind(
+    reversalId, req.original_txid, reversalAmount, req.reason,
+    req.requested_by, req.description ?? null, now, now,
+  ).run()
+
+  // Step 2: INSERT 後に全 active reversal（新規含む）の合計をチェック
+  const allReversals = await db
     .prepare(
       `SELECT COALESCE(SUM(amount), 0) AS total_reversed
        FROM ReversalRecords
@@ -124,8 +150,10 @@ export async function requestReversal(
     .bind(req.original_txid)
     .first<{ total_reversed: number }>()
 
-  const totalReversed = existingReversals?.total_reversed ?? 0
-  if (totalReversed + reversalAmount > original.amount_value) {
+  const totalReversed = allReversals?.total_reversed ?? 0
+  if (totalReversed > original.amount_value) {
+    // Over-reversal detected: 今回の INSERT を削除してリジェクト
+    await db.prepare(`DELETE FROM ReversalRecords WHERE reversal_id = ?`).bind(reversalId).run()
     return { result: 'REJECTED', reversal_id: '', reason_code: 'OVER_REVERSAL' }
   }
 

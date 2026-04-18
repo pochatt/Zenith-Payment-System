@@ -106,7 +106,21 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   }
 
   if (!allReady) {
-    // Bug fix: AND state='GT_PRECHECKED' を追加して並行処理の上書きを防ぐ
+    // CAS (Compare-And-Set) guard: AND state='GT_PRECHECKED' を含めて
+    // 並行タイムアウト cancel との競争状態を防ぐ。
+    //
+    // Race scenario without guard:
+    //   T1: allReady=false → UPDATE without state guard
+    //   T2: timeout cancel → UPDATE GT to GT_DECIDED_CANCEL
+    //   → T1 無条件上書き → FinalityLog に GT_DECIDED_CANCEL が2回記録される
+    //
+    // Race scenario with guard (current implementation):
+    //   T1: allReady=false → UPDATE WITH state='GT_PRECHECKED'
+    //   T2: timeout cancel → UPDATE GT to GT_DECIDED_CANCEL (succeeds)
+    //   → T1 UPDATE changes=0 → 上書きしない（正しい）
+    //
+    // この CAS ガード追加により、並行競争下でも状態遷移が一度だけ
+    // 実行され、FinalityLog の整合性が保証される。
     const cancelUpdated = await db.prepare(
       `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
     ).bind(now, gtid).run()
@@ -138,10 +152,21 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     return
   }
 
-  // Bug #2 fix: Validate amount balance between PAYER and PAYEE legs.
-  // Atomic settlement requires that total PAYER amount == total PAYEE amount.
-  // Without this check, multi-leg transactions could settle with unbalanced amounts,
-  // causing accounting inconsistencies and potential fund loss/gain.
+  // Bug #2 fix: Validate amount balance between PAYER and PAYEE legs
+  // before proceeding to Decision state.
+  //
+  // CRITICAL: This validation must occur in GT_PRECHECKED (before GT_DECIDED_TO_SETTLE)
+  // to prevent settlement of unbalanced multi-leg transactions. Atomic settlement
+  // requires that sum(PAYER amounts) == sum(PAYEE amounts) across all legs.
+  //
+  // Violation scenario:
+  //   PAYER legs: Bank A ¥1M, Bank B ¥500K → total ¥1.5M
+  //   PAYEE legs: Bank C ¥1M → total ¥1M
+  //   → ¥500K accounting hole without this check
+  //
+  // Implementation: This validation is placed BEFORE H-reservations (line 164+)
+  // to avoid releasing reserves on validation failure. If this check fails,
+  // the transaction is cancelled early, preventing any settlement state.
   const totalPayerAmount = payerLegs.reduce((sum, leg) => sum + leg.amount_value, 0)
   const totalPayeeAmount = payeeLegs.reduce((sum, leg) => sum + leg.amount_value, 0)
   if (totalPayerAmount !== totalPayeeAmount) {
