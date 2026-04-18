@@ -133,7 +133,14 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
   for (const row of debitPositions.results) {
     const bojBalance = await calcBalance(`${row.bank_id}-BOJ`, db)
     const requiredDebit = -row.net_position  // net_position < 0 なので正の値
-    // bojBalance は負値（事前拠出）、requiredDebit を差し引いても 0 以下なら OK
+
+    // NOTE: BOJ残高チェックロジック（偽陽性検査済み）
+    // 符号規則: bojBalance は負値で表現される（負債会計: 日銀当座預金は負資産）
+    //   例: 預金残高 100万円 → bojBalance = -1,000,000
+    // 不足判定: bojBalance + requiredDebit > 0
+    //   例1: bojBalance=-1,000,000, requiredDebit=900,000 → -100,000 ≤ 0 → OK
+    //   例2: bojBalance=-100,000, requiredDebit=900,000 → 800,000 > 0 → 不足 ✓
+    // このロジックは正しい。算出結果が直感的でないため、明示的に記述。
     if (bojBalance + requiredDebit > 0) {
       bojShortfalls.push({ bank_id: row.bank_id, shortfall: bojBalance + requiredDebit })
     }

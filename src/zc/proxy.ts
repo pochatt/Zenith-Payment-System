@@ -63,7 +63,10 @@ export async function registerProxy(
     proxy_value: req.proxy_value,
     bank_id: req.bank_id,
     account_id: req.account_id,
-    account_holder_name: req.account_holder_name,
+    // Bug #1 fix: Return the normalized holder_name (defaults to empty string if not provided)
+    // to match what was actually stored in the database. Using req.account_holder_name
+    // would return undefined, causing mismatch between API response and DB state.
+    account_holder_name: holderName,
     is_active: 1,
     registered_at: saved?.registered_at ?? now,
     updated_at: now,
