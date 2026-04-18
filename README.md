@@ -1,4 +1,312 @@
-# Zenith Payment System — Mock Implementation
+<!-- 
+SEO Keywords: payment system, payment settlement, fintech, cloudflare workers, typescript, banking, japan, dtm, rtgs, payment rails, financial infrastructure, distributed settlement, real-time settlement
+Recommended GitHub Topics: payment-system, fintech, cloudflare-workers, typescript, settlement, banking, financial-infrastructure
+-->
+
+# Zenith Payment System — Reference Implementation
+
+**A runnable implementation of the Zenith Coordinator (ZC) with multiple participating banks.**
+Built on Cloudflare Workers + D1 + Queues + R2, with zero operational costs (all within free tier limits).
+
+---
+
+## What is Zenith?
+
+Japan's payment infrastructure has long carried unresolved challenges:
+
+- **No visibility** — money in flight disappears into a black box
+- **Unexplainable failures** — when incidents occur, nobody can articulate what happened
+- **No recourse** — customer inquiries are met with "please wait" and nothing more
+
+This is not operational negligence, but the result of **design principles that were correct in their era becoming misaligned with modern expectations** as decades passed.
+
+Zenith is a next-generation payment architecture designed to confront this problem directly. At its core lies a simple principle:
+
+> Treat payments not as **"black boxes"** but as **"sequences of explicable states"**.
+
+Banks continue to manage accounts and customer data. The Zenith Coordinator (ZC) takes responsibility for organizing, recording, and making explicable the state of payments flowing between them.
+
+Read more → **[Zenith Architecture (Design Philosophy & Background)](https://www.sakuolia.jp/zenith.html)**
+
+---
+
+## Why This Implementation Exists
+
+To preserve the Zenith design philosophy **as living, runnable code**.
+
+Reading specifications alone is insufficient. Having an environment where you can call APIs directly, trace state transitions, and verify settlement behavior with your own hands raises the resolution of discussion. Before integration development begins, the ability to intuitively understand "this lane works this way" reduces implementation costs significantly.
+
+This is a **reference implementation designed for integration testing and prototyping** by financial institutions and FinTech vendors.
+
+---
+
+## Core Features
+
+### Payment Lanes
+
+| Lane | Description |
+|------|-------------|
+| **Express** | High-speed lane for retail and instant settlements; immediate confirmation via H-reserve |
+| **Standard** | Standard general payment with name verification and authorization |
+| **HTLC** | Hash-time-locked conditional escrow settlement |
+| **RTP** | Request-to-Pay (pull-initiated) payment collection |
+| **High-Value** | High-value RTGS settlement via prefunded intermediation |
+
+### Additional Capabilities
+
+- **DNS (Daily Net Settlement)** — EOD batch and settlement flow simulation
+- **QR Payments** — Static & dynamic QR codes with HMAC signature validation
+- **Alias Resolution** — Account lookup by phone, email, or other proxy identifiers
+- **Rich Data Integration** — Separation of financial core and commercial/EDI data with reference retention
+- **Cross-Border Transfers** — FATF R.16 compliant
+- **Frontend UI** — Central coordinator dashboard (`/`), teller dashboard (`/console`), customer bank app (`/bank-app`)
+
+---
+
+## Technology Stack
+
+| Component | Service |
+|-----------|---------|
+| Runtime | Cloudflare Workers (TypeScript) |
+| Database | Cloudflare D1 (SQLite) |
+| Message Queue | Cloudflare Queues |
+| Object Storage | Cloudflare R2 |
+| Deployment | Wrangler CLI |
+
+---
+
+## Deployment from Scratch
+
+### Prerequisites
+
+| Tool | Minimum Version |
+|------|-----------------|
+| Node.js | 18+ |
+| npm | 8+ |
+| Cloudflare Account | Free tier eligible |
+
+---
+
+### 1. Clone Repository and Install Dependencies
+
+```bash
+git clone <this-repo>
+cd zenith-mock
+npm install
+```
+
+---
+
+### 2. Create wrangler.toml
+
+`wrangler.toml` contains your personal Cloudflare credentials and is excluded from Git control.
+Copy the template and configure it:
+
+```bash
+cp wrangler.toml.example wrangler.toml
+```
+
+---
+
+### 3. Authenticate with Cloudflare
+
+```bash
+npx wrangler login
+```
+
+Your browser will open for Cloudflare account authentication.
+
+```bash
+npx wrangler whoami  # Verify authentication
+```
+
+---
+
+### 4. Create D1 Database
+
+```bash
+npx wrangler d1 create zenith-db
+```
+
+Example output:
+
+```
+✅ Successfully created DB 'zenith-db'
+
+[[d1_databases]]
+binding = "DB"
+database_name = "zenith-db"
+database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+
+Copy the `database_id` and paste it into `wrangler.toml`:
+
+```toml
+[[d1_databases]]
+binding       = "DB"
+database_name = "zenith-db"
+database_id   = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # ← Replace with your database_id
+```
+
+---
+
+### 5. Create Queues
+
+```bash
+npx wrangler queues create zenith-mock-queue
+```
+
+---
+
+### 6. Create R2 Bucket
+
+```bash
+npx wrangler r2 bucket create zenith-mock-r2
+```
+
+---
+
+### 7. Run Migrations (Create Schema)
+
+```bash
+npm run db:migrate:remote
+```
+
+Verify tables were created:
+
+```bash
+npx wrangler d1 execute zenith-db --remote \
+  --command "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+```
+
+Success is confirmed by 28 tables appearing.
+
+---
+
+### 8. Deploy
+
+```bash
+npm run deploy
+```
+
+After deployment, your dashboard is accessible at the URL shown (e.g., `https://zenith-mock.<your-subdomain>.workers.dev`).
+
+---
+
+### 9. Seed Initial Data
+
+Open the dashboard (`/`) and click the **SEED** button, or execute:
+
+```bash
+curl -X POST https://zenith-mock.<your-subdomain>.workers.dev/internal/seed
+```
+
+SEED initializes:
+
+| Component | Details |
+|-----------|---------|
+| Participating Banks | `001` (Nagaoka Bank), `002` (Owari Bank); add more as needed |
+| Customer Accounts | 2 per bank (¥1M initial balance each) |
+| BOJ Prefunding | ¥100B per bank |
+| DNS Cycle | Today's cycle created |
+
+---
+
+## Local Development
+
+```bash
+# Apply migrations to local D1
+npm run db:migrate:local
+
+# Start dev server (http://localhost:8787)
+npm run dev
+```
+
+---
+
+## Schema Changes & Migrations
+
+### Adding Columns or Tables
+
+**Never edit existing migration files.** Always create a new numbered file:
+
+```bash
+# Example: create new migration in 0011 series
+cat > migrations/0011_add_new_feature.sql << 'EOF'
+ALTER TABLE Participants ADD COLUMN new_col TEXT;
+EOF
+
+npm run db:migrate:remote
+```
+
+### Full Database Reset (Development Only)
+
+```bash
+# Clear migration history
+npx wrangler d1 execute zenith-db --remote \
+  --command "DROP TABLE IF EXISTS d1_migrations"
+
+# Or recreate the database entirely
+npx wrangler d1 delete zenith-db
+npx wrangler d1 create zenith-db
+# Update database_id in wrangler.toml, then:
+npm run db:migrate:remote
+```
+
+> [!WARNING]
+> Editing existing migration files will **not** apply changes to remote D1.
+> D1 tracks applied migrations and ignores modifications.
+
+---
+
+## Command Reference
+
+```bash
+npm run dev                 # Start local dev server
+npm run deploy              # Deploy to Cloudflare
+npm run db:migrate:local    # Apply migrations locally
+npm run db:migrate:remote   # Apply migrations to remote D1
+npm run type-check          # Run TypeScript type checking
+```
+
+---
+
+## Directory Structure
+
+```
+zenith-mock/
+├── migrations/              # D1 SQL migrations (0001–0014, applied in order)
+├── schema/
+│   └── baseline.sql         # Schema snapshot after all migrations (reference)
+├── specs/                   # Specifications & design documentation
+├── src/
+│   ├── index.ts             # Worker entry point; HTTP/Queue/Cron dispatch
+│   ├── types.ts             # Type definition barrel (re-exports types/)
+│   ├── types/               # Type definitions (primitives / states / rows / api)
+│   ├── shared/              # Shared utilities (HMAC, ISO 20022, FATF, routing, etc.)
+│   ├── cron/                # EOD batch & timeout sweep jobs
+│   ├── dashboard/           # Admin dashboard HTML (Alpine.js + Tailwind)
+│   ├── openapi/             # OpenAPI schema definitions (zc-api / bank-api)
+│   ├── zc/                  # Zenith Coordinator logic
+│   │   ├── lanes/           # Express / Standard / HTLC / RTP / GTID / High-Value / Bulk
+│   │   └── orchestrator/    # State transitions, FinalityLog, bank hub, GTID finalization
+│   └── bank/                # Bank mock (core banking, customer API, AML filters)
+├── test/                    # vitest integration tests (in-memory SQLite)
+├── wrangler.toml.example    # Configuration template (Git-tracked)
+└── wrangler.toml            # Actual config (Git-ignored; create yourself)
+```
+
+---
+
+## License
+
+MIT License
+
+---
+
+---
+
+# 日本語版 (Japanese Version)
 
 **Zenith Coordinator（ZC）と複数参加銀行のモック実装。**
 Cloudflare Workers + D1 + Queues + R2 で動作し、固定費 **¥0**（全サービス無料枠内）。
