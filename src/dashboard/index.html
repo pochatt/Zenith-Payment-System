@@ -112,6 +112,9 @@ tailwind.config = {
     <button data-page="apispec" class="nav-btn w-full text-left px-5 py-2.5 text-sm flex items-center gap-3 border-l-[3px] border-transparent hover:bg-gray-50 transition-colors">
       <i class="fa-solid fa-file-code w-5 text-center text-gray-400"></i> API仕様
     </button>
+    <button data-page="documentation" class="nav-btn w-full text-left px-5 py-2.5 text-sm flex items-center gap-3 border-l-[3px] border-transparent hover:bg-gray-50 transition-colors">
+      <i class="fa-solid fa-book w-5 text-center text-gray-400"></i> ドキュメント
+    </button>
     <!-- ── 新決済機能 ── -->
     <div class="mt-2 pt-2 border-t border-gray-100">
       <div class="px-5 py-1 text-[10px] text-gray-400 uppercase tracking-wider">新決済機能</div>
@@ -189,7 +192,7 @@ tailwind.config = {
 const BASE = location.origin;
 const CRON_SECRET = 'zenith-cron-secret';
 let banks = [], currentPage = 'overview';
-const PAGE_TITLES = { overview:'総覧', transfer:'送金', bank:'銀行管理', htlc:'HTLC 条件付き送金', gtid:'GTID 協調送金', dns:'DNS清算', ops:'運用操作', liquidity:'流動性モニター', network:'ネットワークグラフ', simulator:'シミュレーター', cases:'ケース管理', trace:'イベントトレース', apispec:'API仕様書', acctverify:'事前口座確認', proxy:'Proxyディレクトリ', creditnotify:'入金結果通知', qrcode:'QRコード送金', crossborder:'クロスボーダー送金', edi:'EDI/リッチデータ' };
+const PAGE_TITLES = { overview:'総覧', transfer:'送金', bank:'銀行管理', htlc:'HTLC 条件付き送金', gtid:'GTID 協調送金', dns:'DNS清算', ops:'運用操作', liquidity:'流動性モニター', network:'ネットワークグラフ', simulator:'シミュレーター', cases:'ケース管理', trace:'イベントトレース', apispec:'API仕様書', documentation:'ドキュメント', acctverify:'事前口座確認', proxy:'Proxyディレクトリ', creditnotify:'入金結果通知', qrcode:'QRコード送金', crossborder:'クロスボーダー送金', edi:'EDI/リッチデータ' };
 
 // ========== Helpers ==========
 async function api(method, path, body, headers = {}) {
@@ -287,6 +290,7 @@ async function renderPage(page) {
     case 'cases':     return renderCases();
     case 'trace':     return renderTrace();
     case 'apispec':   return renderApiSpec();
+    case 'documentation': return renderDocumentation();
     case 'acctverify': return renderAcctVerify();
     case 'proxy': return renderProxy();
     case 'creditnotify': return renderCreditNotify();
@@ -1558,6 +1562,74 @@ function renderApiSpec() {
 
   bindSubnav('apispecNav', tab => initSwagger(tab));
   initSwagger('zc');
+}
+
+// ---------- Documentation ----------
+function renderDocumentation() {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 fade-in">
+      <!-- API Contracts -->
+      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/api-contracts.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
+        <div class="flex items-start gap-3 mb-3">
+          <i class="fa-solid fa-file-code text-brand-600 text-xl"></i>
+          <h3 class="font-medium text-gray-700">API Contracts</h3>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">全エンドポイント・リクエスト/レスポンス形式・バリデーションルールの詳細仕様</p>
+        <div class="text-[10px] text-gray-400">📄 仕様書</div>
+      </a>
+
+      <!-- Database Schema -->
+      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/schema.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
+        <div class="flex items-start gap-3 mb-3">
+          <i class="fa-solid fa-database text-brand-600 text-xl"></i>
+          <h3 class="font-medium text-gray-700">Database Schema</h3>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">28テーブルの構造・カラム定義・関係・初期データ</p>
+        <div class="text-[10px] text-gray-400">📊 スキーマ設計書</div>
+      </a>
+
+      <!-- Zenith Public Spec -->
+      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/zenith_public.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
+        <div class="flex items-start gap-3 mb-3">
+          <i class="fa-solid fa-book text-brand-600 text-xl"></i>
+          <h3 class="font-medium text-gray-700">Zenith Architecture</h3>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">支払レーン・状態遷移・決済フロー・全体設計思想</p>
+        <div class="text-[10px] text-gray-400">🏗️ 設計書</div>
+      </a>
+
+      <!-- Business Policy -->
+      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/zenith_policy.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
+        <div class="flex items-start gap-3 mb-3">
+          <i class="fa-solid fa-scales text-brand-600 text-xl"></i>
+          <h3 class="font-medium text-gray-700">Business Policy</h3>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">取引制度・業務ルール・制約・ポリシー定義</p>
+        <div class="text-[10px] text-gray-400">📋 ポリシー書</div>
+      </a>
+
+      <!-- File Structure -->
+      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/file_structure.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
+        <div class="flex items-start gap-3 mb-3">
+          <i class="fa-solid fa-folder-tree text-brand-600 text-xl"></i>
+          <h3 class="font-medium text-gray-700">File Structure</h3>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">ディレクトリ構成・各モジュールの役割・コード構成</p>
+        <div class="text-[10px] text-gray-400">📁 コード構成</div>
+      </a>
+
+      <!-- English Specs -->
+      <a href="https://github.com/pochatt/zenith-mock/tree/main/specs" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
+        <div class="flex items-start gap-3 mb-3">
+          <i class="fa-solid fa-globe text-brand-600 text-xl"></i>
+          <h3 class="font-medium text-gray-700">English Docs</h3>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">*.en.md ファイルで英語版仕様書を確認</p>
+        <div class="text-[10px] text-gray-400">🌍 多言語対応</div>
+      </a>
+    </div>
+  `;
 }
 
 function renderSimulator() {
