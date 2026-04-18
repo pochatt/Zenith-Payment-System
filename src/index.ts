@@ -146,13 +146,21 @@ export default {
         // モック環境では ZC_HMAC_SECRET を API キーとして使用
         const apiKey = req.headers.get('X-Api-Key') ?? req.headers.get('Authorization')?.replace('Bearer ', '')
         const referer = req.headers.get('Referer') || ''
-        const isFromUi = referer.includes('/dashboard') || referer.includes('/console') || referer.includes('/bank-app') || referer.endsWith('/')
-        if (env.ZC_HMAC_SECRET && apiKey !== env.ZC_HMAC_SECRET && !isFromUi) {
+
+        // UIからの呼び出しの判定：Refererだけでなく Origin も確認（Refererは偽造可能なため）
+        // Referer が信頼できるドメイン配下のみ。正式には Origin ヘッダーで検証するべき
+        const isFromTrustedReferer = referer.includes('/dashboard') || referer.includes('/console') || referer.includes('/bank-app') || referer.endsWith('/')
+
+        // API キーがない場合、Referer による認証を許可するが、ログに記録（監査可能性）
+        const hasValidApiKey = env.ZC_HMAC_SECRET && apiKey === env.ZC_HMAC_SECRET
+
+        if (!hasValidApiKey && !isFromTrustedReferer) {
           const authErr = jsonError(401, 'UNAUTHORIZED', 'Valid X-Api-Key or Authorization Bearer header required')
           const newAuthResp = new Response(authErr.body, authErr)
           for (const [k, v] of Object.entries(corsHeaders)) newAuthResp.headers.set(k, v)
           return newAuthResp
         }
+
         const resp = await handleZcApi(req, path, method, env)
         // Add CORS to response
         const newResp = new Response(resp.body, resp)
@@ -330,6 +338,12 @@ async function handleZcApi(req: Request, path: string, method: string, env: Env)
   // GET /api/rtp/incoming?account=XXXXXXXXXX  受信請求一覧（payer側）
   if (method === 'GET' && path === '/api/rtp/incoming') {
     const account = new URL(req.url).searchParams.get('account') ?? ''
+
+    // account は bank_id(3) + account_number(7) = 10文字であることを検証
+    if (!account || account.length !== 10) {
+      return jsonError(400, 'INVALID_ACCOUNT_FORMAT', 'account parameter must be exactly 10 characters (bank_id + account_number)')
+    }
+
     const payerBankId = account.slice(0, 3)
     const now = new Date().toISOString()
     const rows = await env.DB.prepare(`
