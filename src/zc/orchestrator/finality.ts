@@ -10,6 +10,7 @@ import { nowISO } from '../../types'
 import { newUUID } from '../../shared/idempotency'
 import { openCase, autoResolveCaseForTx } from '../case'
 import { isValidTransition } from './state_machine'
+import { chainIdOf, computeEntryHash, getChainTipHash } from '../finality_chain'
 
 // ---------------------------------------------------------------------------
 // FinalityLog persistence
@@ -38,12 +39,29 @@ export async function writeFinalityLog(db: D1Database, entry: FinalityLogEntry):
   const seq = Math.max(candidate, (maxRow?.mx ?? 0) + 1)
   const gtid = (entry.txid_or_gtid?.startsWith('GT-') || entry.txid_or_gtid?.startsWith('GTID-'))
     ? entry.txid_or_gtid : null
+  const occurredAt = nowISO()
+
+  // Chain this entry to the predecessor for the same txid/gtid scope.
+  const chainId = chainIdOf({ txid: entry.txid, gtid })
+  const prevHash = await getChainTipHash(db, chainId)
+  const entryHash = await computeEntryHash({
+    log_id: logId,
+    txid: entry.txid,
+    gtid,
+    event_type: entry.event_type,
+    state_from: entry.state_from,
+    state_to: entry.state_to,
+    payload_json: entry.payload_json,
+    event_seq: seq,
+    occurred_at: occurredAt,
+  }, prevHash)
+
   await db.prepare(
     `INSERT INTO FinalityLog
-     (log_id, txid, gtid, event_type, state_from, state_to, payload_json, event_seq, occurred_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     (log_id, txid, gtid, event_type, state_from, state_to, payload_json, event_seq, occurred_at, prev_hash, entry_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(logId, entry.txid, gtid, entry.event_type, entry.state_from,
-    entry.state_to, entry.payload_json, seq, nowISO()).run()
+    entry.state_to, entry.payload_json, seq, occurredAt, prevHash, entryHash).run()
 }
 
 // ---------------------------------------------------------------------------
