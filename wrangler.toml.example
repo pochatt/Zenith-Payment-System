@@ -32,6 +32,23 @@ max_retries       = 3
 binding     = "R2"
 bucket_name = "zenith-mock-r2"
 
+# KV for Mojaloop-style ALS caching（オプション。省略時は D1 にフォールバック）
+# `wrangler kv namespace create "als-cache"` を実行後、出力された id を貼り付ける
+# [[kv_namespaces]]
+# binding = "ALS_KV"
+# id      = "YOUR_KV_NAMESPACE_ID"
+
+# Durable Objects（LimitDO: H-limit管理、StreamDO: Rafikiストリーミング）
+[durable_objects]
+bindings = [
+  { name = "LIMIT_DO", class_name = "LimitDO" },
+  { name = "STREAM_DO", class_name = "StreamDO" },
+]
+
+[[migrations]]
+tag         = "v1"
+new_classes = ["LimitDO", "StreamDO"]
+
 # Cron triggers
 [triggers]
 crons = [
