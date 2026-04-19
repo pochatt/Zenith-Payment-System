@@ -105,6 +105,9 @@ import bankAppHtml   from './dashboard/bank-app.html'
 import zcApiYaml   from './openapi/zc-api'
 import bankApiYaml from './openapi/bank-api'
 
+export { LimitDO } from './zc/limit_do'
+export { StreamDO } from './zc/stream_rafiki'
+
 export default {
   // =========================================================================
   // HTTP fetch ハンドラー
