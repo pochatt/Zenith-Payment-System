@@ -34,6 +34,42 @@ Every state change is logged in an append-only FinalityLog, making the entire se
 
 ---
 
+## Unified TradFi / DeFi Settlement Semantics
+
+Zenith is not a bridge between two worlds — it collapses them into a single state vocabulary.
+
+Traditional payment rails (RTGS, deferred net settlement, Zengin-style retail transfers, ISO 20022 messaging, FATF R.16 travel rule) and DeFi-native primitives (hash-time-locked contracts, multi-leg atomic swaps, preimage-conditional release) are expressed as **different lanes over the same state machine** (`RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE → … → SETTLED`), written to the same `FinalityLog`, and governed by the same idempotency and optimistic-locking guarantees.
+
+| Lane | Heritage | Finality primitive |
+|------|---------|--------------------|
+| EXPRESS / STANDARD / BULK | TradFi (retail, Zengin-era) | H-reserve + netting |
+| HIGH-VALUE | TradFi (central bank RTGS) | BOJ-style real-time gross settlement |
+| DNS cycle | TradFi (clearing house) | End-of-day net position |
+| HTLC / HTLC-AUTH | DeFi-native | Hashlock + timelock (preimage release) |
+| GTID | Hybrid (atomic multi-leg) | All-or-nothing across legs |
+| RTP | Hybrid (pull-based, payee-initiated) | Name verification + authorization |
+
+### How this relates to prior art
+
+The closest precedents in the public literature are central-bank experiments, each of which covers only a subset of what Zenith unifies:
+
+- **BIS Project Stella Phase 2** (Bank of Japan + ECB, 2018) — HTLC-based cross-DLT synchronised settlement. Research PoC; no RTGS, DNS, or FATF integration.
+- **BIS Project Jasper-Ubin** (Bank of Canada + MAS) — HTLC atomic cross-border payment between two separate DLTs.
+- **BIS Project Agorá** (7 central banks + private banks, 2024–) — Tokenised deposits + wholesale CBDC on a unified ledger. Design-stage; reference code not public.
+- **BIS Project mBridge** — Multi-CBDC cross-border payment, permissioned DLT.
+- **Partior** (DBS / JPMorgan / Temasek / Standard Chartered) — Blockchain-native multi-currency clearing.
+- **Fnality** — Tokenised central bank money for wholesale settlement.
+- **JPM Onyx / Coin Systems**, **Canton Network**, **DCJPY / Progmat** — Deposit-token issuance layers.
+
+What is unusual about Zenith — and what we have not found in a public open-source codebase — is the explicit choice to express **HTLC, GTID atomic multi-leg, RTGS, and DNS netting as coequal lanes inside one orchestrator**, rather than as separate systems with adapters. Most prior work treats "TradFi rails" and "DLT rails" as distinct ledgers joined by a bridge; Zenith treats them as different lanes on the same state machine. See `src/zc/orchestrator/state_machine.ts` and `src/zc/lanes/` for the implementation.
+
+This makes Zenith a reference for questions like:
+- What does a tokenised-deposit HTLC look like if its lifecycle is logged in the same append-only audit trail as an RTGS settlement?
+- How should FATF R.16 travel-rule data attach to a hash-time-locked payment?
+- Can DNS end-of-day netting coexist with intraday atomic multi-leg (GTID) in one coordinator?
+
+---
+
 ## Use Cases
 
 ### For Financial Institutions
@@ -518,6 +554,42 @@ RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE
 - **監査性** — 完全なコンテキストを持つ追記型イベントログ
 - **回復性** — サーキットブレーカーパターン、段階的機能低下、自動ヘルス監視
 - **冪等性** — すべての操作に対して安全な再試行セマンティクス
+
+## TradFi と DeFi を同一セマンティクスで記述する
+
+Zenith は「2つの世界をつなぐブリッジ」ではありません。**両者を同じ状態機械の語彙に畳み込む** 統合型コーディネーターです。
+
+伝統的決済レール（RTGS、DNS、全銀レガシー、ISO 20022、FATF R.16）と、DeFiネイティブな原始要素（HTLC、マルチレグ原子スワップ、preimage 条件開示）を、**同一の状態機械 (`RECEIVED → PRECHECKED → H_RESERVED → … → SETTLED`) 上の異なるレーン** として記述し、同じ `FinalityLog` に追記し、同じ冪等キーと楽観ロックで統治します。
+
+| レーン | 出自 | ファイナリティ原始要素 |
+|------|------|-----------------|
+| EXPRESS / STANDARD / BULK | TradFi（リテール、全銀系） | H予約 + ネッティング |
+| HIGH-VALUE | TradFi（中央銀行RTGS） | 日銀ネット型即時グロス決済 |
+| DNS サイクル | TradFi（清算機関） | 日次ネットポジション |
+| HTLC / HTLC-AUTH | DeFi ネイティブ | ハッシュロック + タイムロック（preimage 開示） |
+| GTID | ハイブリッド（原子マルチレグ） | レッグ横断的オール・オア・ナッシング |
+| RTP | ハイブリッド（受取人発起型プル） | 名義確認 + 事前承認 |
+
+### 先行例との関係
+
+公開文献で最も近い先行例はいずれも中央銀行の実験で、**Zenithが統合している領域の一部のみを扱っています**：
+
+- **BIS Project Stella Phase 2**（日銀 + ECB, 2018）— HTLCによるDLT間同期決済の研究PoC。RTGS/DNS/FATF統合なし。
+- **BIS Project Jasper-Ubin**（カナダ中銀 + MAS）— 別個の2つのDLT間のHTLCクロスボーダー原子決済。
+- **BIS Project Agorá**（7中銀＋民間銀行, 2024–）— トークン化預金と卸売CBDCを統一台帳で扱う。設計段階、参照コード非公開。
+- **BIS Project mBridge** — マルチCBDCクロスボーダー、パーミッションドDLT。
+- **Partior**（DBS / JPM / Temasek / SC）— ブロックチェーンネイティブなマルチ通貨清算。
+- **Fnality** — ホールセール決済向けトークン化中銀マネー。
+- **JPM Onyx / Canton Network / DCJPY / Progmat** — 預金トークン発行レイヤー。
+
+Zenith の特異な点は、そして **公開されたオープンソース実装としては類例を見つけられなかった** 点は、**HTLC、GTID 原子マルチレグ、RTGS、DNS ネッティングを 1 つのオーケストレーター内の対等なレーンとして表現している** ことです。従来の研究は「TradFi レール」と「DLT レール」を別台帳として扱い、間をブリッジで繋ぎます。Zenith は両者を同じ状態機械上の異なるレーンとして扱います。実装は `src/zc/orchestrator/state_machine.ts` と `src/zc/lanes/` を参照してください。
+
+これにより以下のような問いのリファレンスになります：
+
+- トークン化預金の HTLC が、RTGS 決済と同じ追記型監査証跡でログされたらライフサイクルはどう見えるか？
+- FATF R.16 のトラベルルール情報は、ハッシュタイムロック決済にどう添付されるべきか？
+- DNS の日次ネッティングと、日中の原子マルチレグ (GTID) は、1 つのコーディネーターで共存できるか？
+
 
 ## 利用シーン
 
