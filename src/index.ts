@@ -75,6 +75,10 @@ import {
 // ZC TxEventLog 照会
 import { getTxEvents, getRecentEvents, getGtidEvents } from './zc/trace'
 
+// ZC Finality chain verification & explainability
+import { verifyChain } from './zc/finality_chain'
+import { explainTransaction } from './zc/explain'
+
 // DNS management
 import { kickDns, holdDns, settleDns, getBojPositions } from './zc/dns'
 import { updateCase } from './zc/case'
@@ -334,6 +338,28 @@ async function handleZcApi(req: Request, path: string, method: string, env: Env)
   if (method === 'GET' && txEventsMatch) {
     const events = await getTxEvents(txEventsMatch[1]!, env.DB)
     return json(200, { txid: txEventsMatch[1], events })
+  }
+
+  // GET /api/transactions/:txid/explain  人間可読な状態遷移の説明 + 改ざん検知
+  const txExplainMatch = path.match(/^\/api\/transactions\/([^/]+)\/explain$/)
+  if (method === 'GET' && txExplainMatch) {
+    const result = await explainTransaction(env.DB, txExplainMatch[1]!)
+    if (!result) return jsonError(404, 'NOT_FOUND', `txid ${txExplainMatch[1]} not found`)
+    return json(200, result)
+  }
+
+  // GET /api/transactions/:txid/verify  FinalityLog ハッシュチェーン検証
+  const txVerifyMatch = path.match(/^\/api\/transactions\/([^/]+)\/verify$/)
+  if (method === 'GET' && txVerifyMatch) {
+    const result = await verifyChain(env.DB, txVerifyMatch[1]!)
+    return json(200, result)
+  }
+
+  // GET /api/gtid/:gtid/verify  GTID 用ハッシュチェーン検証
+  const gtidVerifyMatch = path.match(/^\/api\/gtid\/([^/]+)\/verify$/)
+  if (method === 'GET' && gtidVerifyMatch) {
+    const result = await verifyChain(env.DB, gtidVerifyMatch[1]!)
+    return json(200, result)
   }
 
   // GET /api/events  全体イベントログ（最近N件）

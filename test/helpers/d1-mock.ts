@@ -129,6 +129,7 @@ const SCHEMA_MIGRATIONS = [
   '0012_fix_dns_cycles.sql',
   '0013_retained_earnings_account.sql',
   '0014_circuit_breaker_reversal.sql',
+  '0015_finality_hash_chain.sql',
 ]
 
 /**
