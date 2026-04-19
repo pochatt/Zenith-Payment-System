@@ -251,6 +251,33 @@ async function handleZcApi(req: Request, path: string, method: string, env: Env)
   if (method === 'GET' && path === '/api/htlc/auth-requests')
     return handleListHtlcAuthRequests(req, env)
 
+  // GET /api/stream/connect  (Rafiki-style Streaming Websocket)
+  if (method === 'GET' && path === '/api/stream/connect') {
+    const id = env.STREAM_DO?.idFromName('global-stream-1')
+    if (!id || !env.STREAM_DO) return jsonError(500, 'NO_DO', 'STREAM_DO unavailable')
+    const stub = env.STREAM_DO.get(id)
+    return stub.fetch(req)
+  }
+
+  // GET /api/als/lookup  (Mojaloop-style Account Lookup Service)
+  if (method === 'GET' && path === '/api/als/lookup') {
+    const alias = new URL(req.url).searchParams.get('alias')
+    if (!alias) return jsonError(400, 'BAD_REQUEST', '?alias= required')
+    const { lookupAlias } = await import('./zc/als')
+    const res = await lookupAlias(alias, env)
+    if (!res) return jsonError(404, 'NOT_FOUND', 'Alias not found')
+    return json(200, res)
+  }
+
+  // POST /api/limit/reserve (TigerBeetle-style DO limitation logic)
+  if (method === 'POST' && path === '/api/limit/reserve') {
+    const bank_id = req.headers.get('X-Bank-Id') || 'global'
+    const id = env.LIMIT_DO?.idFromName(bank_id)
+    if (!id || !env.LIMIT_DO) return jsonError(500, 'NO_DO', 'LIMIT_DO unavailable')
+    const stub = env.LIMIT_DO.get(id)
+    return stub.fetch(new Request('http://do/reserve', { method: 'POST', body: await req.text() }))
+  }
+
   // GET/POST/DELETE /api/htlc/auth-whitelist  ホワイトリスト管理
   if (path === '/api/htlc/auth-whitelist') {
     if (method === 'GET') return handleListAuthWhitelist(env)

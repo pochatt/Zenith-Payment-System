@@ -554,6 +554,78 @@ paths:
           description: Response recorded
 
   # =========================================================================
+  # Emerging Architecture Integrations (Rafiki, Mojaloop, TigerBeetle style)
+  # =========================================================================
+  /api/stream/connect:
+    get:
+      tags: [stream, sse]
+      summary: Rafiki-style WebSockets streaming endpoint
+      description: |
+        Accepts WebSocket connections for continuous micro-payment streams.
+        Batches micro-transactions into D1 logs using DO Alarms.
+      responses:
+        "101":
+          description: Switching Protocols (WebSocket Upgrade)
+
+  /api/als/lookup:
+    get:
+      tags: [proxy, account-verify]
+      summary: Mojaloop-style Account Lookup Service (ALS)
+      description: |
+        High-speed O(1) directory alias resolution utilizing KV cache.
+      parameters:
+        - name: alias
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Alias to resolve (e.g. phone:090..., payid:...)
+      responses:
+        "200":
+          description: Resolved Bank ID and Account ID/PSPR
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bank_id: { type: string }
+                  account_hash: { type: string }
+                  pspr_ref: { type: string }
+        "400":
+          \$ref: '#/components/responses/BadRequest'
+        "404":
+          \$ref: '#/components/responses/NotFound'
+
+  /api/limit/reserve:
+    post:
+      tags: [transfers]
+      summary: LimitDO H-reservation (TigerBeetle-style bottleneck bypass)
+      description: |
+        Synchronous highly-concurrent Limit check run on Durable Objects to bypass D1 db locks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount: { type: integer }
+      responses:
+        "200":
+          description: H-Reserve allocation status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean }
+                  reservation_id: { type: string }
+                  reason: { type: string }
+        "400":
+          \$ref: '#/components/responses/BadRequest'
+
+  # =========================================================================
   # Query / Events
   # =========================================================================
   /api/transactions:

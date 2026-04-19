@@ -21,6 +21,9 @@ export interface Env {
   QR_SECRET: string
   R2_BUCKET?: R2Bucket
   FOREIGN_FPS_ENDPOINT?: string
+  LIMIT_DO?: DurableObjectNamespace
+  STREAM_DO?: DurableObjectNamespace
+  ALS_KV?: KVNamespace
 }
 
 // ---------------------------------------------------------------------------

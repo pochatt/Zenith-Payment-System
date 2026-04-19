@@ -13,7 +13,7 @@
     "test:watch": "vitest"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241205.0",
+    "@cloudflare/workers-types": "^4.20260418.1",
     "@types/better-sqlite3": "^7.6.12",
     "better-sqlite3": "^11.9.1",
     "typescript": "^5.6.3",

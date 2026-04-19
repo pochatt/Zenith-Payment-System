@@ -453,6 +453,29 @@ Request:
 
 ---
 
+---
+
+### 先進的アーキテクチャ実験（Advanced Features）
+
+#### GET /api/stream/connect
+Rafiki風 ストリーミング・マイクロ決済 (WebSocket)
+接続確立後、`{ "type": "START", "gtid": "..." }` を送信し、`{ "type": "PACKET", "amount": 10 }` 等を複数回送信可能。
+一定間隔のDO AlarmによってD1にまとめてStateが記録される。
+
+#### GET /api/als/lookup
+Mojaloop風 O(1) エイリアス解決ディレクトリキャッシュ
+
+Query: `?alias=phone:090xxxx`
+Response: `{ "bank_id": "001", "account_hash": "...", "pspr_ref": "..." }`
+
+#### POST /api/limit/reserve
+TigerBeetle風 DOベースH限度額直列化
+
+Request: `{ "amount": 1000 }`
+Response: `{ "success": true, "reservation_id": "H-DO-RES-..." }`
+
+---
+
 ### 管理・設定
 
 #### POST /api/pspr/register

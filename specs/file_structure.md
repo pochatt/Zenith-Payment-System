@@ -107,6 +107,9 @@
 │   │   ├── circuit_breaker.ts              # 参加行ヘルス監視と段階的遮断・再開
 │   │   ├── query.ts                        # Transaction 参照 API（Appendix E.6 QueryResponse）
 │   │   ├── stream.ts                       # 銀行向け SSE（tx_state_change / credit_notification / rtp_request）
+│   │   ├── stream_rafiki.ts                # Rafiki風ストリーミング決済 WebSocket/DOバッファ
+│   │   ├── als.ts                          # Mojaloop風 アカウントエイリアス解決(KVキャッシュ)
+│   │   ├── limit_do.ts                     # TigerBeetle風 H限度額の直列化・排他制御(Durable Object)
 │   │   └── vault.ts                        # 短期機密データ貯蔵（AML 評価・PII・TTL 管理）
 │   │
 │   └── bank/                               # モックにおける参加銀行側のAPIとロジック処理

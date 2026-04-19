@@ -136,6 +136,9 @@ npm run dev  # http://localhost:8787
 ### Advanced Features
 
 - **Daily Net Settlement (DNS)** — EOD cycle with position netting
+- **Limit Operations (TigerBeetle-style DO)** — Strict single-threaded Headroom reservation overcoming D1 lock limits
+- **Directory ALS (Mojaloop KV)** — O(1) alias caching bypassing DB loads
+- **Streaming Micro-payments (Rafiki-style)** — WebSockets & DO-alarm based batched finality
 - **QR Payments** — Static and dynamic codes with HMAC validation
 - **Alias Resolution** — Phone, email, corporate ID routing
 - **Cross-Border** — FATF R.16 compliant international transfers
@@ -607,6 +610,9 @@ curl -X POST https://zenith-mock.<your-domain>.workers.dev/internal/seed
 ### 高度な機能
 
 - **日次ネット清算 (DNS)** — EODサイクルと建玉ネッティング
+- **限度額直列化 (TigerBeetle的DO)** — D1のロック限界を超えるシングルスレッドH予約
+- **超高速ディレクトリ ALS (Mojaloop的KV)** — DB負荷を回避するO(1)のエイリアスキャッシュ
+- **ストリーミング・マイクロ決済 (Rafiki的)** — WebSocketとDOタイマーによる巨大バッチ遅延確定
 - **QR決済** — 静的・動的コードとHMAC検証
 - **エイリアス解決** — 電話番号・メール・法人IDルーティング
 - **クロスボーダー** — FATF R.16準拠の国際送金
