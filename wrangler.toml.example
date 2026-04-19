@@ -47,7 +47,7 @@ bindings = [
 
 [[migrations]]
 tag         = "v1"
-new_classes = ["LimitDO", "StreamDO"]
+new_sqlite_classes = ["LimitDO", "StreamDO"]
 
 # Cron triggers
 [triggers]
