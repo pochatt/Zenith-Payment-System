@@ -1567,69 +1567,86 @@ function renderApiSpec() {
 // ---------- Documentation ----------
 function renderDocumentation() {
   const app = document.getElementById('app');
+  const docs = [
+    { key: 'api-contracts', label: 'API Contracts', desc: '全エンドポイント・リクエスト/レスポンス形式' },
+    { key: 'schema', label: 'Database Schema', desc: '28テーブルの構造・カラム定義・関係' },
+    { key: 'zenith_public', label: 'Zenith Architecture', desc: '支払レーン・状態遷移・決済フロー' },
+    { key: 'zenith_policy', label: 'Business Policy', desc: '取引制度・業務ルール・制約' },
+    { key: 'file_structure', label: 'File Structure', desc: 'ディレクトリ構成・モジュール責任' }
+  ];
+
   app.innerHTML = `
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 fade-in">
-      <!-- API Contracts -->
-      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/api-contracts.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
-        <div class="flex items-start gap-3 mb-3">
-          <i class="fa-solid fa-file-code text-brand-600 text-xl"></i>
-          <h3 class="font-medium text-gray-700">API Contracts</h3>
-        </div>
-        <p class="text-xs text-gray-500 mb-3">全エンドポイント・リクエスト/レスポンス形式・バリデーションルールの詳細仕様</p>
-        <div class="text-[10px] text-gray-400">📄 仕様書</div>
-      </a>
-
-      <!-- Database Schema -->
-      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/schema.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
-        <div class="flex items-start gap-3 mb-3">
-          <i class="fa-solid fa-database text-brand-600 text-xl"></i>
-          <h3 class="font-medium text-gray-700">Database Schema</h3>
-        </div>
-        <p class="text-xs text-gray-500 mb-3">28テーブルの構造・カラム定義・関係・初期データ</p>
-        <div class="text-[10px] text-gray-400">📊 スキーマ設計書</div>
-      </a>
-
-      <!-- Zenith Public Spec -->
-      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/zenith_public.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
-        <div class="flex items-start gap-3 mb-3">
-          <i class="fa-solid fa-book text-brand-600 text-xl"></i>
-          <h3 class="font-medium text-gray-700">Zenith Architecture</h3>
-        </div>
-        <p class="text-xs text-gray-500 mb-3">支払レーン・状態遷移・決済フロー・全体設計思想</p>
-        <div class="text-[10px] text-gray-400">🏗️ 設計書</div>
-      </a>
-
-      <!-- Business Policy -->
-      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/zenith_policy.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
-        <div class="flex items-start gap-3 mb-3">
-          <i class="fa-solid fa-scales text-brand-600 text-xl"></i>
-          <h3 class="font-medium text-gray-700">Business Policy</h3>
-        </div>
-        <p class="text-xs text-gray-500 mb-3">取引制度・業務ルール・制約・ポリシー定義</p>
-        <div class="text-[10px] text-gray-400">📋 ポリシー書</div>
-      </a>
-
-      <!-- File Structure -->
-      <a href="https://github.com/pochatt/zenith-mock/blob/main/specs/file_structure.md" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
-        <div class="flex items-start gap-3 mb-3">
-          <i class="fa-solid fa-folder-tree text-brand-600 text-xl"></i>
-          <h3 class="font-medium text-gray-700">File Structure</h3>
-        </div>
-        <p class="text-xs text-gray-500 mb-3">ディレクトリ構成・各モジュールの役割・コード構成</p>
-        <div class="text-[10px] text-gray-400">📁 コード構成</div>
-      </a>
-
-      <!-- English Specs -->
-      <a href="https://github.com/pochatt/zenith-mock/tree/main/specs" target="_blank" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all">
-        <div class="flex items-start gap-3 mb-3">
-          <i class="fa-solid fa-globe text-brand-600 text-xl"></i>
-          <h3 class="font-medium text-gray-700">English Docs</h3>
-        </div>
-        <p class="text-xs text-gray-500 mb-3">*.en.md ファイルで英語版仕様書を確認</p>
-        <div class="text-[10px] text-gray-400">🌍 多言語対応</div>
-      </a>
+      ${docs.map(d => `
+        <button onclick="renderDocView('${d.key}')" class="block bg-white rounded-lg border border-gray-200 p-5 hover:border-brand-500 hover:shadow-md transition-all text-left cursor-pointer">
+          <h3 class="font-medium text-gray-700 mb-2">${d.label}</h3>
+          <p class="text-xs text-gray-500 mb-3">${d.desc}</p>
+          <div class="text-[10px] text-gray-400">クリックして表示</div>
+        </button>
+      `).join('')}
     </div>
   `;
+}
+
+async function renderDocView(docKey) {
+  const app = document.getElementById('app');
+  app.innerHTML = `<div class="text-center py-20"><div class="text-gray-400">読み込み中...</div></div>`;
+
+  try {
+    const filename = docKey.includes('_') ? docKey + '.md' : docKey + '.md';
+    const response = await fetch(`/specs/${filename}`);
+
+    if (!response.ok) throw new Error('Not found');
+
+    const md = await response.text();
+    const html = await loadAndParseMarkdown(md);
+
+    app.innerHTML = `
+      <button onclick="renderDocumentation()" class="mb-4 text-xs text-brand-600 hover:text-brand-700">← ドキュメント一覧に戻る</button>
+      <div class="bg-white rounded-lg border border-gray-200 p-6 prose prose-sm max-w-none">
+        ${html}
+      </div>
+    `;
+  } catch (e) {
+    app.innerHTML = `
+      <button onclick="renderDocumentation()" class="mb-4 text-xs text-brand-600 hover:text-brand-700">← ドキュメント一覧に戻る</button>
+      <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm">
+        <strong>エラー:</strong> ドキュメントを読み込めませんでした。GitHub リンク: <a href="https://github.com/pochatt/zenith-mock/tree/main/specs" target="_blank" class="underline">specs/</a>
+      </div>
+    `;
+  }
+}
+
+async function loadAndParseMarkdown(markdown) {
+  // Load marked library if not already loaded
+  if (!window.marked) {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
+    await new Promise((resolve, reject) => {
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  // Basic HTML escaping for code blocks
+  const html = marked.parse(markdown, { breaks: true });
+
+  // Add styling for markdown elements
+  return html
+    .replace(/<h2>/g, '<h2 class="text-2xl font-bold mt-6 mb-3 text-gray-800 border-b border-gray-200 pb-2">')
+    .replace(/<h3>/g, '<h3 class="text-xl font-bold mt-5 mb-2 text-gray-700">')
+    .replace(/<h4>/g, '<h4 class="text-lg font-semibold mt-4 mb-2 text-gray-700">')
+    .replace(/<p>/g, '<p class="mb-3 text-gray-700 leading-relaxed">')
+    .replace(/<ul>/g, '<ul class="list-disc list-inside mb-3 text-gray-700">')
+    .replace(/<ol>/g, '<ol class="list-decimal list-inside mb-3 text-gray-700">')
+    .replace(/<li>/g, '<li class="ml-2 mb-1">')
+    .replace(/<code>/g, '<code class="bg-gray-100 px-2 py-1 rounded text-sm font-mono text-gray-800">')
+    .replace(/<pre>/g, '<pre class="bg-gray-900 text-gray-100 p-4 rounded mb-3 overflow-x-auto text-sm">')
+    .replace(/<table>/g, '<table class="w-full border-collapse mb-3 border border-gray-200">')
+    .replace(/<th>/g, '<th class="border border-gray-200 bg-gray-100 px-3 py-2 text-left font-semibold">')
+    .replace(/<td>/g, '<td class="border border-gray-200 px-3 py-2">')
+    .replace(/<blockquote>/g, '<blockquote class="border-l-4 border-brand-500 pl-4 italic text-gray-600 mb-3">');
 }
 
 function renderSimulator() {
