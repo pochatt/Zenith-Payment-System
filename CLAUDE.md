@@ -48,6 +48,7 @@ Each lane is a distinct state machine in `src/zc/lanes/`:
 | GTID | `gtid.ts` | Multi-leg coordinated transfers across banks |
 | HIGH_VALUE | `highvalue.ts` | RTGS via IGS for large-value transactions |
 | BULK | `bulk.ts` | Batch processing |
+| HTLC_AUTH | `htlc_auth.ts` | Payee-initiated authorization (card-style hold/capture) |
 
 ### State & Types
 
@@ -62,13 +63,13 @@ States are string unions (not enums). Always import types from `src/types.ts`, n
 
 ### Database
 
-28 tables across 14 numbered migration files in `/migrations/`. Key tables:
+28 tables across 16 numbered migration files in `/migrations/`. Key tables:
 - `Transactions`, `Participants`, `BankAccounts`, `BankJournals` — core payment data
 - `FinalityLog`, `TxEventLog` — append-only audit/trace (never updated, only inserted)
 - `GtidTransactions`, `GtidLegs`, `HtlcRequests`, `RtpRequests`, `DnsCycles` — lane-specific state
 - `CircuitBreakerStates`, `ReversalRequests`, `QrCodes`, `ProxyAliases`, `CrossBorderTransfers`, `EdiRecords`
 
-**Never edit existing migration files.** New schema changes always go in a new numbered file.
+**Never edit existing migration files.** New schema changes always go in a new numbered file. **When adding a migration**, also append it to `SCHEMA_MIGRATIONS` in `test/helpers/d1-mock.ts` so tests run against the new schema. See `specs/schema.md` § マイグレーション運用 for the full ruleset (no `IF NOT EXISTS` ALTER COLUMN, hot-path indexes documented in § Index Catalog).
 
 Transactions use a `version` column for optimistic locking to prevent race conditions.
 
@@ -78,6 +79,10 @@ Transactions use a `version` column for optimistic locking to prevent race condi
 - **DNS** (`src/zc/dns.ts`) — Daily Net Settlement cycle (format: `DNS-YYYYMMDD-HHMMSS`)
 - **Bank Ledger** (`src/bank/ledger.ts`) — Zero-sum double-entry journal; every debit has a matching credit
 - **Shared utilities** (`src/shared/`) — HMAC signing, ISO 20022 XML generation, FATF R.16 validation, Zengin/ISO format conversion, idempotency, proof ref generation, routing
+- **Cross-cutting primitives** (use these instead of ad-hoc patterns):
+  - `src/shared/errors.ts` — `DomainError`, `errorResponse`, reason_code → category mapping. Single source of truth for HTTP status + queue retry policy. See `specs/api-contracts.md` § Error Catalog.
+  - `src/shared/logger.ts` — `newRequestLogger()` emits 1 JSON line per event with X-Request-Id propagation; PII keys auto-redacted.
+  - `src/zc/lanes/_helpers.ts` — `transitionWithLog()` (CAS state change + paired FinalityLog write) and `cancelInFlightTx()` (TOCTOU-safe order: state guard → release H → log → finalize). Prefer these over copy-pasting CAS/UPDATE patterns into new lane code. Migration plan: `specs/architecture.md` § Lane Refactor Roadmap.
 
 ### Naming Conventions
 

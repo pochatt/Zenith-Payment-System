@@ -48,6 +48,8 @@
 │   │
 │   ├── shared/                             # ZC/銀行で共用のユーティリティ
 │   │   ├── constants.ts                    # システム定数・設定値
+│   │   ├── errors.ts                       # DomainError / errorResponse / reason_code → category 写像（HTTP & retry の SoT）
+│   │   ├── logger.ts                       # newRequestLogger（1イベント1JSON、X-Request-Id、PII 自動 redaction）
 │   │   ├── hmac.ts                         # HMAC-SHA256 署名・検証（Web Crypto）
 │   │   ├── idempotency.ts                  # Idempotency-Key 制御
 │   │   ├── iso20022.ts                     # ISO 20022 メッセージ生成・全銀固定長変換
@@ -81,6 +83,7 @@
 │   │   │   └── gtid.ts                     # GTID 多脚ファイナライズ判定
 │   │   │
 │   │   ├── lanes/                          # 個別レーン（送金の性質ごとの処理）の実装
+│   │   │   ├── _helpers.ts                 # 共通プリミティブ（transitionWithLog: CAS+FinalityLog、cancelInFlightTx: TOCTOU安全な取消順）
 │   │   │   ├── express.ts                  # Fast-track 店舗決済等（H 予約で即時確定）
 │   │   │   ├── standard.ts                 # 名義確認・オーソリを伴う標準の一般送金
 │   │   │   ├── bulk.ts                     # 一括決済・LSM キューイング

@@ -857,3 +857,102 @@ Request: `{ "cycle_id": "..." }`
 | `/` `/dashboard` | メインダッシュボード（取引一覧・状態可視化） |
 | `/console` | オペレーションコンソール（Alpine.js + ECharts） |
 | `/bank-app` | 顧客向け銀行アプリ（Alpine.js） |
+
+---
+
+## リクエストトレーシング（横断仕様）
+
+全 HTTP レスポンスは `X-Request-Id` ヘッダーを必ず返す。エラー時は
+レスポンス本文の `request_id` フィールドにも同値が入り、構造化ログ
+（後述）と突合可能になる。
+
+- リクエスト側が `X-Request-Id` を付与した場合、その値をそのまま採用する。
+- 付与が無い場合、サーバが `req-<uuid>` を生成して返す。
+- Cloudflare Queues コンシューマでも同等の logger を初期化し、`request_id`,
+  `message_type`, `txid`, `gtid`, `attempt` を 1 行 JSON として `console`
+  に出力する（Logpush でそのままパース可能）。
+
+実装: `src/shared/logger.ts` を参照。詳細は
+[`specs/architecture.md` § Observability](./architecture.md#observability) に集約。
+
+---
+
+## エラーカタログ（横断仕様）
+
+全エンドポイントは失敗時に以下の JSON 形を返す。`reason_code` は機械可読、
+`category` は HTTP ステータスとリトライ可否を一元化する。
+
+```json
+{
+  "error":       "human-readable message",
+  "reason_code": "H_LIMIT_EXCEEDED",
+  "category":    "CONFLICT",
+  "details":     { "txid": "TX-001", "requested": 1000, "available": 500 },
+  "request_id":  "req-..."
+}
+```
+
+### カテゴリと HTTP ステータス対応
+
+`src/shared/errors.ts` の `httpStatusOf()` がただ一つの真。
+
+| Category    | HTTP | Retryable | 用途                                                           |
+|-------------|------|-----------|---------------------------------------------------------------|
+| VALIDATION  | 400  | ✗         | 入力不正、フォーマット違反、FATF R.16 違反                        |
+| AUTH        | 401  | ✗         | API キー欠落・HMAC 不一致・Whitelist 拒否                        |
+| NOT_FOUND   | 404  | ✗         | TX/HTLC/GTID/RTP/Account/Proxy/Participant 不在                 |
+| CONFLICT    | 409  | ✗         | 状態ガード・楽観ロック衝突・H 上限超過・名義不一致・サーキット開放 |
+| RATE_LIMIT  | 429  | ✓ (backoff) | レート制限                                                  |
+| INVARIANT   | 500  | ✗         | 不変条件違反（バグ）。FinalityLog 改ざん検出、二重記帳など       |
+| INTERNAL    | 500  | ✗         | 未分類例外。実装漏れ                                           |
+| DOWNSTREAM  | 502  | ✓         | 銀行 / IGS / 外部呼び出しの一時的失敗                            |
+| TIMEOUT     | 504  | ✓         | 銀行 / IGS のタイムアウト                                       |
+
+Queue コンシューマは `Retryable=✓` のみ `msg.retry()` し、それ以外は
+`msg.ack()` してケース化する（無限ループ防止）。
+
+### 主要 reason_code 一覧
+
+| reason_code            | category   | 発生箇所例                                                  |
+|------------------------|------------|-------------------------------------------------------------|
+| INVALID_REQUEST        | VALIDATION | バリデーション全般                                           |
+| MISSING_FIELD          | VALIDATION | 必須フィールド欠落                                           |
+| INVALID_AMOUNT         | VALIDATION | 金額が負・非整数                                             |
+| INVALID_LANE           | VALIDATION | 未知の lane 値                                               |
+| INVALID_STATE          | VALIDATION | クライアント側からの不正な状態指定                           |
+| INVALID_PROXY_TYPE     | VALIDATION | Proxy 解決時                                                 |
+| FATF_R16_VIOLATION     | VALIDATION | クロスボーダーの FATF データ不備                             |
+| PREIMAGE_MISMATCH      | VALIDATION | HTLC claim 時に hashlock 不一致                              |
+| EXPIRED                | VALIDATION | RTP・HTLC・QR の有効期限超過                                 |
+| UNAUTHORIZED           | AUTH       | API キー欠落                                                 |
+| INVALID_HMAC           | AUTH       | ZC↔Bank HMAC 検証失敗                                       |
+| WHITELIST_REJECTED     | AUTH       | HTLC Auth Whitelist で拒否                                   |
+| ACCOUNT_FROZEN         | AUTH       | 口座凍結中の操作                                             |
+| TX_NOT_FOUND           | NOT_FOUND  | `GET /api/transactions/:txid` などで該当無し                 |
+| HTLC_NOT_FOUND         | NOT_FOUND  | HTLC 操作対象不在                                            |
+| GTID_NOT_FOUND         | NOT_FOUND  | GTID 操作対象不在                                            |
+| RTP_NOT_FOUND          | NOT_FOUND  | RTP 操作対象不在                                             |
+| ACCOUNT_NOT_FOUND      | NOT_FOUND  | 口座照会失敗                                                 |
+| PROXY_NOT_FOUND        | NOT_FOUND  | Proxy 解決失敗                                               |
+| PARTICIPANT_NOT_FOUND  | NOT_FOUND  | 参加行未登録                                                 |
+| CONCURRENCY_CONFLICT   | CONFLICT   | 楽観ロック競合（`transitionWithLog` strict モード）          |
+| STATE_GUARD            | CONFLICT   | 状態ガードで遷移不可                                         |
+| IDEMPOTENCY_REPLAY     | CONFLICT   | 同一 idempotency_key の再送（既存応答返却）                  |
+| ALREADY_PROCESSED      | CONFLICT   | 既処理イベントの再投入                                       |
+| H_LIMIT_EXCEEDED       | CONFLICT   | H 予約が participant.h_limit を超過                          |
+| RESERVE_FAILED         | CONFLICT   | 銀行側 reserve-funds が NG                                   |
+| AUTHORITY_CHECK_NG     | CONFLICT   | 銀行側 authority-check が NG                                 |
+| NAME_MISMATCH          | CONFLICT   | 名義不一致                                                   |
+| CIRCUIT_OPEN           | CONFLICT   | CircuitBreaker が OPEN                                       |
+| BANK_ERROR             | DOWNSTREAM | 銀行 ingress が 5xx                                          |
+| BANK_TIMEOUT           | TIMEOUT    | 銀行 ingress が応答遅延                                      |
+| IGS_ERROR              | DOWNSTREAM | IGS コールバック失敗                                         |
+| ALS_LOOKUP_FAILED      | DOWNSTREAM | ALS（Account Lookup Service）失敗                            |
+| RATE_LIMITED           | RATE_LIMIT | レート上限                                                   |
+| CHAIN_TAMPERED         | INVARIANT  | FinalityLog のハッシュチェーン検証失敗                       |
+| LEDGER_IMBALANCE       | INVARIANT  | Bank 仕訳の借方=貸方が崩れた                                 |
+| IMPOSSIBLE_TRANSITION  | INVARIANT  | `ALLOWED_TRANSITIONS` 不在の遷移                             |
+
+新規 `reason_code` を追加する場合は `src/shared/errors.ts` の
+`REASON_CODE_CATEGORY` と本表を**同時に**更新する（CI で型チェック時に
+`category` 漏れが INTERNAL 扱いになる仕組み）。

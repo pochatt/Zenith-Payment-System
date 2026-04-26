@@ -36,6 +36,7 @@ ZCは「巨大な中央台帳」ではなく、参加者間の決済を **状態
 | Bulk/Deferred | 締切・大量 | `INGRESS_ACCEPTED` | **b** | CASE / 再試行 | `cutoff_id`, `lsm_ref` |
 | RTP | 請求 | `INGRESS_ACCEPTED` | **b** | CASE | `request_ref` |
 | HTLC | 条件付き | `INGRESS_ACCEPTED` | 条件成立→b | 期限→自動収束 | `hashlock_ref`, `timelock` |
+| HTLC_AUTH | 受取側起点オーソリ | `INGRESS_ACCEPTED` | Capture→b、Void→自動収束 | 期限→自動Void／CASE | `auth_id`, `whitelist_ref` |
 | gtid | 多者協調（Decision原子） | `GTID_ACCEPTED` | Decision確定（原子）／完了認定は全legのb一致 | CASE（部分進捗） | `gtid_ref`, `leg_refs` |
 
 > 注意：表は **読み方の固定** が目的であり、実際のメッセージ・項目の正は第6章（I/F）および第10章（Evidence）に従う。
@@ -56,6 +57,7 @@ ZCは「巨大な中央台帳」ではなく、参加者間の決済を **状態
 | Bulk/Deferred | 企業一括 | 受理まで同期 | 任意（推奨） | BatchAuthorize（署名） | **b成立** | 成立率最大化／締切順守 |
 | RTP | 請求 | 受理まで同期 | 請求データにより確定 | 顧客の承認/自動 | **Attempt成功→b成立** | 当日再挑戦／資金流入待ち |
 | HTLC | 条件付き | 受理まで同期 | 標準に準拠 | 条件成立時のみ | **b成立** | 期限収束／secret非保持 |
+| HTLC_AUTH | 受取側起点オーソリ | 受理まで同期 | Whitelist 照合 | **支払人がApprove** | **Captureでb成立** | 与信枠の確保→決済を分離（カードのオーソリ/キャプチャ相当） |
 | gtid | 多者束ね | 受理まで同期 | leg毎に準拠 | leg毎に準拠 | **全leg b成立でGT_FINAL** | 途中不整合の説明が最重要 |
 
 
