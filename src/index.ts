@@ -22,6 +22,8 @@ import type { Env, QueueMessage } from './types'
 import { processQueueMessage } from './zc/orchestrator'
 import { runEod } from './cron/eod'
 import { runTimeoutSweep } from './cron/timeout_sweep'
+import { newRequestLogger } from './shared/logger'
+import { errorResponse, isDomainError } from './shared/errors'
 
 // ZC ingress
 import {
@@ -131,6 +133,13 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders })
     }
 
+    // Per-request tracing: generate or honor inbound X-Request-Id, then log
+    // request boundary events. Every error response also carries this ID so
+    // operators can correlate user-visible failures with structured logs.
+    const inboundId = req.headers.get('X-Request-Id') ?? undefined
+    const log = newRequestLogger({ request_id: inboundId, method, path })
+    log.info('http.request')
+
     try {
       // -----------------------------------------------------------------------
       // Dashboard
@@ -195,11 +204,25 @@ export default {
         return newResp
       }
 
-      return jsonError(404, 'NOT_FOUND', `Path ${path} not found`)
+      log.warn('http.not_found')
+      const notFound = jsonError(404, 'NOT_FOUND', `Path ${path} not found`)
+      notFound.headers.set('X-Request-Id', log.request_id)
+      return notFound
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error('[router] Unhandled error:', err)
-      return jsonError(500, 'INTERNAL_ERROR', msg)
+      // Domain errors surface as their typed JSON; unknown errors are reported
+      // as INTERNAL with the original message preserved.
+      if (isDomainError(err)) {
+        log.warn('http.domain_error', {
+          reason_code: err.reason_code, category: err.category,
+          duration_ms: log.elapsed(),
+        })
+      } else {
+        log.error('http.unhandled_error', { error: err, duration_ms: log.elapsed() })
+      }
+      const resp = errorResponse(err, log.request_id)
+      for (const [k, v] of Object.entries(corsHeaders)) resp.headers.set(k, v)
+      resp.headers.set('X-Request-Id', log.request_id)
+      return resp
     }
   },
 
@@ -208,12 +231,30 @@ export default {
   // =========================================================================
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
+      const log = newRequestLogger({
+        kind: 'queue',
+        message_type: msg.body?.type,
+        txid: msg.body?.txid,
+        gtid: msg.body?.gtid,
+        attempt: msg.body?.attempt,
+      })
       try {
+        log.info('queue.dispatch')
         await processQueueMessage(msg.body, env)
+        log.info('queue.ack', { duration_ms: log.elapsed() })
         msg.ack()
       } catch (err) {
-        console.error('[queue consumer] error:', err)
-        msg.retry()
+        // DomainError categorization decides whether to retry: only DOWNSTREAM /
+        // TIMEOUT / RATE_LIMIT are retryable. Anything else is a bug or invalid
+        // input — retrying just amplifies the problem, so we ack and surface
+        // the failure via Cases (already handled inside the orchestrator).
+        const retryable = !isDomainError(err) || err.category === 'DOWNSTREAM'
+          || err.category === 'TIMEOUT' || err.category === 'RATE_LIMIT'
+        log.error('queue.failed', {
+          error: err, retryable, duration_ms: log.elapsed(),
+        })
+        if (retryable) msg.retry()
+        else msg.ack()
       }
     }
   },

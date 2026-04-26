@@ -8,6 +8,41 @@
 - `0003_trace_filter_htlc_auth.sql` — トレーサビリティ・着金フィルタ・HTLC Auth（6テーブル）
 - `0004_new_settlement.sql` — 新決済機能（9テーブル + ALTER TABLE）
 - `0005_rtp_request_rows.sql` — RtpRequestRows（0004のALTER失敗対応）
+- `0006_rtp_columns.sql` 〜 `0009_boj_prefund.sql` — RTP/BOJ カラム追加
+- `0010_fix_missing_columns.sql` — Participants の追加カラム no-op パッチ（下記参照）
+- `0011_fix_gtid_legs.sql` — GtidLegs(txid) インデックス（フルスキャン解消）
+- `0012_fix_dns_cycles.sql` — DnsCycles の補正
+- `0013_retained_earnings_account.sql` — Bank 利益剰余金口座
+- `0014_circuit_breaker_reversal.sql` — CircuitBreaker / Reversal 機能
+- `0015_finality_hash_chain.sql` — FinalityLog ハッシュチェーン化
+- `0016_performance_indexes.sql` — ホットパスのインデックス追加（下記 Index Catalog 参照）
+
+---
+
+## マイグレーション運用
+
+### 鉄則
+1. **既存マイグレーションは編集しない。** 必ず新しい連番ファイルを切る。
+   D1 の `wrangler d1 migrations apply` は適用済みファイルの再適用を行わ
+   ないため、適用後に書き換えても本番に反映されない。
+2. **`ALTER TABLE ADD COLUMN IF NOT EXISTS` は SQLite で使えない。**
+   過去の本番デプロイで失敗した ALTER は、後続マイグレーションで
+   `CREATE TABLE IF NOT EXISTS` 全カラム版を切り直す（0005 が前例）。
+3. **インデックス追加は常に `IF NOT EXISTS`。** 同名インデックスが既に
+   存在する環境への投入を許容する。
+4. **マイグレーション追加時は `test/helpers/d1-mock.ts` の
+   `SCHEMA_MIGRATIONS` 配列にも追記する。** これを忘れるとテストが
+   旧スキーマで走る。
+
+### 既知のパッチマイグレーション
+本番デプロイ後に判明した不具合を埋めるためのパッチ。
+
+| ファイル                           | 目的                                                                  |
+|------------------------------------|----------------------------------------------------------------------|
+| `0010_fix_missing_columns.sql`     | `0004` の ALTER が一部環境で失敗 → no-op として残置（履歴保全）。     |
+| `0011_fix_gtid_legs.sql`           | `GtidLegs(txid)` のフルスキャン解消（オーケストレータの hot path）。 |
+| `0012_fix_dns_cycles.sql`          | DnsCycles の制約・カラム不整合を補正。                                |
+| `0013_retained_earnings_account.sql` | 利益剰余金（RE）口座を口座マスタに追加。                            |
 
 ---
 
@@ -777,3 +812,80 @@ INSERT OR IGNORE INTO Participants (...) VALUES
 -- 各顧客口座の初期残高: 100万円（ゼロサム仕訳でZC清算勘定と相殺）
 -- 利率: 普通預金 0.1%（001・002共通）
 ```
+
+---
+
+## Index Catalog
+
+D1 はクエリプランナの統計情報が貧弱で、行数が増えるとインデックス無し
+クエリの p99 が急速に悪化する。下表は**現在実装されている**クエリが
+利用するインデックスを網羅したもの。新規クエリ追加時は本表をまず確認し、
+既存インデックスで賄えない場合は `IF NOT EXISTS` 付きで連番マイグレー
+ションを切ること。
+
+### Transactions
+| Index               | Columns                       | Backed query                                           | Migration |
+|---------------------|-------------------------------|--------------------------------------------------------|-----------|
+| idx_tx_state        | (state)                       | 状態別一覧                                             | 0001      |
+| idx_tx_payer        | (payer_bank_id, state)        | 銀行毎の出金照会                                       | 0001      |
+| idx_tx_payee        | (payee_bank_id, state)        | 銀行毎の入金照会                                       | 0001      |
+| idx_tx_dns          | (dns_cycle_id)                | DNS 清算明細生成                                       | 0001      |
+| **idx_tx_updated_at** | (updated_at)                | timeout sweep の古い行スキャン                         | **0016**  |
+| **idx_tx_lane_state** | (lane, state)               | レーン × 状態のダッシュボードフィルタ                  | **0016**  |
+
+### FinalityLog
+| Index               | Columns                       | Backed query                                           | Migration |
+|---------------------|-------------------------------|--------------------------------------------------------|-----------|
+| idx_fl_txid         | (txid)                        | TX 単体トレース                                        | 0001      |
+| idx_fl_gtid         | (gtid)                        | GTID 単体トレース                                      | 0001      |
+| idx_fl_seq          | (event_seq)                   | 全体時系列                                             | 0001      |
+| idx_fl_chain_seq    | (txid, event_seq)             | ハッシュチェーン検証（TX）                             | 0015      |
+| idx_fl_gchain_seq   | (gtid, event_seq)             | ハッシュチェーン検証（GTID）                           | 0015      |
+| **idx_fl_occurred_at** | (occurred_at)              | 時間範囲監査（GET /api/finality/recent）               | **0016**  |
+
+### HtlcContracts
+| Index                  | Columns                       | Backed query                                       | Migration |
+|------------------------|-------------------------------|----------------------------------------------------|-----------|
+| **idx_htlc_payee_state** | (payee_bank_id, state)      | timeout sweep / payee 側 HTLC 一覧                 | **0016**  |
+| **idx_htlc_payer_state** | (payer_bank_id, state)      | payer 側 HTLC 一覧                                 | **0016**  |
+| **idx_htlc_timelock**    | (timelock, state)           | timelock 期限切れ抽出                              | **0016**  |
+
+### RtpRequests
+| Index                 | Columns                       | Backed query                                       | Migration |
+|-----------------------|-------------------------------|----------------------------------------------------|-----------|
+| **idx_rtp_payer_state** | (payer_bank_id, state)      | 銀行毎の RTP 一覧                                  | **0016**  |
+| **idx_rtp_payee_state** | (payee_bank_id, state)      | 銀行毎の RTP 一覧                                  | **0016**  |
+| **idx_rtp_expires**     | (expires_at, state)         | 期限切れ RTP 巡回                                  | **0016**  |
+
+### Cases / IdempotencyKeys / DnsCycles
+| Index            | Columns                  | Backed query                                          | Migration |
+|------------------|--------------------------|-------------------------------------------------------|-----------|
+| idx_case_txid    | (related_txid)           | TX に紐づくケース照会                                 | 0001      |
+| **idx_case_state** | (state, created_at)    | OPEN/IN_PROGRESS のケース一覧                         | **0016**  |
+| **idx_case_gtid**  | (related_gtid)         | GTID に紐づくケース照会                               | **0016**  |
+| **idx_idemp_created** | (created_at)        | 24h 経過冪等キーの TTL sweep                          | **0016**  |
+| **idx_dns_state**     | (state, created_at) | DNS サイクル状態別一覧                                | **0016**  |
+
+その他の表（ZC: GtidLegs, Vault, …、Bank: BankAccounts, BankJournals, …）
+は 0001〜0014 で定義された既存インデックスで賄える。
+
+---
+
+## Foreign Key 戦略
+
+D1 (SQLite) では `PRAGMA foreign_keys = ON` が必要だが、既存の
+マイグレーションは大半 FK を貼っていない（明示 FK は 2 個のみ）。
+これは**本リポジトリが mock であり、参照整合性は ZC 側の状態機械と
+FinalityLog で担保する**という設計判断による。
+
+将来本番化する際の方針:
+1. 子テーブル（HReservations, RtpRequests, GtidLegs, HtlcAuthRequests,
+   EdiRecords, RichDataStore, CrossBorderTransactions, Cases）は親
+   `Transactions(txid)` に対して `FOREIGN KEY ... REFERENCES Transactions(txid)
+   ON DELETE RESTRICT` を貼る。
+2. 監査用テーブル（FinalityLog, TxEventLog, BankAuditLog）は意図的に
+   FK を貼らない（INSERT-ONLY で削除されないため不要、かつ親が消えても
+   履歴は残したい）。
+3. FK 追加は破壊的変更になり得るため、orphan 行のクリーンアップ →
+   `CREATE TABLE ... FOREIGN KEY` で再構築 → `INSERT INTO ... SELECT` で
+   データ移行、の専用マイグレーションを別途用意する。
