@@ -76,23 +76,34 @@ export async function kickDns(businessDate: string, env: Env): Promise<{
      WHERE dns_cycle_id = ? AND state IN ('DECIDED_TO_SETTLE','PAYER_EXEC_CONFIRMED','PAYEE_EXEC_CONFIRMED','SETTLED')`
   ).bind(cycle.cycle_id).all<{ payer_bank_id: string; payee_bank_id: string; amount_value: number }>()
 
+  // 単一パスで net / grossSend / grossReceive を同時集計（O(n) / O(participants)）。
+  // 以前は filter+reduce で O(n*participants) かつ中間配列を毎回確保していた。
   const netPositions: Record<string, number> = {}
+  const grossSendByBank: Record<string, number> = {}
+  const grossReceiveByBank: Record<string, number> = {}
   for (const tx of txRows.results) {
-    netPositions[tx.payer_bank_id] = (netPositions[tx.payer_bank_id] ?? 0) - tx.amount_value
-    netPositions[tx.payee_bank_id] = (netPositions[tx.payee_bank_id] ?? 0) + tx.amount_value
+    const payer = tx.payer_bank_id
+    const payee = tx.payee_bank_id
+    const amt = tx.amount_value
+    netPositions[payer] = (netPositions[payer] ?? 0) - amt
+    netPositions[payee] = (netPositions[payee] ?? 0) + amt
+    grossSendByBank[payer] = (grossSendByBank[payer] ?? 0) + amt
+    grossReceiveByBank[payee] = (grossReceiveByBank[payee] ?? 0) + amt
   }
 
   // DnsNetPositions に保存
-  const participantIds = [...new Set(Object.keys(netPositions))]
-  const netStmts = participantIds.map(bankId => {
-    const netPos = netPositions[bankId] ?? 0
-    const grossSend = txRows.results.filter(t => t.payer_bank_id === bankId).reduce((s, t) => s + t.amount_value, 0)
-    const grossReceive = txRows.results.filter(t => t.payee_bank_id === bankId).reduce((s, t) => s + t.amount_value, 0)
-    return db.prepare(
-      `INSERT OR REPLACE INTO DnsNetPositions (id, cycle_id, bank_id, gross_send, gross_receive, net_position, is_settled)
-       VALUES (?, ?, ?, ?, ?, ?, 0)`
-    ).bind(`DNSNET-${cycle!.cycle_id}-${bankId}`, cycle!.cycle_id, bankId, grossSend, grossReceive, netPos)
-  })
+  const netStmts: ReturnType<typeof db.prepare>[] = []
+  for (const bankId in netPositions) {
+    netStmts.push(
+      db.prepare(
+        `INSERT OR REPLACE INTO DnsNetPositions (id, cycle_id, bank_id, gross_send, gross_receive, net_position, is_settled)
+         VALUES (?, ?, ?, ?, ?, ?, 0)`
+      ).bind(
+        `DNSNET-${cycle.cycle_id}-${bankId}`, cycle.cycle_id, bankId,
+        grossSendByBank[bankId] ?? 0, grossReceiveByBank[bankId] ?? 0, netPositions[bankId] ?? 0,
+      )
+    )
+  }
 
   // サイクルを KICKED に更新
   await db.batch([...netStmts,
