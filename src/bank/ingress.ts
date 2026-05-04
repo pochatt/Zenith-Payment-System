@@ -709,9 +709,8 @@ async function bankAccountVerify(
     return { result: 'MATCHED', match_score: 1.0, name_provided: provided, fraud_warning: false }
   }
 
-  // 1文字差（編集距離1）の部分一致
-  const editDist = levenshtein(provided, stored)
-  if (editDist <= 1) {
+  // 1文字差（編集距離1以下）の部分一致
+  if (isEditDistanceAtMostOne(provided, stored)) {
     return { result: 'MATCHED', match_score: 0.8, name_provided: provided, fraud_warning: false }
   }
 
@@ -719,26 +718,53 @@ async function bankAccountVerify(
 }
 
 /**
- * Compute Levenshtein edit distance between two strings.
- * Used for fuzzy name matching in account-verify.
+ * 編集距離 (Levenshtein) が 1 以下かを O(n) 時間・O(1) 追加メモリで判定する。
  *
- * @param a - First string
- * @param b - Second string
- * @returns Minimum number of single-character edits (insert/delete/replace)
+ * account-verify では「完全一致 or 1 文字差」しか判定に用いないため、
+ * 全 DP 表を構築する必要がない。長さ差が 2 以上なら即 false、
+ * 長さ差が 0 または 1 のときのみ 1 回スキャンで判定する。
+ *
+ * 計算量:
+ *   - 元の DP 実装: O(m*n) 時間、O((m+1)(n+1)) のヒープ確保
+ *   - 本実装       : O(min(m,n)) 時間、確保ゼロ
+ *
+ * @returns 編集距離が 1 以下なら true
  */
-function levenshtein(a: string, b: string): number {
-  const m = a.length, n = b.length
-  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
-    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
-  )
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i]![j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1]![j - 1]!
-        : 1 + Math.min(dp[i - 1]![j]!, dp[i]![j - 1]!, dp[i - 1]![j - 1]!)
+function isEditDistanceAtMostOne(a: string, b: string): boolean {
+  const m = a.length
+  const n = b.length
+  const diff = m - n
+  if (diff > 1 || diff < -1) return false
+
+  if (m === n) {
+    // 同長: 異なる文字を最大 1 つまで許容
+    let mismatches = 0
+    for (let i = 0; i < m; i++) {
+      if (a.charCodeAt(i) !== b.charCodeAt(i)) {
+        if (++mismatches > 1) return false
+      }
+    }
+    return true
+  }
+
+  // 長さ差 1: 短い側が長い側の 1 文字削除サブシーケンスか判定
+  const longer = m > n ? a : b
+  const shorter = m > n ? b : a
+  const longLen = longer.length
+  let i = 0
+  let j = 0
+  let skipped = false
+  while (i < longLen && j < shorter.length) {
+    if (longer.charCodeAt(i) === shorter.charCodeAt(j)) {
+      i++
+      j++
+    } else {
+      if (skipped) return false
+      skipped = true
+      i++
     }
   }
-  return dp[m]![n]!
+  return true
 }
 
 /**

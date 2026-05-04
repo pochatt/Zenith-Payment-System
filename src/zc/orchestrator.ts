@@ -82,7 +82,9 @@ export async function onPayerExecConfirmed(
 
   await writeFinalityLog(db, {
     txid, event_type: 'PayerExecConfirmed', state_from: tx.state, state_to: 'PAYER_EXEC_CONFIRMED',
-    payload_json: JSON.stringify({ payer_bank_proof_ref: JSON.parse(bankProofRefJson) }), txid_or_gtid: txid,
+    // bankProofRefJson は呼び出し側で JSON.stringify 済み。parse→stringify を経由せず
+    // 文字列連結で payload を構築し、中間オブジェクト確保を回避する。
+    payload_json: `{"payer_bank_proof_ref":${bankProofRefJson}}`, txid_or_gtid: txid,
   })
 
   await autoResolveCaseForTx(db, txid)
@@ -130,7 +132,8 @@ export async function onPayeeExecConfirmed(
 
   await writeFinalityLog(db, {
     txid, event_type: 'PayeeExecConfirmed', state_from: tx.state, state_to: 'PAYEE_EXEC_CONFIRMED',
-    payload_json: JSON.stringify({ payee_bank_proof_ref: JSON.parse(bankProofRefJson) }), txid_or_gtid: txid,
+    // 同上: parse→stringify を回避（bankProofRefJson は既に有効な JSON 文字列）
+    payload_json: `{"payee_bank_proof_ref":${bankProofRefJson}}`, txid_or_gtid: txid,
   })
 
   await autoResolveCaseForTx(db, txid)

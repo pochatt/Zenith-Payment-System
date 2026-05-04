@@ -106,7 +106,12 @@ export async function handleGetAccountTransactions(req: Request, bankId: string,
     .all<{ journal_id: string; amount: number; tx_type: string; txid: string | null; description: string | null; value_date: string; created_at: string }>()
 
   // txid → Transactions（送金人・受取人情報）をバッチ照会
-  const txids = [...new Set(journals.results.map(j => j.txid).filter((t): t is string => !!t))]
+  // map().filter() の中間配列確保を避け、Set 構築と配列化を 1 パスで行う
+  const txidSet = new Set<string>()
+  for (const j of journals.results) {
+    if (j.txid) txidSet.add(j.txid)
+  }
+  const txids = Array.from(txidSet)
   const txInfoMap = new Map<string, { payer_account_hash: string; payee_account_hash: string | null; state: string; lane: string | null; purpose: string | null }>()
   if (txids.length > 0) {
     const ph = txids.map(() => '?').join(',')
