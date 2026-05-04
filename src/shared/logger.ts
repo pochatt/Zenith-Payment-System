@@ -73,23 +73,40 @@ export function newRequestLogger(ctx: LogContext = {}): RequestLogger {
 }
 
 function makeLogger(baggage: LogContext, start: number): RequestLogger {
+  // V8 perf: build the per-call log line in a stable hidden-class shape.
+  // The previous `{...baggage, ...sanitize(fields)}` form forced V8 to allocate
+  // a new object whose hidden class depended on `Object.entries` iteration
+  // order, defeating inline-cache reuse across calls. The form below copies
+  // properties via plain assignment, which keeps the resulting object's
+  // shape monomorphic per (level,event) call site for typical logger use.
   const emit = (level: LogLevel, event: string, fields?: Record<string, unknown>) => {
-    const line = {
+    const line: Record<string, unknown> = {
       ts: new Date().toISOString(),
       level,
       event,
-      ...baggage,
-      ...(fields ? sanitize(fields) : {}),
     }
-    // One sink: console. Cloudflare collects it as JSON automatically.
-    // We use the matching console method so log-level filtering works in tail.
-    const writer = console[level === 'debug' ? 'log' : level] ?? console.log
+    for (const k in baggage) {
+      const v = (baggage as Record<string, unknown>)[k]
+      if (v !== undefined) line[k] = v
+    }
+    if (fields) sanitizeInto(fields, line)
+    const writer = level === 'debug' ? console.log
+                 : level === 'info'  ? console.info
+                 : level === 'warn'  ? console.warn
+                 :                     console.error
     writer(JSON.stringify(line))
   }
   return {
     request_id: baggage.request_id as string,
     child(extra) {
-      return makeLogger({ ...baggage, ...extra }, start)
+      // Cheap merge: copy baggage then overwrite with extras. Avoids the
+      // double-spread allocation pattern.
+      const merged: LogContext = {}
+      for (const k in baggage) {
+        merged[k] = (baggage as Record<string, unknown>)[k]
+      }
+      for (const k in extra) merged[k] = extra[k]
+      return makeLogger(merged, start)
     },
     debug(event, fields) { emit('debug', event, fields) },
     info(event, fields)  { emit('info',  event, fields) },
@@ -104,34 +121,33 @@ function makeLogger(baggage: LogContext, start: number): RequestLogger {
 // ---------------------------------------------------------------------------
 
 /**
- * Convert non-serializable fields (Error, undefined) into JSON-safe values.
- * Strips fields whose key looks PII-ish (vault_ref, secret, hmac_*).
+ * Convert non-serializable fields (Error, undefined) into JSON-safe values
+ * and write them directly into the caller-provided log line. Strips fields
+ * whose key looks PII-ish (vault_ref, secret, hmac_*).
+ *
+ * V8 perf: writes into the existing `out` object rather than allocating an
+ * intermediate, and uses `for...in` instead of `Object.entries` to avoid the
+ * intermediate `[k,v]` array allocation per field.
  */
-function sanitize(fields: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(fields)) {
+function sanitizeInto(fields: Record<string, unknown>, out: Record<string, unknown>): void {
+  for (const k in fields) {
     if (isPiiKey(k)) {
       out[k] = '[REDACTED]'
       continue
     }
+    const v = fields[k]
+    if (v === undefined) continue
     if (v instanceof Error) {
-      out[k] = {
-        name: v.name,
-        message: v.message,
-        ...(v as { reason_code?: unknown }).reason_code != null
-          ? { reason_code: (v as { reason_code?: unknown }).reason_code }
-          : {},
-        ...(v as { details?: unknown }).details != null
-          ? { details: (v as { details?: unknown }).details }
-          : {},
-      }
-    } else if (v === undefined) {
-      // skip
+      const errObj: Record<string, unknown> = { name: v.name, message: v.message }
+      const rc = (v as { reason_code?: unknown }).reason_code
+      if (rc != null) errObj.reason_code = rc
+      const details = (v as { details?: unknown }).details
+      if (details != null) errObj.details = details
+      out[k] = errObj
     } else {
       out[k] = v
     }
   }
-  return out
 }
 
 const PII_KEYS = new Set([

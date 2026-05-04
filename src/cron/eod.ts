@@ -61,18 +61,26 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
       .prepare(`SELECT DISTINCT bank_id, account_id FROM BankAccounts WHERE status='NORMAL'`)
       .all<{ bank_id: string; account_id: string }>()
 
-    const bankIds = [...new Set(accounts.results.map(a => a.bank_id))]
-    for (const bankId of bankIds) {
+    // V8 perf: single-pass dedup. The previous `[...new Set(rows.map(...))]`
+    // allocates an intermediate Array (from map), a Set, and a final Array
+    // (from spread). Walking once and inserting into the Set directly avoids
+    // both intermediates while preserving uniqueness semantics.
+    const bankIdSet = new Set<string>()
+    const accountRows = accounts.results
+    for (let i = 0; i < accountRows.length; i++) {
+      bankIdSet.add(accountRows[i]!.bank_id)
+    }
+    for (const bankId of bankIdSet) {
       await applyDailyInterest(bankId, today, db)
     }
 
-    for (const acc of accounts.results) {
-      await snapshotDailyBalance(acc.account_id, today, db)
+    for (let i = 0; i < accountRows.length; i++) {
+      await snapshotDailyBalance(accountRows[i]!.account_id, today, db)
     }
-    log.push(`Snapshots saved for ${accounts.results.length} accounts`)
+    log.push(`Snapshots saved for ${accountRows.length} accounts`)
 
     // 6. ゼロサム検証
-    for (const bankId of bankIds) {
+    for (const bankId of bankIdSet) {
       const ok = await verifyZeroSum(bankId, db)
       log.push(`ZeroSum ${bankId}: ${ok ? 'OK' : 'VIOLATED!'}`)
       if (!ok) {

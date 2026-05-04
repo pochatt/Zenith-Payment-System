@@ -121,8 +121,24 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
 
   // Bug #6 fix: PAYER/PAYEE 両ロールの存在確認を Decision 確定前に実施
   // Decision後に検証すると GT_DECIDED_TO_SETTLE → GT_DECIDED_CANCEL という不正遷移が FinalityLog に記録される
-  const payerLegs = legs.results.filter(l => l.role === 'PAYER')
-  const payeeLegs = legs.results.filter(l => l.role === 'PAYEE')
+  // V8 perf: single-pass partition + amount aggregation. The previous form did
+  // two .filter() passes plus two .reduce() passes (4 traversals + 2 array
+  // allocations). One for-loop covers all four computations.
+  const payerLegs: GtidLegRow[] = []
+  const payeeLegs: GtidLegRow[] = []
+  let totalPayerAmount = 0
+  let totalPayeeAmount = 0
+  const legRows = legs.results
+  for (let i = 0; i < legRows.length; i++) {
+    const leg = legRows[i]!
+    if (leg.role === 'PAYER') {
+      payerLegs.push(leg)
+      totalPayerAmount += leg.amount_value
+    } else if (leg.role === 'PAYEE') {
+      payeeLegs.push(leg)
+      totalPayeeAmount += leg.amount_value
+    }
+  }
   const payerLeg = payerLegs[0]
   const payeeLeg = payeeLegs[0]
   if (!payerLeg || !payeeLeg) {
@@ -142,8 +158,8 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   // Atomic settlement requires that total PAYER amount == total PAYEE amount.
   // Without this check, multi-leg transactions could settle with unbalanced amounts,
   // causing accounting inconsistencies and potential fund loss/gain.
-  const totalPayerAmount = payerLegs.reduce((sum, leg) => sum + leg.amount_value, 0)
-  const totalPayeeAmount = payeeLegs.reduce((sum, leg) => sum + leg.amount_value, 0)
+  // (totalPayerAmount / totalPayeeAmount were computed during the single-pass
+  // partition above to avoid two extra .reduce() traversals.)
   if (totalPayerAmount !== totalPayeeAmount) {
     console.error(`[gtid] GTID ${gtid} amount mismatch: PAYER total=${totalPayerAmount}, PAYEE total=${totalPayeeAmount} — cancelling`)
     await db.prepare(
