@@ -84,10 +84,17 @@ export async function transitionWithLog(
     return { applied: false, previousState: cur.state }
   }
 
+  // V8 perf: single-pass build of the SET clause + bind values. The previous
+  // form enumerated `sets` three times (Object.keys + 2× .map) which both
+  // allocates intermediate arrays and forces V8 to walk the property table
+  // repeatedly. One `for...in` builds both arrays inline.
   const sets = req.setColumns ?? {}
-  const setKeys = Object.keys(sets)
-  const setSql = setKeys.map(k => `${k} = ?`).join(', ')
-  const setValues = setKeys.map(k => sets[k])
+  let setSql = ''
+  const setValues: Array<string | number | null> = []
+  for (const k in sets) {
+    setSql += setSql ? `, ${k} = ?` : `${k} = ?`
+    setValues.push(sets[k]!)
+  }
   const now = nowISO()
 
   const sql = `

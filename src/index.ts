@@ -114,6 +114,40 @@ import bankApiYaml from './openapi/bank-api'
 export { LimitDO } from './zc/limit_do'
 export { StreamDO } from './zc/stream_rafiki'
 
+// V8 perf: hoist invariants to module scope so they are allocated once at
+// isolate startup rather than once per request. The header tuple form keeps
+// a stable hidden class and avoids the `Object.entries(...)` allocation that
+// otherwise happens on every response (was previously called 4× per request).
+const CORS_HEADERS: ReadonlyArray<readonly [string, string]> = [
+  ['Access-Control-Allow-Origin', '*'],
+  ['Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS'],
+  ['Access-Control-Allow-Headers', '*'],
+]
+const CORS_OPTIONS_INIT: ResponseInit = {
+  status: 204,
+  headers: {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': '*',
+  },
+}
+const HTML_HEADERS_INIT = {
+  'Content-Type': 'text/html; charset=utf-8',
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': '*',
+}
+
+function withCors(resp: Response): Response {
+  const newResp = new Response(resp.body, resp)
+  const h = newResp.headers
+  for (let i = 0; i < CORS_HEADERS.length; i++) {
+    const pair = CORS_HEADERS[i]!
+    h.set(pair[0], pair[1])
+  }
+  return newResp
+}
+
 export default {
   // =========================================================================
   // HTTP fetch ハンドラー
@@ -123,14 +157,8 @@ export default {
     const path = url.pathname
     const method = req.method
 
-    // CORS headers
-    const corsHeaders = {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': '*',
-    }
     if (method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders })
+      return new Response(null, CORS_OPTIONS_INIT)
     }
 
     // Per-request tracing: generate or honor inbound X-Request-Id, then log
@@ -145,13 +173,13 @@ export default {
       // Dashboard
       // -----------------------------------------------------------------------
       if (path === '/' || path === '/dashboard') {
-        return new Response(dashboardHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders } })
+        return new Response(dashboardHtml, { headers: HTML_HEADERS_INIT })
       }
       if (path === '/console') {
-        return new Response(consoleHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders } })
+        return new Response(consoleHtml, { headers: HTML_HEADERS_INIT })
       }
       if (path === '/bank-app') {
-        return new Response(bankAppHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders } })
+        return new Response(bankAppHtml, { headers: HTML_HEADERS_INIT })
       }
 
       // -----------------------------------------------------------------------
@@ -171,37 +199,24 @@ export default {
         const hasValidApiKey = env.ZC_HMAC_SECRET && apiKey === env.ZC_HMAC_SECRET
 
         if (!hasValidApiKey && !isFromTrustedReferer) {
-          const authErr = jsonError(401, 'UNAUTHORIZED', 'Valid X-Api-Key or Authorization Bearer header required')
-          const newAuthResp = new Response(authErr.body, authErr)
-          for (const [k, v] of Object.entries(corsHeaders)) newAuthResp.headers.set(k, v)
-          return newAuthResp
+          return withCors(jsonError(401, 'UNAUTHORIZED', 'Valid X-Api-Key or Authorization Bearer header required'))
         }
 
-        const resp = await handleZcApi(req, path, method, env)
-        // Add CORS to response
-        const newResp = new Response(resp.body, resp)
-        for (const [k, v] of Object.entries(corsHeaders)) newResp.headers.set(k, v)
-        return newResp
+        return withCors(await handleZcApi(req, path, method, env))
       }
 
       // -----------------------------------------------------------------------
       // Bank API: /bank/:bankId/...
       // -----------------------------------------------------------------------
       if (path.startsWith('/bank/')) {
-        const resp = await handleBankApi(req, path, method, env)
-        const newResp = new Response(resp.body, resp)
-        for (const [k, v] of Object.entries(corsHeaders)) newResp.headers.set(k, v)
-        return newResp
+        return withCors(await handleBankApi(req, path, method, env))
       }
 
       // -----------------------------------------------------------------------
       // Internal Cron / Seed
       // -----------------------------------------------------------------------
       if (path.startsWith('/internal/')) {
-        const resp = await handleInternal(req, path, method, env)
-        const newResp = new Response(resp.body, resp)
-        for (const [k, v] of Object.entries(corsHeaders)) newResp.headers.set(k, v)
-        return newResp
+        return withCors(await handleInternal(req, path, method, env))
       }
 
       log.warn('http.not_found')
@@ -219,8 +234,7 @@ export default {
       } else {
         log.error('http.unhandled_error', { error: err, duration_ms: log.elapsed() })
       }
-      const resp = errorResponse(err, log.request_id)
-      for (const [k, v] of Object.entries(corsHeaders)) resp.headers.set(k, v)
+      const resp = withCors(errorResponse(err, log.request_id))
       resp.headers.set('X-Request-Id', log.request_id)
       return resp
     }
