@@ -109,6 +109,7 @@ import dashboardHtml from './dashboard/index.html'
 import consoleHtml   from './dashboard/console.html'
 import bankAppHtml   from './dashboard/bank-app.html'
 import theaterHtml   from './dashboard/theater.html'
+import skyHtml       from './dashboard/sky.html'
 
 // OpenAPI YAML
 import zcApiYaml   from './openapi/zc-api'
@@ -187,6 +188,9 @@ export default {
       if (path === '/theater' || path === '/theatre') {
         return new Response(theaterHtml, { headers: HTML_HEADERS_INIT })
       }
+      if (path === '/sky') {
+        return new Response(skyHtml, { headers: HTML_HEADERS_INIT })
+      }
 
       // -----------------------------------------------------------------------
       // ZC Core API: /api/...
@@ -199,7 +203,7 @@ export default {
 
         // UIからの呼び出しの判定：Refererだけでなく Origin も確認（Refererは偽造可能なため）
         // Referer が信頼できるドメイン配下のみ。正式には Origin ヘッダーで検証するべき
-        const isFromTrustedReferer = referer.includes('/dashboard') || referer.includes('/console') || referer.includes('/bank-app') || referer.includes('/theater') || referer.includes('/theatre') || referer.endsWith('/')
+        const isFromTrustedReferer = referer.includes('/dashboard') || referer.includes('/console') || referer.includes('/bank-app') || referer.includes('/theater') || referer.includes('/theatre') || referer.includes('/sky') || referer.endsWith('/')
 
         // API キーがない場合、Referer による認証を許可するが、ログに記録（監査可能性）
         const hasValidApiKey = env.ZC_HMAC_SECRET && apiKey === env.ZC_HMAC_SECRET
