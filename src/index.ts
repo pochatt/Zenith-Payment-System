@@ -8,6 +8,7 @@
  *  - `/`              → Dashboard HTML (index.html)
  *  - `/console`       → Operations console (console.html)
  *  - `/bank-app`      → Customer banking app (bank-app.html)
+ *  - `/theater`       → Settlement Theater (animated tx playback)
  *  - `/api/...`       → ZC Core API (transfers, HTLC, GTID, RTP, DNS, etc.)
  *  - `/bank/:id/...`  → Bank API (ZC→Bank ingress, customer, teller, filters)
  *  - `/internal/...`  → Internal API (seed, cron triggers, DNS management)
@@ -107,6 +108,7 @@ import { getCircuitStatus, listCircuitStates, resetCircuit } from './zc/circuit_
 import dashboardHtml from './dashboard/index.html'
 import consoleHtml   from './dashboard/console.html'
 import bankAppHtml   from './dashboard/bank-app.html'
+import theaterHtml   from './dashboard/theater.html'
 
 // OpenAPI YAML
 import zcApiYaml   from './openapi/zc-api'
@@ -182,6 +184,9 @@ export default {
       if (path === '/bank-app') {
         return new Response(bankAppHtml, { headers: HTML_HEADERS_INIT })
       }
+      if (path === '/theater' || path === '/theatre') {
+        return new Response(theaterHtml, { headers: HTML_HEADERS_INIT })
+      }
 
       // -----------------------------------------------------------------------
       // ZC Core API: /api/...
@@ -194,7 +199,7 @@ export default {
 
         // UIからの呼び出しの判定：Refererだけでなく Origin も確認（Refererは偽造可能なため）
         // Referer が信頼できるドメイン配下のみ。正式には Origin ヘッダーで検証するべき
-        const isFromTrustedReferer = referer.includes('/dashboard') || referer.includes('/console') || referer.includes('/bank-app') || referer.endsWith('/')
+        const isFromTrustedReferer = referer.includes('/dashboard') || referer.includes('/console') || referer.includes('/bank-app') || referer.includes('/theater') || referer.includes('/theatre') || referer.endsWith('/')
 
         // API キーがない場合、Referer による認証を許可するが、ログに記録（監査可能性）
         const hasValidApiKey = env.ZC_HMAC_SECRET && apiKey === env.ZC_HMAC_SECRET
