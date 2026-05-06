@@ -80,6 +80,7 @@ import { getTxEvents, getRecentEvents, getGtidEvents } from './zc/trace'
 // ZC Finality chain verification & explainability
 import { verifyChain } from './zc/finality_chain'
 import { explainTransaction } from './zc/explain'
+import { narrateTransaction } from './zc/story'
 
 // DNS management
 import { kickDns, holdDns, settleDns, getBojPositions } from './zc/dns'
@@ -400,6 +401,14 @@ async function handleZcApi(req: Request, path: string, method: string, env: Env)
   if (method === 'GET' && txExplainMatch) {
     const result = await explainTransaction(env.DB, txExplainMatch[1]!)
     if (!result) return jsonError(404, 'NOT_FOUND', `txid ${txExplainMatch[1]} not found`)
+    return json(200, result)
+  }
+
+  // GET /api/transactions/:txid/story  ナラティブ + Mermaid シーケンス図 + 健全性
+  const txStoryMatch = path.match(/^\/api\/transactions\/([^/]+)\/story$/)
+  if (method === 'GET' && txStoryMatch) {
+    const result = await narrateTransaction(env.DB, txStoryMatch[1]!)
+    if (!result) return jsonError(404, 'NOT_FOUND', `txid ${txStoryMatch[1]} not found`)
     return json(200, result)
   }
 
