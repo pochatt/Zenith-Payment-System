@@ -131,6 +131,7 @@ const SCHEMA_MIGRATIONS = [
   '0014_circuit_breaker_reversal.sql',
   '0015_finality_hash_chain.sql',
   '0016_performance_indexes.sql',
+  '0017_circuit_breaker_metrics.sql',
 ]
 
 /**

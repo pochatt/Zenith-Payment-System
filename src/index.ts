@@ -586,7 +586,11 @@ async function handleZcApi(req: Request, path: string, method: string, env: Env)
   const cbMatch = path.match(/^\/api\/circuit-breaker\/([^/]+)$/)
   if (method === 'GET' && cbMatch) {
     const status = await getCircuitStatus(cbMatch[1]!, env.DB)
-    if (!status) return json(200, { bank_id: cbMatch[1], state: 'CLOSED', consecutive_failures: 0 })
+    if (!status) return json(200, {
+      bank_id: cbMatch[1], state: 'CLOSED', consecutive_failures: 0,
+      total_requests: 0, total_successes: 0, total_failures: 0, total_denied: 0,
+      half_open_inflight: 0, last_success_at: null,
+    })
     return json(200, status)
   }
 

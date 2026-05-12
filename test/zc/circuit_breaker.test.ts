@@ -1,11 +1,13 @@
 /**
  * @file Integration tests for src/zc/circuit_breaker.ts
  *
- * Verifies state transitions: CLOSED → OPEN → HALF_OPEN → CLOSED
+ * Verifies state transitions: CLOSED → OPEN → HALF_OPEN → CLOSED, plus the
+ * bounded HALF_OPEN probe cap and the lifetime traffic counters introduced
+ * in migration 0017.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { createTestDb, type MockD1Database } from '../helpers/d1-mock'
-import { allowRequest, recordFailure, recordSuccess } from '../../src/zc/circuit_breaker'
+import { allowRequest, recordFailure, recordSuccess, getCircuitStatus } from '../../src/zc/circuit_breaker'
 
 const BANK_ID = '001'
 
@@ -27,6 +29,12 @@ async function tripOpen() {
   for (let i = 0; i < 5; i++) {
     await recordFailure(BANK_ID, d1 as any)
   }
+}
+
+async function rewindOpenedAt(seconds: number) {
+  d1.prepare(
+    `UPDATE CircuitBreakerState SET opened_at=? WHERE bank_id=?`
+  ).bind(new Date(Date.now() - seconds * 1000).toISOString(), BANK_ID)._runSync()
 }
 
 describe('initial state', () => {
@@ -53,11 +61,7 @@ describe('CLOSED → OPEN', () => {
 describe('OPEN → HALF_OPEN', () => {
   it('transitions to HALF_OPEN after OPEN_DURATION_MS (time-mocked)', async () => {
     await tripOpen()
-
-    // Rewind opened_at by 60 seconds so OPEN_DURATION_MS (30s) has elapsed
-    d1.prepare(
-      `UPDATE CircuitBreakerState SET opened_at=? WHERE bank_id=?`
-    ).bind(new Date(Date.now() - 60_000).toISOString(), BANK_ID)._runSync()
+    await rewindOpenedAt(60)
 
     // allowRequest should transition to HALF_OPEN and return true (probe)
     expect(await allowRequest(BANK_ID, d1 as any)).toBe(true)
@@ -72,43 +76,38 @@ describe('OPEN → HALF_OPEN', () => {
 describe('HALF_OPEN → CLOSED (probe success)', () => {
   it('closes the circuit on a successful probe', async () => {
     await tripOpen()
-    // Fast-forward time
-    d1.prepare(
-      `UPDATE CircuitBreakerState SET opened_at=? WHERE bank_id=?`
-    ).bind(new Date(Date.now() - 60_000).toISOString(), BANK_ID)._runSync()
+    await rewindOpenedAt(60)
     await allowRequest(BANK_ID, d1 as any) // transitions to HALF_OPEN
 
     await recordSuccess(BANK_ID, d1 as any)
 
     const row = await d1.prepare(
-      `SELECT state, consecutive_failures FROM CircuitBreakerState WHERE bank_id=?`
-    ).bind(BANK_ID).first<{ state: string; consecutive_failures: number }>()
+      `SELECT state, consecutive_failures, half_open_inflight FROM CircuitBreakerState WHERE bank_id=?`
+    ).bind(BANK_ID).first<{ state: string; consecutive_failures: number; half_open_inflight: number }>()
     expect(row?.state).toBe('CLOSED')
     expect(row?.consecutive_failures).toBe(0)
+    expect(row?.half_open_inflight).toBe(0)
   })
 })
 
 describe('HALF_OPEN → OPEN (probe failure)', () => {
   it('re-opens the circuit when the probe fails', async () => {
     await tripOpen()
-    d1.prepare(
-      `UPDATE CircuitBreakerState SET opened_at=? WHERE bank_id=?`
-    ).bind(new Date(Date.now() - 60_000).toISOString(), BANK_ID)._runSync()
+    await rewindOpenedAt(60)
     await allowRequest(BANK_ID, d1 as any) // transitions to HALF_OPEN
 
     await recordFailure(BANK_ID, d1 as any)
 
     const row = await d1.prepare(
-      `SELECT state FROM CircuitBreakerState WHERE bank_id=?`
-    ).bind(BANK_ID).first<{ state: string }>()
+      `SELECT state, half_open_inflight FROM CircuitBreakerState WHERE bank_id=?`
+    ).bind(BANK_ID).first<{ state: string; half_open_inflight: number }>()
     expect(row?.state).toBe('OPEN')
+    expect(row?.half_open_inflight).toBe(0)
   })
 
   it('resets opened_at so next HALF_OPEN probe waits a full OPEN_DURATION_MS', async () => {
     await tripOpen()
-    d1.prepare(
-      `UPDATE CircuitBreakerState SET opened_at=? WHERE bank_id=?`
-    ).bind(new Date(Date.now() - 60_000).toISOString(), BANK_ID)._runSync()
+    await rewindOpenedAt(60)
     await allowRequest(BANK_ID, d1 as any) // HALF_OPEN
 
     const before = Date.now()
@@ -120,6 +119,77 @@ describe('HALF_OPEN → OPEN (probe failure)', () => {
     const openedAt = new Date(row!.opened_at).getTime()
     // opened_at should be at or after the start of this test (not the old 60s-ago value)
     expect(openedAt).toBeGreaterThanOrEqual(before - 1000)
+  })
+})
+
+describe('HALF_OPEN probe cap', () => {
+  // MAX_HALF_OPEN_PROBES = 3 in circuit_breaker.ts. The first allowRequest
+  // promotes OPEN → HALF_OPEN and claims slot 1. Slots 2 and 3 follow. The
+  // fourth concurrent request must be denied to prevent thundering the
+  // recovering bank.
+  it('admits up to MAX_HALF_OPEN_PROBES probes and denies the rest', async () => {
+    await tripOpen()
+    await rewindOpenedAt(60)
+
+    // 1st: OPEN → HALF_OPEN, claims slot 1
+    expect(await allowRequest(BANK_ID, d1 as any)).toBe(true)
+    // 2nd, 3rd: claim slots 2 and 3 under HALF_OPEN
+    expect(await allowRequest(BANK_ID, d1 as any)).toBe(true)
+    expect(await allowRequest(BANK_ID, d1 as any)).toBe(true)
+    // 4th: cap reached, must be denied
+    expect(await allowRequest(BANK_ID, d1 as any)).toBe(false)
+
+    const row = await d1.prepare(
+      `SELECT state, half_open_inflight, total_denied FROM CircuitBreakerState WHERE bank_id=?`
+    ).bind(BANK_ID).first<{ state: string; half_open_inflight: number; total_denied: number }>()
+    expect(row?.state).toBe('HALF_OPEN')
+    expect(row?.half_open_inflight).toBe(3)
+    expect(row?.total_denied).toBeGreaterThanOrEqual(1)
+  })
+
+  it('any single probe failure re-opens immediately, even with other probes still in flight', async () => {
+    await tripOpen()
+    await rewindOpenedAt(60)
+    await allowRequest(BANK_ID, d1 as any) // slot 1
+    await allowRequest(BANK_ID, d1 as any) // slot 2
+
+    // Slot 1 fails before slot 2 returns
+    await recordFailure(BANK_ID, d1 as any)
+
+    const row = await d1.prepare(
+      `SELECT state, half_open_inflight FROM CircuitBreakerState WHERE bank_id=?`
+    ).bind(BANK_ID).first<{ state: string; half_open_inflight: number }>()
+    expect(row?.state).toBe('OPEN')
+    expect(row?.half_open_inflight).toBe(0)
+  })
+})
+
+describe('lifetime traffic metrics', () => {
+  it('counts allowed requests, successes, and failures while CLOSED', async () => {
+    await allowRequest(BANK_ID, d1 as any)
+    await recordSuccess(BANK_ID, d1 as any)
+    await allowRequest(BANK_ID, d1 as any)
+    await recordFailure(BANK_ID, d1 as any)
+    await allowRequest(BANK_ID, d1 as any)
+    await recordSuccess(BANK_ID, d1 as any)
+
+    const status = await getCircuitStatus(BANK_ID, d1 as any)
+    expect(status?.total_requests).toBe(3)
+    expect(status?.total_successes).toBe(2)
+    expect(status?.total_failures).toBe(1)
+    expect(status?.total_denied).toBe(0)
+    expect(status?.last_success_at).not.toBeNull()
+  })
+
+  it('counts denials when the circuit is OPEN', async () => {
+    await tripOpen() // CLOSED → OPEN, no allowRequest calls yet
+    await allowRequest(BANK_ID, d1 as any) // denied
+    await allowRequest(BANK_ID, d1 as any) // denied
+
+    const status = await getCircuitStatus(BANK_ID, d1 as any)
+    expect(status?.total_denied).toBe(2)
+    expect(status?.total_requests).toBe(0)
+    expect(status?.total_failures).toBe(5) // from tripOpen()
   })
 })
 
