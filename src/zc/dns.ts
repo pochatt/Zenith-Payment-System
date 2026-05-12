@@ -24,6 +24,7 @@ import { newUUID } from '../shared/idempotency'
 import { settleSuspenseForDns } from '../bank/suspense'
 import { insertJournalGroup, calcBalance } from '../bank/ledger'
 import { releaseH } from './h_model'
+import { netObligations, type Obligation } from './netting'
 
 // ---------------------------------------------------------------------------
 // DNS Kick: 当日サイクルを OPEN → KICKED
@@ -113,6 +114,27 @@ export async function kickDns(businessDate: string, env: Env): Promise<{
   await writeFinalityLog(db, {
     txid: null, event_type: 'DnsKicked', state_from: 'OPEN', state_to: 'KICKED',
     payload_json: JSON.stringify({ cycle_id: cycle.cycle_id, business_date: businessDate, net_positions: netPositions }),
+    txid_or_gtid: cycle.cycle_id,
+  })
+
+  // Multilateral netting reduction: compute the minimum set of bilateral
+  // payments that would resolve all positions without a CCP. Recorded in
+  // FinalityLog for risk reporting and bilateral-closure simulation.
+  const obligations: Obligation[] = txRows.results.map(t => ({
+    from: t.payer_bank_id, to: t.payee_bank_id, amount: t.amount_value,
+  }))
+  const netting = netObligations(obligations)
+  await writeFinalityLog(db, {
+    txid: null, event_type: 'DnsNettingReduced', state_from: 'KICKED', state_to: 'KICKED',
+    payload_json: JSON.stringify({
+      cycle_id: cycle.cycle_id,
+      gross_volume: netting.grossVolume,
+      netted_volume: netting.nettedVolume,
+      compression_ratio: netting.compressionRatio,
+      payment_count: netting.payments.length,
+      gross_payment_count: obligations.length,
+      payments: netting.payments,
+    }),
     txid_or_gtid: cycle.cycle_id,
   })
 

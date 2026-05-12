@@ -10,6 +10,7 @@ import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { newUUID } from '../../shared/idempotency'
 import { reserveH, lockH, releaseH } from '../h_model'
 import { getOrCreateDnsCycle } from '../dns'
+import { analyzeGtidGraph } from '../gtid_graph'
 
 /**
  * GTID 登録: GT_RECEIVED + legs = LEG_REGISTERED
@@ -175,6 +176,23 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     })
     await finalizeGtidCancelled(gtid, db)
     return
+  }
+
+  // Advisory graph analysis: detect circular bank-level value flows (A→B→C→A)
+  // that could be netted to zero. Logged for compliance reporting; does not
+  // alter the decision.
+  const graphAnalysis = analyzeGtidGraph(legRows)
+  if (graphAnalysis.hasCircularFlow) {
+    await writeFinalityLog(db, {
+      txid: null, event_type: 'GtidCircularFlow', state_from: 'GT_PRECHECKED', state_to: 'GT_PRECHECKED',
+      payload_json: JSON.stringify({
+        gtid,
+        cycle: graphAnalysis.cycle,
+        scc: graphAnalysis.scc.filter(c => c.length > 1),
+        edges: graphAnalysis.edges,
+      }),
+      txid_or_gtid: gtid,
+    })
   }
 
   // Decision 確定前に PAYER leg の H 予約を取得・ロック

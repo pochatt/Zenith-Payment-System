@@ -210,3 +210,106 @@ export function resolveBicsForBanks(bankIds: string[]): Record<string, string> {
 export function getRegisteredBics(): string[] {
   return Object.keys(BIC_TO_BANK_ID)
 }
+
+// ---------------------------------------------------------------------------
+// Weighted shortest-path routing (Dijkstra) for cross-border correspondent chains
+// ---------------------------------------------------------------------------
+
+export interface CorrespondentEdge {
+  /** Originating bank_id. */
+  from: string
+  /** Destination bank_id. */
+  to: string
+  /** Fee charged for using this hop, in minor units of the settlement ccy. */
+  fee: number
+  /** Latency cost in seconds (or arbitrary units; consistent across the graph). */
+  latency: number
+}
+
+export interface CorrespondentPath {
+  path: string[]
+  totalFee: number
+  totalLatency: number
+  cost: number
+}
+
+/**
+ * Dijkstra's algorithm over a correspondent-bank graph. Each edge has a fee
+ * and a latency, combined into a scalar cost via `weight = feeWeight·fee +
+ * latencyWeight·latency`. Returns the lowest-cost path from `source` to
+ * `target`, or `null` if unreachable.
+ *
+ * Uses a sorted-array priority queue (O((V+E) log V) — fine for the few-dozen-
+ * bank correspondent graphs typical in cross-border routing; a heap-based PQ
+ * would only matter at thousands of nodes).
+ */
+export function findCorrespondentPath(
+  edges: CorrespondentEdge[],
+  source: string,
+  target: string,
+  weights: { fee: number; latency: number } = { fee: 1, latency: 1 },
+): CorrespondentPath | null {
+  const adj = new Map<string, CorrespondentEdge[]>()
+  const nodes = new Set<string>()
+  for (const e of edges) {
+    nodes.add(e.from)
+    nodes.add(e.to)
+    const list = adj.get(e.from)
+    if (list) list.push(e)
+    else adj.set(e.from, [e])
+  }
+  if (!nodes.has(source) || !nodes.has(target)) return null
+
+  const dist = new Map<string, number>()
+  const prev = new Map<string, string | null>()
+  const fee = new Map<string, number>()
+  const latency = new Map<string, number>()
+  for (const n of nodes) {
+    dist.set(n, Infinity)
+    prev.set(n, null)
+    fee.set(n, 0)
+    latency.set(n, 0)
+  }
+  dist.set(source, 0)
+
+  const pq: Array<{ node: string; d: number }> = [{ node: source, d: 0 }]
+  const settled = new Set<string>()
+
+  while (pq.length > 0) {
+    pq.sort((a, b) => a.d - b.d)
+    const { node: u } = pq.shift()!
+    if (settled.has(u)) continue
+    settled.add(u)
+    if (u === target) break
+
+    for (const e of adj.get(u) ?? []) {
+      if (settled.has(e.to)) continue
+      const w = weights.fee * e.fee + weights.latency * e.latency
+      const alt = (dist.get(u) ?? Infinity) + w
+      if (alt < (dist.get(e.to) ?? Infinity)) {
+        dist.set(e.to, alt)
+        prev.set(e.to, u)
+        fee.set(e.to, (fee.get(u) ?? 0) + e.fee)
+        latency.set(e.to, (latency.get(u) ?? 0) + e.latency)
+        pq.push({ node: e.to, d: alt })
+      }
+    }
+  }
+
+  if ((dist.get(target) ?? Infinity) === Infinity) return null
+
+  const path: string[] = []
+  let cur: string | null = target
+  while (cur !== null) {
+    path.push(cur)
+    cur = prev.get(cur) ?? null
+  }
+  path.reverse()
+
+  return {
+    path,
+    totalFee: fee.get(target) ?? 0,
+    totalLatency: latency.get(target) ?? 0,
+    cost: dist.get(target) ?? Infinity,
+  }
+}
