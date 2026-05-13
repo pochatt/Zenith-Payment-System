@@ -189,20 +189,40 @@ cancelInFlightTx(db, {
 ## 6. テスト戦略
 
 ### 既存
-- 270 テスト / 16 ファイル。Vitest + better-sqlite3 in-memory D1 mock。
-- カバレッジ偏在: HTLC_AUTH, HIGH_VALUE, BULK は薄い。
+- 303 テスト / 19 ファイル。Vitest + better-sqlite3 in-memory D1 mock。
 
-### 横断プリミティブ（本 PR で追加）
+### 横断プリミティブ
 - `test/shared/errors.test.ts` — DomainError/errorResponse/カテゴリ写像
 - `test/shared/logger.test.ts` — JSON shape, redaction, child baggage
 - `test/zc/lane_helpers.test.ts` — CAS / 並列 N 本 / TOCTOU 取消順序
 
+### 残高インバリアントの統合テスト（`test/integration/balance_invariants.test.ts`）
+**目的**: 「状態機械が正しい」だけでなく「最終的に顧客口座の数字が合う」までを
+往復で固定する。state-machine 系の単体テストはレーンの遷移条件を見るが、
+仕訳まで追うものが無かったため、過去に以下のような**仕訳起点のバグが摺り抜けた**：
+
+| バグ | 内容 | 修正 |
+|---|---|---|
+| double-credit | `onPayeeExecConfirmed` が無条件に `credit-notify` を呼び、その bank ハンドラがもう一度 `Customer(+)/ZCS(-)` を仕訳していた。EXPRESS / STANDARD / HTLC / HTLC_AUTH / HIGH_VALUE / BULK のすべてで payee が 2 倍着金。 | `bankCreditNotify` を**仕訳しない通知層**に変更（BankAuditLog + DELIVERED 応答のみ）。`execute-credit` 経由の仕訳が唯一の真実。 |
+| HTLC_AUTH stuck | `approveAuthRequest` が `Transactions(state='H_RESERVED')` で INSERT。`claimHtlc` の CAS は `WHERE state='HTLC_LOCKED'` のため Transactions が動かず、Bank だけ debit されて payee は永遠に着金しない。 | INSERT 時の state を `HTLC_LOCKED` に変更し `HtlcContracts` と整合。 |
+| GTID leg pairing | 2×2 で PAYEE が leg_id 昇順以外で挿入されると、PAYER↔PAYEE のペアが取り違わって誤った銀行に着金。 | `payerLegs` / `payeeLegs` を leg_id でソートし、同じ index で組む。 |
+
+カバー範囲（11 テスト）:
+- 各レーン（EXPRESS / STANDARD / HTLC / HTLC_AUTH / HIGH_VALUE / BULK / GTID 1×1 / GTID 2×2 逆順 / 複数レーン同時）について、
+  1. payer 顧客 Δ == −amount
+  2. payee 顧客 Δ == +amount
+  3. 各行内ゼロサム
+  4. BOJ 系全行合計の保存則（RTGS 経由でも 0 保存）
+
+新規バグ修正は**この suite の `expect()` が落ちる**ことで検出できる。新レーン
+追加時はこの suite に 1 ケース足すのを義務付けたい。
+
 ### 推奨される追加テスト（次の PR）
-1. **HTLC_AUTH の happy + reject + void** — 498 行で 0 テストはリスク。
-2. **BULK / HIGH_VALUE の最小フロー**。
-3. **冪等キー再送**（同 idempotency_key で 2 回叩いて同一レスポンス）。
-4. **Bank コールバック失敗時のリトライ → ack ループ**（DomainError
+1. **冪等キー再送**（同 idempotency_key で 2 回叩いて同一レスポンス）。
+2. **Bank コールバック失敗時のリトライ → ack ループ**（DomainError
    category × queue.retry 挙動）。
+3. **HTLC cancel パス**で payer suspense が銀行側 release-reserve で
+   普通預金に戻ることまで balance 確認。
 
 ---
 

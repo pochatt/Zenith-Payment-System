@@ -768,21 +768,21 @@ function isEditDistanceAtMostOne(a: string, b: string): boolean {
 }
 
 /**
- * **Command 9: credit-notify** — Post-settlement credit notification.
+ * **Command 9: credit-notify** — Post-settlement credit *notification* delivery.
  *
- * Called after DNS settlement to notify the payee bank that funds have
- * been credited. Creates zero-sum journal entries:
- *   - Customer account: +(amount)  — funds credited
- *   - ZCS nostro account: -(amount) — settlement obligation discharged
- *
- * Unlike execute-credit (which uses suspense for hard landing), credit-notify
- * directly credits the customer account since DNS settlement has already
- * occurred at the ZC level.
+ * Pure notification layer: confirms to the payee bank that ZC has reached
+ * SETTLED state for this txid so the bank can fire downstream signals
+ * (customer push, EDI delivery, mobile alert, MT940 reporting, etc.). The
+ * actual customer credit journals were already booked synchronously by
+ * `execute-credit` (Hard Landing → 別段(-) / 普通預金(+)). Booking again
+ * here would double-credit the payee, so this handler MUST NOT touch the
+ * ledger — see the regression test in `test/integration/balance_invariants.test.ts`.
  *
  * @param bankId - Payee bank identifier
  * @param req    - Contains txid, payee_account_hash, amount, payer info
  * @param env    - Worker environment bindings
- * @returns DELIVERED with notification_id, or ERROR
+ * @returns DELIVERED with notification_id, or ERROR if the payee account
+ *          cannot be resolved (so the ZC retry loop can investigate).
  */
 async function bankCreditNotify(
   bankId: string, req: BankCreditNotifyIngressRequest, env: Env,
@@ -791,41 +791,15 @@ async function bankCreditNotify(
   const idempResult = await checkIdempotency(req.request_id, bankId, req.txid, 'credit-notify', db)
   if (idempResult.existing) return idempResult.response as { result: 'DELIVERED'; notification_id: string }
 
-  // Payee 口座検索
+  // Payee 口座を存在確認のみ。SAVINGS でない場合はカストディ扱いの着金が
+  // execute-credit 時点で別段に残っているはずなので、ERROR を返してZC側で
+  // 配信失敗として記録させる。
   const account = await getAccountByHash(bankId, req.payee_account_hash, db)
   if (!account || account.account_type !== 'SAVINGS') {
     const resp = { result: 'ERROR' as const, reason_code: 'ACCOUNT_NOT_FOUND' }
     await saveResponse(req.request_id, resp, db)
     return resp
   }
-
-  const now = nowISO()
-  const valueDate = now.slice(0, 10)
-  const journalGroupId = `CNOTIFY-${req.notification_id}`
-  const zcsAccountId = nostroAccountId(bankId)
-
-  // ゼロサム仕訳: 着金口座(+) / ZCS勘定(-)  2エントリ
-  await insertJournalGroup(db, {
-    bankId,
-    txGroupId: journalGroupId,
-    entries: [
-      {
-        accountId: account.account_id,
-        amount: req.amount.value,
-        txType: 'CREDIT',
-        txid: req.txid,
-        description: req.purpose ? `入金通知 ${req.payer_bank_id}→${bankId} ${req.purpose}` : `入金通知 ${req.payer_bank_id}→${bankId}`,
-      },
-      {
-        accountId: zcsAccountId,
-        amount: -req.amount.value,
-        txType: 'CREDIT',
-        txid: req.txid,
-        description: '入金通知 ZCS清算勘定(-)offset',
-      },
-    ],
-    valueDate,
-  })
 
   const resp = { result: 'DELIVERED' as const, notification_id: req.notification_id }
   await saveResponse(req.request_id, resp, db)

@@ -139,6 +139,16 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
       totalPayeeAmount += leg.amount_value
     }
   }
+  // PAYER ↔ PAYEE の対応付けは leg_id の辞書順で確定する。
+  // SQLite の SELECT は ROWID（挿入順）順に返すため、req.legs の並びが
+  // leg_id 順と異なる場合、両配列が同じ位置で対応しないと
+  // 取り違いの着金（A→B が A→C になる等）が起きる。両配列を leg_id で
+  // ソートしておくと「両側の i 番目」で必ず正しい対が取れる。
+  // 仕様コメント: 'leg_id による安定的なマッピング' を実装で保証する。
+  const cmpLegId = (a: GtidLegRow, b: GtidLegRow) =>
+    a.leg_id < b.leg_id ? -1 : a.leg_id > b.leg_id ? 1 : 0
+  payerLegs.sort(cmpLegId)
+  payeeLegs.sort(cmpLegId)
   const payerLeg = payerLegs[0]
   const payeeLeg = payeeLegs[0]
   if (!payerLeg || !payeeLeg) {
@@ -241,11 +251,11 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     if (leg.role === 'PAYEE') continue
 
     const txid = `TX-GT-${leg.leg_id}`
-    // PAYER の対応 PAYEE を leg_id の辞書順で決定。
-    // 配列 index に依存すると PAYER/PAYEE の数が不等な場合に
-    // 誤った銀行へ着金するため、leg_id による安定的なマッピングを使用する。
-    // 対応する PAYEE が見つからない場合は先頭 PAYEE をフォールバックとする。
-    const payerIdx = payerLegs.filter(p => p.leg_id <= leg.leg_id).length - 1
+    // PAYER の対応 PAYEE は leg_id の辞書順位（== sort 後の配列 index）で決定。
+    // 両配列は上で leg_id 昇順にソート済みのため、findIndex の結果がそのまま
+    // 正しい対の index になる。PAYEE 数が PAYER 数より少ない場合は先頭 PAYEE
+    // をフォールバックとする（単一受取人 fan-in 等の利便のため）。
+    const payerIdx = payerLegs.findIndex(p => p.leg_id === leg.leg_id)
     const counterpartyPayeeLeg = payeeLegs[payerIdx] ?? payeeLeg
     const hReservationId = hReservations.get(leg.leg_id) ?? null
 

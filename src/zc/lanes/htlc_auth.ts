@@ -238,14 +238,19 @@ export async function approveAuthRequest(
     return { result: 'ERROR', reason_code: (reserveResp as { reason_code?: string }).reason_code ?? 'RESERVE_FAILED' }
   }
 
-  // Transactions レコード作成（DECIDED_TO_SETTLE 相当: 資金は既に確保済み）
-  // H予約は不要（別段預金で資金確保済みのため）
+  // Transactions レコード作成。
+  // HtlcContracts と同じ HTLC_LOCKED 状態で挿入することが必須。
+  // captureHtlcAuth → claimHtlc は `WHERE state='HTLC_LOCKED'` で CAS
+  // するため、ここを H_RESERVED にすると Transactions が動かないまま
+  // Bank 側だけ debit され、payee が永遠に着金しない（regression: 過去に
+  // 発生したバグ — `test/integration/balance_invariants.test.ts` で固定）。
+  // H 予約は ZC 側では行わない（別段預金で資金確保済みのため）。
   await db.prepare(
     `INSERT OR IGNORE INTO Transactions
      (txid, lane, state, amount_value, amount_currency, payer_bank_id, payer_account_hash,
       payee_bank_id, payee_account_hash, idempotency_key, schema_version,
       version, created_at, updated_at)
-     VALUES (?, 'HTLC', 'H_RESERVED', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', 0, ?, ?)`
+     VALUES (?, 'HTLC', 'HTLC_LOCKED', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', 0, ?, ?)`
   ).bind(
     txid, authReq.amount_value,
     authReq.payer_bank_id, authReq.payer_account_hash,
