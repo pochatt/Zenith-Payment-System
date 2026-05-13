@@ -100,7 +100,7 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
     if (!data.intermediary.country || data.intermediary.country.trim().length === 0) {
       errors.push('intermediary.country: 仲介機関の国コードは必須です')
     } else if (!isValidCountryCode(data.intermediary.country)) {
-      errors.push(`intermediary.country: 無効な国コード '${data.intermediary.country}' (ISO 3166-1 alpha-2 が必要)')`)
+      errors.push(`intermediary.country: 無効な国コード '${data.intermediary.country}' (ISO 3166-1 alpha-2 が必要)`)
     }
   }
 

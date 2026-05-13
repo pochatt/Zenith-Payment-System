@@ -90,7 +90,10 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
 
     // 7. 参加行の日次送金累計リセット（tx_amount_limit/daily_amount_limit 用）
     try {
-      await db.prepare(`UPDATE Participants SET daily_amount_used = 0`).run()
+      const today = todayJST()
+      await db.prepare(
+        `UPDATE Participants SET daily_amount_used = 0, daily_amount_last_reset_date = ?`,
+      ).bind(today).run()
       log.push('daily_amount_used reset for all participants')
     } catch (e: any) {
       if (e.message && e.message.includes('no such column')) {

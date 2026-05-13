@@ -122,15 +122,14 @@ export async function handleBankIngressHttp(
   let body: unknown
   try { body = await req.json() } catch { return errorResp(400, 'INVALID_JSON') }
 
-  // HMAC署名検証: X-ZC-Signature ヘッダーを検証
-  // 内部ルーティング（同一Worker内）の場合は署名チェックをスキップ
-  const signature = req.headers.get('X-ZC-Signature')
-  if (signature && env.ZC_HMAC_SECRET) {
+  // HMAC署名検証: ZC_HMAC_SECRET が設定されている場合は X-ZC-Signature 必須
+  // 内部ルーティング（同一Worker内）は handleBankIngress を直接呼ぶため HTTP 経路を通らない
+  if (env.ZC_HMAC_SECRET) {
+    const signature = req.headers.get('X-ZC-Signature')
+    if (!signature) return errorResp(401, 'MISSING_SIGNATURE')
     const { verifySignature } = await import('../shared/hmac')
     const isValid = await verifySignature(body, signature, env.ZC_HMAC_SECRET)
-    if (!isValid) {
-      return errorResp(401, 'INVALID_SIGNATURE')
-    }
+    if (!isValid) return errorResp(401, 'INVALID_SIGNATURE')
   }
 
   const result = await handleBankIngress(bankId, command, body, env)
@@ -955,7 +954,7 @@ async function bankInitialize(
     ).bind(`${bankId}-CASH`, bankId, now),
     db.prepare(
       `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
-       VALUES (?, ?, 'INTERNAL', '利益剰余金', 'ASSET', 'NORMAL', ?)`
+       VALUES (?, ?, 'INTERNAL', '利益剰余金', 'EQUITY', 'NORMAL', ?)`
     ).bind(`${bankId}-RE`, bankId, now),
     db.prepare(
       `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
