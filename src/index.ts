@@ -24,7 +24,7 @@ import { processQueueMessage } from './zc/orchestrator'
 import { runEod } from './cron/eod'
 import { runTimeoutSweep } from './cron/timeout_sweep'
 import { newRequestLogger } from './shared/logger'
-import { errorResponse, isDomainError } from './shared/errors'
+import { errorResponse, isDomainError, isRetryable } from './shared/errors'
 
 // ZC ingress
 import {
@@ -199,16 +199,19 @@ export default {
         // API認証: X-Api-Key ヘッダーまたは Authorization: Bearer ヘッダーを検証
         // モック環境では ZC_HMAC_SECRET を API キーとして使用
         const apiKey = req.headers.get('X-Api-Key') ?? req.headers.get('Authorization')?.replace('Bearer ', '')
-        const referer = req.headers.get('Referer') || ''
 
-        // UIからの呼び出しの判定：Refererだけでなく Origin も確認（Refererは偽造可能なため）
-        // Referer が信頼できるドメイン配下のみ。正式には Origin ヘッダーで検証するべき
-        const isFromTrustedReferer = referer.includes('/dashboard') || referer.includes('/console') || referer.includes('/bank-app') || referer.includes('/theater') || referer.includes('/theatre') || referer.includes('/sky') || referer.endsWith('/')
-
-        // API キーがない場合、Referer による認証を許可するが、ログに記録（監査可能性）
+        // API キー検証（優先）
         const hasValidApiKey = env.ZC_HMAC_SECRET && apiKey === env.ZC_HMAC_SECRET
 
-        if (!hasValidApiKey && !isFromTrustedReferer) {
+        // 同一オリジンからのブラウザUI呼び出しを許可（開発・デモ用）
+        // Origin ヘッダーはブラウザが付与する。同一オリジンのリクエストでは Origin が
+        // 省略されるか、リクエストURLのオリジンと一致する。Refererと異なりパスを含まないため
+        // "https://attacker.com/dashboard" のようなバイパスが不可能。
+        const origin = req.headers.get('Origin')
+        const requestOrigin = new URL(req.url).origin
+        const isFromSameOrigin = !origin || origin === requestOrigin
+
+        if (!hasValidApiKey && !isFromSameOrigin) {
           return withCors(jsonError(401, 'UNAUTHORIZED', 'Valid X-Api-Key or Authorization Bearer header required'))
         }
 
@@ -272,8 +275,7 @@ export default {
         // TIMEOUT / RATE_LIMIT are retryable. Anything else is a bug or invalid
         // input — retrying just amplifies the problem, so we ack and surface
         // the failure via Cases (already handled inside the orchestrator).
-        const retryable = !isDomainError(err) || err.category === 'DOWNSTREAM'
-          || err.category === 'TIMEOUT' || err.category === 'RATE_LIMIT'
+        const retryable = !isDomainError(err) || isRetryable(err.category)
         log.error('queue.failed', {
           error: err, retryable, duration_ms: log.elapsed(),
         })

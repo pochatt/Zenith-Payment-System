@@ -76,11 +76,11 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
 
   // 金額上限チェック / RECEIVE_ONLY 参加形態チェック
   // マイグレーション未適用による 'no such column' エラー時は詳細をログ出力してフォールバック
-  let participant: { tx_amount_limit?: number | null; daily_amount_limit?: number | null; daily_amount_used?: number; participation_mode?: string | null } | null = null
+  let participant: { tx_amount_limit?: number | null; daily_amount_limit?: number | null; daily_amount_used?: number; daily_amount_last_reset_date?: string | null; participation_mode?: string | null } | null = null
   try {
     participant = await db.prepare(
-      `SELECT tx_amount_limit, daily_amount_limit, daily_amount_used, participation_mode FROM Participants WHERE bank_id = ?`,
-    ).bind(body.payer.bank_id).first<{ tx_amount_limit: number | null; daily_amount_limit: number | null; daily_amount_used: number; participation_mode: string | null }>()
+      `SELECT tx_amount_limit, daily_amount_limit, daily_amount_used, daily_amount_last_reset_date, participation_mode FROM Participants WHERE bank_id = ?`,
+    ).bind(body.payer.bank_id).first<{ tx_amount_limit: number | null; daily_amount_limit: number | null; daily_amount_used: number; daily_amount_last_reset_date: string | null; participation_mode: string | null }>()
   } catch (e: any) {
     if (e.message && e.message.includes('no such column')) {
       // マイグレーション未適用時: limits は適用されず、RECEIVE_ONLY チェックも実施されない
@@ -105,28 +105,39 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
   if (participant?.daily_amount_limit != null) {
     let success = false;
     try {
-      // Bug #4 fix (partial): Daily limit reset mechanism.
-      // Primary reset: EOD cron job (scheduled handler '30 7 * * *' in wrangler.toml, ~7:30 AM JST)
-      //   - File: src/cron/eod.ts, lines 83-93
-      //   - Executes: UPDATE Participants SET daily_amount_used = 0
-      // If cron job fails or is delayed, the limit may not reset until the next EOD run.
-      // For production systems, consider implementing:
-      //   1. Persistent last_reset_date field to detect missed resets
-      //   2. Middleware to auto-reset if date changes between requests
-      //   3. Monitoring alerts if daily_amount_used persists beyond EOD window
-      // For now, relying on scheduled cron job with manual override via /internal/cron/eod endpoint.
+      const today = nowISO().slice(0, 10)  // 'YYYY-MM-DD'
 
-      // アトミックに加算し、超過時は rows=0 になる
-      const upd = await db.prepare(
-        `UPDATE Participants SET daily_amount_used = daily_amount_used + ?
-         WHERE bank_id = ? AND daily_amount_used + ? <= daily_amount_limit`,
-      ).bind(body.amount.value, body.payer.bank_id, body.amount.value).run()
-      success = upd.meta.changes > 0;
+      // EODクーロンが失敗・遅延した場合でも当日初回リクエスト時に自動リセットする。
+      // daily_amount_last_reset_date が今日以前であれば used を 0 にリセットしてから加算。
+      // 日付チェックと加算を1文で行い TOCTOU を防ぐ。
+      if (participant.daily_amount_last_reset_date !== today) {
+        const upd = await db.prepare(
+          `UPDATE Participants
+           SET daily_amount_used = ?, daily_amount_last_reset_date = ?
+           WHERE bank_id = ? AND daily_amount_last_reset_date IS NOT ?`,
+        ).bind(body.amount.value, today, body.payer.bank_id, today).run()
+        success = upd.meta.changes > 0
+        if (!success) {
+          // Another isolate already reset and incremented — fall through to normal increment.
+          const upd2 = await db.prepare(
+            `UPDATE Participants SET daily_amount_used = daily_amount_used + ?
+             WHERE bank_id = ? AND daily_amount_used + ? <= daily_amount_limit`,
+          ).bind(body.amount.value, body.payer.bank_id, body.amount.value).run()
+          success = upd2.meta.changes > 0
+        }
+      } else {
+        // アトミックに加算し、超過時は rows=0 になる
+        const upd = await db.prepare(
+          `UPDATE Participants SET daily_amount_used = daily_amount_used + ?
+           WHERE bank_id = ? AND daily_amount_used + ? <= daily_amount_limit`,
+        ).bind(body.amount.value, body.payer.bank_id, body.amount.value).run()
+        success = upd.meta.changes > 0
+      }
     } catch (e: any) {
       if (e.message && e.message.includes('no such column')) {
         // スキーマ不完全時: 警告をログして制限なしとして続行（開発環境での利便性のため）
         console.error(`[ingress] Schema incomplete: daily_amount_used column missing. Migration 0010+ may not have been applied. Daily limits will be ignored. Error: ${e.message}`);
-        success = true; // フォールバック: スキーマがない場合は制限なしとして続行
+        success = true;
       } else {
         throw e;
       }

@@ -48,6 +48,22 @@ export type ReversalStatus =
   | 'COMPLETED'
   | 'REJECTED'
 
+/**
+ * Reasons that require an explicit approval reference per spec §2.2:
+ *   (a) 受取人同意 — payee consent ref
+ *   (b) 法令・裁判所命令 — legal/court order ref
+ *   (c) 当局要請 — authority request ref
+ *
+ * DUPLICATE_PAYMENT and OPERATIONAL_ERROR may be self-certified by the
+ * requesting bank (no external approval needed).
+ */
+export const APPROVAL_REQUIRED_REASONS: ReversalReason[] = [
+  'CUSTOMER_DISPUTE',
+  'INCORRECT_AMOUNT',
+  'INCORRECT_PAYEE',
+  'FRAUD',
+]
+
 export interface ReversalRequest {
   original_txid: string
   amount?: number          // partial reversal; omit for full reversal
@@ -55,6 +71,13 @@ export interface ReversalRequest {
   requested_by: string     // bank_id or 'OPS'
   idempotency_key: string
   description?: string
+  /**
+   * Reference to the approval basis required by spec §2.2 for certain reasons.
+   * Must be provided for: CUSTOMER_DISPUTE, INCORRECT_AMOUNT, INCORRECT_PAYEE, FRAUD.
+   * Format: "<type>:<ref_id>" e.g. "PAYEE_CONSENT:CONS-xxx", "COURT_ORDER:ORD-yyy",
+   * "AUTHORITY_REQUEST:AUTH-zzz".
+   */
+  approval_ref?: string
 }
 
 export interface ReversalRecord {
@@ -66,6 +89,7 @@ export interface ReversalRecord {
   status: ReversalStatus
   requested_by: string
   description: string | null
+  approval_ref: string | null
   created_at: string
   updated_at: string
 }
@@ -108,6 +132,12 @@ export async function requestReversal(
     return { result: 'REJECTED', reversal_id: '', reason_code: 'ORIGINAL_NOT_SETTLED' }
   }
 
+  // 1b. Approval policy check (spec §2.2)
+  // Post-settlement reversals require documented consent/order for certain reasons.
+  if (APPROVAL_REQUIRED_REASONS.includes(req.reason) && !req.approval_ref) {
+    return { result: 'REJECTED', reversal_id: '', reason_code: 'APPROVAL_REF_REQUIRED' }
+  }
+
   // 2. Validate amount
   const reversalAmount = req.amount ?? original.amount_value
   if (reversalAmount <= 0 || reversalAmount > original.amount_value) {
@@ -134,11 +164,11 @@ export async function requestReversal(
   await db.prepare(
     `INSERT INTO ReversalRecords
      (reversal_id, original_txid, reversal_txid, amount, reason, status,
-      requested_by, description, created_at, updated_at)
-     VALUES (?, ?, NULL, ?, ?, 'REQUESTED', ?, ?, ?, ?)`,
+      requested_by, description, approval_ref, created_at, updated_at)
+     VALUES (?, ?, NULL, ?, ?, 'REQUESTED', ?, ?, ?, ?, ?)`,
   ).bind(
     reversalId, req.original_txid, reversalAmount, req.reason,
-    req.requested_by, req.description ?? null, now, now,
+    req.requested_by, req.description ?? null, req.approval_ref ?? null, now, now,
   ).run()
 
   await writeFinalityLog(db, {
@@ -150,6 +180,7 @@ export async function requestReversal(
       reversal_id: reversalId,
       amount: reversalAmount,
       reason: req.reason,
+      approval_ref: req.approval_ref ?? null,
     }),
     txid_or_gtid: req.original_txid,
   })

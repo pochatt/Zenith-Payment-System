@@ -28,40 +28,63 @@ export interface FinalityLogEntry {
 
 /**
  * Persist a FinalityLog entry for audit trail.
- * Uses timestamp-based sequence numbers to survive Worker isolate restarts.
+ *
+ * Retries up to MAX_RETRIES times on UNIQUE constraint violations, which can
+ * occur when two concurrent isolates write to the same chain simultaneously:
+ *   - event_seq collision (B6): both computed the same monotonic seq value.
+ *   - prev_hash collision (B5): both read the same chain tip and tried to link
+ *     to the same predecessor, breaking the append-only invariant.
+ *
+ * On each retry the chain tip and seq are re-read so the new entry correctly
+ * extends the chain that the earlier winner just committed.
  */
 export async function writeFinalityLog(db: D1Database, entry: FinalityLogEntry): Promise<void> {
-  const logId = `FL-${newUUID()}`
-  const maxRow = await db
-    .prepare(`SELECT MAX(event_seq) AS mx FROM FinalityLog`)
-    .first<{ mx: number | null }>()
-  const candidate = Date.now() * 1000 + Math.floor(Math.random() * 1000)
-  const seq = Math.max(candidate, (maxRow?.mx ?? 0) + 1)
+  const MAX_RETRIES = 5
   const gtid = (entry.txid_or_gtid?.startsWith('GT-') || entry.txid_or_gtid?.startsWith('GTID-'))
     ? entry.txid_or_gtid : null
+  const chainId = chainIdOf({ txid: entry.txid, gtid })
   const occurredAt = nowISO()
 
-  // Chain this entry to the predecessor for the same txid/gtid scope.
-  const chainId = chainIdOf({ txid: entry.txid, gtid })
-  const prevHash = await getChainTipHash(db, chainId)
-  const entryHash = await computeEntryHash({
-    log_id: logId,
-    txid: entry.txid,
-    gtid,
-    event_type: entry.event_type,
-    state_from: entry.state_from,
-    state_to: entry.state_to,
-    payload_json: entry.payload_json,
-    event_seq: seq,
-    occurred_at: occurredAt,
-  }, prevHash)
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    const logId = `FL-${newUUID()}`
 
-  await db.prepare(
-    `INSERT INTO FinalityLog
-     (log_id, txid, gtid, event_type, state_from, state_to, payload_json, event_seq, occurred_at, prev_hash, entry_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(logId, entry.txid, gtid, entry.event_type, entry.state_from,
-    entry.state_to, entry.payload_json, seq, occurredAt, prevHash, entryHash).run()
+    const maxRow = await db
+      .prepare(`SELECT MAX(event_seq) AS mx FROM FinalityLog`)
+      .first<{ mx: number | null }>()
+    const candidate = Date.now() * 1000 + Math.floor(Math.random() * 1000)
+    const seq = Math.max(candidate, (maxRow?.mx ?? 0) + 1)
+
+    // Re-read chain tip on every attempt to get the current predecessor hash.
+    const prevHash = await getChainTipHash(db, chainId)
+    const entryHash = await computeEntryHash({
+      log_id: logId,
+      txid: entry.txid,
+      gtid,
+      event_type: entry.event_type,
+      state_from: entry.state_from,
+      state_to: entry.state_to,
+      payload_json: entry.payload_json,
+      event_seq: seq,
+      occurred_at: occurredAt,
+    }, prevHash)
+
+    try {
+      await db.prepare(
+        `INSERT INTO FinalityLog
+         (log_id, txid, gtid, event_type, state_from, state_to, payload_json, event_seq, occurred_at, prev_hash, entry_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(logId, entry.txid, gtid, entry.event_type, entry.state_from,
+        entry.state_to, entry.payload_json, seq, occurredAt, prevHash, entryHash).run()
+      return  // success
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      // Retry only on UNIQUE constraint violations (event_seq or prev_hash conflict).
+      if (!msg.includes('UNIQUE') && !msg.includes('unique')) throw err
+      if (attempt === MAX_RETRIES - 1) {
+        throw new Error(`writeFinalityLog: failed after ${MAX_RETRIES} attempts due to concurrent writes — ${msg}`)
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
