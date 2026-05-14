@@ -164,8 +164,9 @@ describe('cancelHtlc — TOCTOU regression (Bug #1)', () => {
     const txid = insertHtlcReceived(d1, htlcId)
 
     // Manually reserve H (simulating what lockHtlc would do)
-    const rid = await reserveH(PAYER_BANK, txid, 100_000, d1 as any)
-    expect(rid).toBeTruthy()
+    const hResult = await reserveH(PAYER_BANK, txid, 100_000, d1 as any)
+    expect(hResult.ok).toBe(true)
+    const rid = hResult.ok ? hResult.reservation_id : ''
 
     // Set h_reservation_id on the TX
     d1.prepare(`UPDATE Transactions SET h_reservation_id = ? WHERE txid = ?`).bind(rid, txid)._runSync()
@@ -182,7 +183,8 @@ describe('cancelHtlc — TOCTOU regression (Bug #1)', () => {
     const txid = insertHtlcReceived(d1, htlcId)
 
     // Reserve H
-    const rid = await reserveH(PAYER_BANK, txid, 100_000, d1 as any)
+    const hResult = await reserveH(PAYER_BANK, txid, 100_000, d1 as any)
+    const rid = hResult.ok ? hResult.reservation_id : ''
     d1.prepare(`UPDATE Transactions SET h_reservation_id = ? WHERE txid = ?`).bind(rid, txid)._runSync()
     // Lock H (simulating DECIDED_TO_SETTLE flow)
     d1.prepare(`UPDATE HReservations SET mode = 'LOCKED' WHERE reservation_id = ?`).bind(rid)._runSync()
@@ -212,7 +214,8 @@ describe('cancelHtlc — TOCTOU regression (Bug #1)', () => {
     const htlcId = 'HTLC-CANCEL-IDEM'
     const txid = insertHtlcReceived(d1, htlcId)
 
-    const rid = await reserveH(PAYER_BANK, txid, 100_000, d1 as any)
+    const hResult = await reserveH(PAYER_BANK, txid, 100_000, d1 as any)
+    const rid = hResult.ok ? hResult.reservation_id : ''
     d1.prepare(`UPDATE Transactions SET h_reservation_id = ? WHERE txid = ?`).bind(rid, txid)._runSync()
 
     await cancelHtlc(htlcId, txid, 'MANUAL_CANCEL', d1 as any)

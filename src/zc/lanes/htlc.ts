@@ -6,6 +6,7 @@
 import type { Env, HtlcCreateRequest, HtlcClaimRequest, HtlcContractRow, ReleaseReserveRequest } from '../../types'
 import { nowISO } from '../../types'
 import { reserveH, lockH, releaseH } from '../h_model'
+import type { ReserveHResult } from '../h_model'
 import { writeFinalityLog, callBankAuthorityCheck, callBankExecuteDebit, callBankReleaseReserve, onPayerExecConfirmed, suspendTx, finalizeCancelledTx } from '../orchestrator'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { sha256hex } from '../../shared/hmac'
@@ -97,11 +98,12 @@ export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
   }
 
   // H予約 (ZC側)
-  const reservationId = await reserveH(htlc.payer_bank_id, htlc.txid, htlc.amount_value, db)
-  if (!reservationId) {
-    await cancelHtlc(htlcId, htlc.txid, 'H_LIMIT_EXCEEDED', db)
+  const hResult = await reserveH(htlc.payer_bank_id, htlc.txid, htlc.amount_value, db)
+  if (!hResult.ok) {
+    await cancelHtlc(htlcId, htlc.txid, hResult.reason, db)
     return
   }
+  const reservationId = hResult.reservation_id
 
   // Bank側 reserve-funds（SuspenseDetails を作成 → execute-debit 時に必要）
   // payer_account_hash は Transactions テーブルから取得
@@ -210,8 +212,16 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
   // dns_cycle_id 設定
   const dnsCycleId = await getOrCreateDnsCycle(db, now)
 
-  // claim 成功時に lockH（DECIDED_TO_SETTLE 時点）
-  if (htlc.txid) {
+  // HTLC_FULFILL_REQUESTED → DECIDED_TO_SETTLE
+  // AND state='HTLC_FULFILL_REQUESTED' の状態ガードを追加
+  const settleResults = await db.batch([
+    db.prepare(`UPDATE HtlcContracts SET state='DECIDED_TO_SETTLE', secret_verified=1, version=version+1, updated_at=? WHERE htlc_id=?`).bind(now, req.htlc_id),
+    db.prepare(`UPDATE Transactions SET state='DECIDED_TO_SETTLE', decision_proof_ref=?, finality_log_ref=?, dns_cycle_id=?, updated_at=?, version=version+1 WHERE txid=? AND state='HTLC_FULFILL_REQUESTED'`).bind(decisionProofRef, finalityLogRef, dnsCycleId, now, htlc.txid),
+  ])
+
+  // lockH は DECIDED_TO_SETTLE 遷移成功後に実行（Bug D fix: 先行 lockH を排除）
+  // Transactions UPDATE が成功した場合のみ H を LOCKED に昇格する
+  if ((settleResults[1]?.meta.changes ?? 0) > 0) {
     const txForH = await db
       .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)
       .bind(htlc.txid).first<{ h_reservation_id: string | null }>()
@@ -219,13 +229,6 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
       await lockH(txForH.h_reservation_id, db)
     }
   }
-
-  // HTLC_FULFILL_REQUESTED → DECIDED_TO_SETTLE
-  // AND state='HTLC_FULFILL_REQUESTED' の状態ガードを追加
-  await db.batch([
-    db.prepare(`UPDATE HtlcContracts SET state='DECIDED_TO_SETTLE', secret_verified=1, version=version+1, updated_at=? WHERE htlc_id=?`).bind(now, req.htlc_id),
-    db.prepare(`UPDATE Transactions SET state='DECIDED_TO_SETTLE', decision_proof_ref=?, finality_log_ref=?, dns_cycle_id=?, updated_at=?, version=version+1 WHERE txid=? AND state='HTLC_FULFILL_REQUESTED'`).bind(decisionProofRef, finalityLogRef, dnsCycleId, now, htlc.txid),
-  ])
 
   await writeFinalityLog(db, {
     txid: htlc.txid, event_type: 'DecidedToSettle', state_from: 'HTLC_FULFILL_REQUESTED', state_to: 'DECIDED_TO_SETTLE',
@@ -268,9 +271,10 @@ export async function cancelHtlc(
     db.prepare(`UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state NOT IN ('DECIDED_TO_SETTLE','PAYER_EXEC_CONFIRMED','PAYEE_EXEC_CONFIRMED','SETTLED')`).bind(reasonCode, now, txid),
   ])
 
-  // 少なくとも一方のUPDATEが成功した場合のみH解放を実行
-  const anyUpdated = ((batchResults[0]?.meta.changes ?? 0) + (batchResults[1]?.meta.changes ?? 0)) > 0
-  if (anyUpdated && txForH?.h_reservation_id) {
+  // Transactions UPDATE 成功時のみ H 解放（Bug C fix: Transactions が DECIDED_TO_SETTLE
+  // 以降に遷移済みであれば HtlcContracts だけ更新されても H は維持すべき）
+  const txUpdated = (batchResults[1]?.meta.changes ?? 0) > 0
+  if (txUpdated && txForH?.h_reservation_id) {
     await releaseH(txForH.h_reservation_id, db)
     // HTLC_LOCKED 時点で reserve-funds が実行済みのため、銀行側の別段預金も解放する。
     // ZC が一方的に解放するのではなく、銀行に通知して銀行自身が解放する（基本思想遵守）。
@@ -293,8 +297,8 @@ export async function cancelHtlc(
     }
   }
 
-  if (!anyUpdated) {
-    // 既に DECIDED_TO_SETTLE 等に遷移済みのため、キャンセルも H 解放も不要
+  if (!txUpdated) {
+    // Transactions が既に DECIDED_TO_SETTLE 等に遷移済みのため、キャンセルも H 解放も不要
     console.warn(`[cancelHtlc] state guard prevented cancel for htlc_id=${htlcId} (already settled or decided)`)
     return
   }

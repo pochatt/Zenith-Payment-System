@@ -6,6 +6,7 @@
 import type { Env, PaymentInitiatedRequest } from '../../types'
 import { nowISO } from '../../types'
 import { reserveH, lockH, releaseH } from '../h_model'
+import type { ReserveHResult } from '../h_model'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { writeFinalityLog, callBankAuthorityCheck, callBankNameCheck, callBankReserveFunds, callBankReleaseReserve, finalizeCancelledTx } from '../orchestrator'
 import { newUUID } from '../../shared/idempotency'
@@ -80,11 +81,12 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
   }
 
   // 4. H予約
-  const reservationId = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
-  if (!reservationId) {
-    await cancelAndLog(db, txid, 'PRECHECKED', 'H_LIMIT_EXCEEDED')
+  const hResult = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
+  if (!hResult.ok) {
+    await cancelAndLog(db, txid, 'PRECHECKED', hResult.reason)
     return
   }
+  const reservationId = hResult.reservation_id
 
   await db.prepare(
     `UPDATE Transactions SET state='H_RESERVED', h_reservation_id=?, updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`
@@ -205,11 +207,12 @@ export async function resumeFromNameCheckSuspended(
   })
 
   // H予約
-  const reservationId = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
-  if (!reservationId) {
-    await cancelAndLog(db, txid, 'PRECHECKED', 'H_LIMIT_EXCEEDED')
+  const hResult = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
+  if (!hResult.ok) {
+    await cancelAndLog(db, txid, 'PRECHECKED', hResult.reason)
     return { ok: true, state: 'DECIDED_CANCEL' }
   }
+  const reservationId = hResult.reservation_id
 
   await db.prepare(
     `UPDATE Transactions SET state='H_RESERVED', h_reservation_id=?, updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`

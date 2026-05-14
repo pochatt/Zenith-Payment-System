@@ -359,7 +359,7 @@ async function handleZcApi(req: Request, path: string, method: string, env: Env)
   }
   const whitelistDeleteMatch = path.match(/^\/api\/htlc\/auth-whitelist\/([^/]+)$/)
   if (method === 'DELETE' && whitelistDeleteMatch)
-    return handleRevokeAuthWhitelist(whitelistDeleteMatch[1]!, env)
+    return handleRevokeAuthWhitelist(whitelistDeleteMatch[1]!, req, env)
 
   // GET /api/htlc/auth/:auth_id  オーソリリクエスト詳細
   const htlcAuthGetMatch = path.match(/^\/api\/htlc\/auth\/([^/]+)$/)

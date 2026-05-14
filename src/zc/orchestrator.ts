@@ -116,12 +116,19 @@ export async function onPayeeExecConfirmed(
   const now = nowISO()
 
   const tx = await db
-    .prepare(`SELECT state, h_reservation_id, payee_bank_id, payee_account_hash, payer_bank_id, amount_value, purpose, edi_ref, version FROM Transactions WHERE txid = ?`)
+    .prepare(`SELECT state, lane, h_reservation_id, payee_bank_id, payee_account_hash, payer_bank_id, amount_value, purpose, edi_ref, version, external_settlement_status FROM Transactions WHERE txid = ?`)
     .bind(txid)
-    .first<{ state: TxState; h_reservation_id: string | null; payee_bank_id: string; payee_account_hash: string | null; payer_bank_id: string; amount_value: number; purpose: string | null; edi_ref: string | null; version: number }>()
+    .first<{ state: TxState; lane: string; h_reservation_id: string | null; payee_bank_id: string; payee_account_hash: string | null; payer_bank_id: string; amount_value: number; purpose: string | null; edi_ref: string | null; version: number; external_settlement_status: string }>()
   if (!tx) return
 
   if (!isValidTransition(tx.state, 'PAYEE_EXEC_CONFIRMED')) return
+
+  // HIGH_VALUE 不変条件: external_settlement_status = 'SETTLED' でなければ b確認を拒否
+  // (spec: "PAYEE_EXEC_CONFIRMED(b)へ遷移してよいのは external_settlement_status == SETTLED の場合に限る")
+  if (tx.lane === 'HIGH_VALUE' && tx.external_settlement_status !== 'SETTLED') {
+    console.error(`[orchestrator] HV invariant violated for ${txid}: external_settlement_status=${tx.external_settlement_status}, expected SETTLED`)
+    return
+  }
 
   const updated = await db.prepare(
     `UPDATE Transactions SET state='PAYEE_EXEC_CONFIRMED', payee_bank_proof_ref=?, updated_at=?, version=version+1
@@ -241,7 +248,7 @@ export async function processQueueMessage(msg: QueueMessage, env: Env): Promise<
           if (p.lane === 'HIGH_VALUE') {
             const { initiateIgsSettlement } = await import('./igs')
             await env.DB.prepare(
-              `UPDATE Transactions SET external_settlement_status='PENDING', updated_at=? WHERE txid=?`
+              `UPDATE Transactions SET external_settlement_status='REQUESTED', updated_at=? WHERE txid=?`
             ).bind(nowISO(), p.txid).run()
             await initiateIgsSettlement(
               env.DB, p.txid,

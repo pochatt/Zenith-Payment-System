@@ -6,6 +6,7 @@
 import type { Env, PaymentInitiatedRequest, TransactionRow } from '../../types'
 import { nowISO } from '../../types'
 import { reserveH, lockH, releaseH } from '../h_model'
+import type { ReserveHResult } from '../h_model'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { writeFinalityLog } from '../orchestrator'
 import { callBankAuthorityCheck, callBankNameCheck, callBankReserveFunds } from '../orchestrator'
@@ -60,11 +61,12 @@ export async function processExpress(
   }
 
   // 4. H予約
-  const reservationId = await reserveH(req.payer.bank_id, txid, req.amount.value, db)
-  if (!reservationId) {
-    await cancelTx(txid, 'H_LIMIT_EXCEEDED', db)
-    return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: 'H_LIMIT_EXCEEDED' }
+  const hResult = await reserveH(req.payer.bank_id, txid, req.amount.value, db)
+  if (!hResult.ok) {
+    await cancelTx(txid, hResult.reason, db)
+    return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: hResult.reason }
   }
+  const reservationId = hResult.reservation_id
 
   // H_RESERVED 状態に遷移
   await transitionTx(txid, 'H_RESERVED', reservationId, null, db, 'PRECHECKED')

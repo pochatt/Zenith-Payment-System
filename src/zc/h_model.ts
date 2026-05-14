@@ -20,6 +20,11 @@ import { newUUID } from '../shared/idempotency'
 // H予約取得（楽観的ロック）
 // ---------------------------------------------------------------------------
 
+/** Discriminated result returned by reserveH. */
+export type ReserveHResult =
+  | { ok: true; reservation_id: string }
+  | { ok: false; reason: 'BANK_NOT_FOUND' | 'H_LIMIT_EXCEEDED' }
+
 /**
  * Acquire an H-limit reservation for an outbound transfer.
  * Atomically increments h_used if the amount fits within h_limit.
@@ -28,14 +33,15 @@ import { newUUID } from '../shared/idempotency'
  * @param txid   - Transaction ID to associate with the reservation
  * @param amount - Reservation amount in minor units (JPY)
  * @param db     - D1 database handle
- * @returns reservation_id on success, null if h_limit would be exceeded
+ * @returns ReserveHResult — ok=true with reservation_id, or ok=false with
+ *          reason 'BANK_NOT_FOUND' (inactive/unknown bank) or 'H_LIMIT_EXCEEDED'.
  */
 export async function reserveH(
   bankId: string,
   txid: string,
   amount: number,
   db: D1Database,
-): Promise<string | null> {
+): Promise<ReserveHResult> {
   const reservationId = `H-${newUUID()}`
   const now = nowISO()
 
@@ -50,8 +56,12 @@ export async function reserveH(
     .run()
 
   if ((upd.meta.changes ?? 0) === 0) {
-    // 超過または参加行なし — HReservations INSERT をスキップして孤児レコードを防ぐ
-    return null
+    // changes=0 は参加行なし or h_limit 超過。どちらかを区別して返す。
+    const bankRow = await db
+      .prepare(`SELECT 1 FROM Participants WHERE bank_id = ? AND is_active = 1`)
+      .bind(bankId)
+      .first()
+    return { ok: false, reason: bankRow ? 'H_LIMIT_EXCEEDED' : 'BANK_NOT_FOUND' }
   }
 
   // Step 2: h_used 増加成功後に HReservations を作成
@@ -64,7 +74,7 @@ export async function reserveH(
     .bind(reservationId, txid, bankId, amount, now)
     .run()
 
-  return reservationId
+  return { ok: true, reservation_id: reservationId }
 }
 
 /**

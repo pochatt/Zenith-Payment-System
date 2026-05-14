@@ -134,6 +134,7 @@ const SCHEMA_MIGRATIONS = [
   '0017_circuit_breaker_metrics.sql',
   '0018_bug_fixes.sql',
   '0019_gtid_chain_fix.sql',
+  '0020_hv_threshold.sql',
 ]
 
 /**

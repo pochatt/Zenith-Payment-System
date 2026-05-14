@@ -224,8 +224,9 @@ describe('cancelInFlightTx', () => {
     const txid = 'TX-LH-CANCEL-H'
     insertTx(d1, txid, 'H_RESERVED')
 
-    const reservationId = await reserveH(PAYER_BANK, txid, 100000, d1 as any)
-    expect(reservationId).toBeTruthy()
+    const hResult = await reserveH(PAYER_BANK, txid, 100000, d1 as any)
+    expect(hResult.ok).toBe(true)
+    const reservationId = hResult.ok ? hResult.reservation_id : ''
     await d1.prepare(`UPDATE Transactions SET h_reservation_id = ? WHERE txid = ?`)
       .bind(reservationId, txid).run()
 
@@ -247,7 +248,8 @@ describe('cancelInFlightTx', () => {
     const txid = 'TX-LH-CANCEL-RACE'
     insertTx(d1, txid, 'DECIDED_TO_SETTLE')
 
-    const reservationId = await reserveH(PAYER_BANK, txid, 100000, d1 as any)
+    const hResult = await reserveH(PAYER_BANK, txid, 100000, d1 as any)
+    const reservationId = hResult.ok ? hResult.reservation_id : ''
     await d1.prepare(`UPDATE Transactions SET h_reservation_id = ? WHERE txid = ?`)
       .bind(reservationId, txid).run()
 

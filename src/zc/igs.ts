@@ -108,6 +108,11 @@ export async function handleIgsCallback(
        WHERE ext_instruction_id = ? AND status = 'REQUESTED'`,
     ).bind(boj_settle_ref ?? null, now, ext_instruction_id).run()
 
+    // external_settlement_status を SETTLED に更新（Bug A fix）
+    await db.prepare(
+      `UPDATE Transactions SET external_settlement_status = 'SETTLED', updated_at = ? WHERE txid = ?`,
+    ).bind(now, igsRow.txid).run()
+
     // Transactions 取得
     const tx = await db
       .prepare(
@@ -224,7 +229,6 @@ export async function handleIgsCallback(
     })
   } else {
     // FAILED / HOLD
-    // HOLD と FAILED を区別（両方 'FAILED' になるデッドコードを修正）
     // HOLD: 一時保留（日銀ネット流動性不足等）→ retryFailedIgs が再試行
     // FAILED: 恒久失敗 → retryFailedIgs が再試行（retry_count 上限まで）
     const newStatus = result === 'HOLD' ? 'HOLD' : 'FAILED'
@@ -233,6 +237,11 @@ export async function handleIgsCallback(
        SET status = ?, failed_reason = ?
        WHERE ext_instruction_id = ? AND status = 'REQUESTED'`,
     ).bind(newStatus, reason ?? result, ext_instruction_id).run()
+
+    // external_settlement_status を FAILED/HOLD に更新（Bug A fix）
+    await db.prepare(
+      `UPDATE Transactions SET external_settlement_status = ?, updated_at = ? WHERE txid = ?`,
+    ).bind(newStatus, now, igsRow.txid).run()
 
     // 取引を SUSPENDED に遷移
     const upd = await db.prepare(
@@ -282,6 +291,37 @@ export async function retryFailedIgs(db: D1Database, env: Env): Promise<void> {
     if ((upd.meta.changes ?? 0) === 0) continue
 
     console.log('[IGS] retrying:', row.ext_instruction_id, 'attempt:', row.retry_count + 1)
+
+    // Bug B fix: TX が SUSPENDED に落ちている場合は PAYER_EXEC_CONFIRMED に戻してから
+    // コールバックを投入する。handleIgsCallback は PAYER_EXEC_CONFIRMED しか受け付けない。
+    const txState = await db
+      .prepare(`SELECT state, version FROM Transactions WHERE txid = ?`)
+      .bind(row.txid)
+      .first<{ state: string; version: number }>()
+    if (txState?.state === 'SUSPENDED') {
+      const recovered = await db.prepare(
+        `UPDATE Transactions
+         SET state = 'PAYER_EXEC_CONFIRMED', reason_code = NULL,
+             external_settlement_status = 'REQUESTED', updated_at = ?, version = version + 1
+         WHERE txid = ? AND state = 'SUSPENDED' AND version = ?`,
+      ).bind(now, row.txid, txState.version).run()
+      if ((recovered.meta.changes ?? 0) > 0) {
+        await writeFinalityLog(db, {
+          txid: row.txid,
+          event_type: 'IgsRetryRecovered',
+          state_from: 'SUSPENDED',
+          state_to: 'PAYER_EXEC_CONFIRMED',
+          payload_json: JSON.stringify({ ext_instruction_id: row.ext_instruction_id, retry_count: row.retry_count + 1 }),
+          txid_or_gtid: row.txid,
+        })
+      } else {
+        console.warn('[IGS] retry recovery CAS failed for txid:', row.txid, '- skipping retry')
+        continue
+      }
+    } else if (txState?.state !== 'PAYER_EXEC_CONFIRMED') {
+      console.warn('[IGS] retry: unexpected TX state', txState?.state, 'for txid:', row.txid, '- skipping')
+      continue
+    }
 
     const callbackPayload: IgsCallbackInput = {
       ext_instruction_id: row.ext_instruction_id,

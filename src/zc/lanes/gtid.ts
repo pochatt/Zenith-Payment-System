@@ -9,6 +9,7 @@ import { writeFinalityLog, callBankLegReadyCheck, callBankReleaseReserve } from 
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { newUUID } from '../../shared/idempotency'
 import { reserveH, lockH, releaseH } from '../h_model'
+import type { ReserveHResult } from '../h_model'
 import { getOrCreateDnsCycle } from '../dns'
 
 /**
@@ -192,9 +193,9 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   for (const leg of legs.results) {
     if (leg.role !== 'PAYER') continue
     const legTxid = `TX-GT-${leg.leg_id}`
-    const reservationId = await reserveH(leg.bank_id, legTxid, leg.amount_value, db)
-    if (!reservationId) {
-      // H超過 → 既確保済みを解放してキャンセル
+    const hResult = await reserveH(leg.bank_id, legTxid, leg.amount_value, db)
+    if (!hResult.ok) {
+      // H超過または参加行なし → 既確保済みを解放してキャンセル
       for (const resId of hReservations.values()) {
         await releaseH(resId, db)
       }
@@ -203,11 +204,12 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
       ).bind(now, gtid).run()
       await writeFinalityLog(db, {
         txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
-        payload_json: JSON.stringify({ gtid, reason: 'H_LIMIT_EXCEEDED' }), txid_or_gtid: gtid,
+        payload_json: JSON.stringify({ gtid, reason: hResult.reason }), txid_or_gtid: gtid,
       })
       await finalizeGtidCancelled(gtid, db, env)
       return
     }
+    const reservationId = hResult.reservation_id
     // DECIDED_TO_SETTLE 直行なので即 LOCK
     await lockH(reservationId, db)
     hReservations.set(leg.leg_id, reservationId)

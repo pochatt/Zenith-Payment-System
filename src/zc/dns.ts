@@ -402,17 +402,17 @@ export async function getDnsStatus(businessDate: string, db: D1Database): Promis
 
 export async function getDnsNetPositions(
   businessDate: string, db: D1Database,
-): Promise<Array<{ bank_id: string; net_position: number; gross_send: number; gross_receive: number; is_settled: number }>> {
+): Promise<Array<{ cycle_id: string; bank_id: string; net_position: number; gross_send: number; gross_receive: number; is_settled: number }>> {
   const prefix = `DNS-${businessDate}%`
   const rows = await db
     .prepare(
-      `SELECT bank_id, SUM(net_position) AS net_position, SUM(gross_send) AS gross_send, SUM(gross_receive) AS gross_receive, MIN(is_settled) AS is_settled
+      `SELECT cycle_id, bank_id, net_position, gross_send, gross_receive, is_settled
        FROM DnsNetPositions
        WHERE cycle_id LIKE ?
-       GROUP BY bank_id`
+       ORDER BY cycle_id, bank_id`
     )
     .bind(prefix)
-    .all<{ bank_id: string; net_position: number; gross_send: number; gross_receive: number; is_settled: number }>()
+    .all<{ cycle_id: string; bank_id: string; net_position: number; gross_send: number; gross_receive: number; is_settled: number }>()
   return rows.results
 }
 
