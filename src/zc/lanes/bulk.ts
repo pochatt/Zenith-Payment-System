@@ -5,6 +5,7 @@
  */
 import type { Env, PaymentInitiatedRequest } from '../../types'
 import { reserveH, lockH } from '../h_model'
+import type { ReserveHResult } from '../h_model'
 import { callBankReserveFunds } from '../orchestrator'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { transitionWithLog, cancelInFlightTx } from './_helpers'
@@ -38,16 +39,17 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   if (!tx) return
 
   // 2. H予約
-  const reservationId = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
-  if (!reservationId) {
+  const hResult = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
+  if (!hResult.ok) {
     await cancelInFlightTx(db, {
       txid,
-      reasonCode: 'H_LIMIT_EXCEEDED',
+      reasonCode: hResult.reason,
       fromStates: ['PRECHECKED'],
       skipReleaseH: true,
     })
     return
   }
+  const reservationId = hResult.reservation_id
 
   const reserved = await transitionWithLog(db, {
     txid,

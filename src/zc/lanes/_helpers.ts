@@ -147,6 +147,22 @@ export interface CancelRequest {
   fromStates?: string[]
   /** Skip the H release step (used for lanes that never reserve H). */
   skipReleaseH?: boolean
+  /**
+   * Optional secondary-table CAS UPDATEs run atomically in the same D1 batch
+   * as the canonical Transactions UPDATE. Each entry's individual `changes`
+   * count is informational only — H release, FinalityLog, and finalize gate
+   * ONLY on the canonical Transactions UPDATE succeeding. This guarantees
+   * that side-table state (e.g. HtlcContracts.state) cannot lead H to be
+   * released when the canonical decision has already committed to settle.
+   */
+  sideUpdates?: Array<{ sql: string; binds: Array<string | number | null> }>
+  /**
+   * Custom FinalityLog event_type. Defaults to 'DecidedCancel'.
+   * Useful when a lane wants a more specific name (e.g. 'HtlcCancelled').
+   */
+  eventType?: string
+  /** Additional fields merged into the FinalityLog payload. */
+  payloadExtra?: Record<string, unknown>
 }
 
 /**
@@ -155,11 +171,15 @@ export interface CancelRequest {
  *
  * The order is important: we transition state FIRST so a parallel decision
  * path cannot win the CAS. Only after the row is owned do we release H,
- * which prevents the bug where an LOCKED reservation gets released even
+ * which prevents the bug where a LOCKED reservation gets released even
  * though the decision path won.
  *
- * Returns true when a cancel was applied; false when the row was already
- * past the cancel window (idempotent no-op).
+ * With `sideUpdates`, additional CAS statements (e.g. HtlcContracts state
+ * change) run inside the same batch so they commit-or-rollback atomically
+ * with the canonical Transactions update.
+ *
+ * Returns true when the canonical cancel took effect; false when the row
+ * was already past the cancel window (idempotent no-op).
  */
 export async function cancelInFlightTx(
   db: D1Database,
@@ -176,13 +196,23 @@ export async function cancelInFlightTx(
     .bind(req.txid).first<{ state: string }>()
   if (!txRow) return false
 
-  const updated = await db.prepare(
+  const canonical = db.prepare(
     `UPDATE Transactions
         SET state = 'DECIDED_CANCEL', reason_code = ?, updated_at = ?, version = version + 1
       WHERE txid = ? AND state IN (${placeholders})`
-  ).bind(req.reasonCode, now, req.txid, ...fromStates).run()
+  ).bind(req.reasonCode, now, req.txid, ...fromStates)
 
-  if ((updated.meta.changes ?? 0) === 0) return false
+  let canonicalChanges: number
+  if (req.sideUpdates && req.sideUpdates.length > 0) {
+    const stmts = [canonical, ...req.sideUpdates.map(u => db.prepare(u.sql).bind(...u.binds))]
+    const results = await db.batch(stmts)
+    canonicalChanges = results[0]?.meta.changes ?? 0
+  } else {
+    const r = await canonical.run()
+    canonicalChanges = r.meta.changes ?? 0
+  }
+
+  if (canonicalChanges === 0) return false
 
   if (!req.skipReleaseH) {
     const txForH = await db
@@ -193,12 +223,13 @@ export async function cancelInFlightTx(
     }
   }
 
+  const payload: Record<string, unknown> = { reason_code: req.reasonCode, ...(req.payloadExtra ?? {}) }
   await writeFinalityLog(db, {
     txid: req.txid,
-    event_type: 'DecidedCancel',
+    event_type: req.eventType ?? 'DecidedCancel',
     state_from: txRow.state,
     state_to: 'DECIDED_CANCEL',
-    payload_json: JSON.stringify({ reason_code: req.reasonCode }),
+    payload_json: JSON.stringify(payload),
     txid_or_gtid: req.txid,
   })
 

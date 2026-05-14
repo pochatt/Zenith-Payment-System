@@ -38,10 +38,14 @@ export interface FinalityLogEntry {
  * On each retry the chain tip and seq are re-read so the new entry correctly
  * extends the chain that the earlier winner just committed.
  */
+/** Prefixes recognized as non-TX chain identifiers stored in FinalityLog.gtid. */
+const CHAIN_ID_PREFIXES = ['GT-', 'GTID-', 'DNS-']
+
 export async function writeFinalityLog(db: D1Database, entry: FinalityLogEntry): Promise<void> {
   const MAX_RETRIES = 5
-  const gtid = (entry.txid_or_gtid?.startsWith('GT-') || entry.txid_or_gtid?.startsWith('GTID-'))
-    ? entry.txid_or_gtid : null
+  const txidOrGtid = entry.txid_or_gtid
+  const gtid = txidOrGtid && CHAIN_ID_PREFIXES.some(p => txidOrGtid.startsWith(p))
+    ? txidOrGtid : null
   const chainId = chainIdOf({ txid: entry.txid, gtid })
   const occurredAt = nowISO()
 

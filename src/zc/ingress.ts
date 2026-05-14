@@ -76,16 +76,16 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
 
   // 金額上限チェック / RECEIVE_ONLY 参加形態チェック
   // マイグレーション未適用による 'no such column' エラー時は詳細をログ出力してフォールバック
-  let participant: { tx_amount_limit?: number | null; daily_amount_limit?: number | null; daily_amount_used?: number; daily_amount_last_reset_date?: string | null; participation_mode?: string | null } | null = null
+  let participant: { tx_amount_limit?: number | null; daily_amount_limit?: number | null; daily_amount_used?: number; daily_amount_last_reset_date?: string | null; participation_mode?: string | null; hv_threshold?: number | null } | null = null
   try {
     participant = await db.prepare(
-      `SELECT tx_amount_limit, daily_amount_limit, daily_amount_used, daily_amount_last_reset_date, participation_mode FROM Participants WHERE bank_id = ?`,
-    ).bind(body.payer.bank_id).first<{ tx_amount_limit: number | null; daily_amount_limit: number | null; daily_amount_used: number; daily_amount_last_reset_date: string | null; participation_mode: string | null }>()
+      `SELECT tx_amount_limit, daily_amount_limit, daily_amount_used, daily_amount_last_reset_date, participation_mode, hv_threshold FROM Participants WHERE bank_id = ?`,
+    ).bind(body.payer.bank_id).first<{ tx_amount_limit: number | null; daily_amount_limit: number | null; daily_amount_used: number; daily_amount_last_reset_date: string | null; participation_mode: string | null; hv_threshold: number | null }>()
   } catch (e: any) {
     if (e.message && e.message.includes('no such column')) {
       // マイグレーション未適用時: limits は適用されず、RECEIVE_ONLY チェックも実施されない
       console.error(`[ingress] Schema incomplete: missing columns in Participants table. Migration 0010+ may not have been applied. Error: ${e.message}`);
-      participant = { tx_amount_limit: null, daily_amount_limit: null, daily_amount_used: 0, participation_mode: null };
+      participant = { tx_amount_limit: null, daily_amount_limit: null, daily_amount_used: 0, participation_mode: null, hv_threshold: null };
     } else {
       throw e;
     }
@@ -147,6 +147,17 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       await completeIdempotency(idempKey, { result: 'REJECTED', reason_code: 'DAILY_LIMIT_EXCEEDED' }, db)
       return jsonError(422, 'DAILY_LIMIT_EXCEEDED', 'daily transfer limit exceeded for this participant')
     }
+  }
+
+  // HIGH_VALUE 自動エスカレーション
+  // STANDARD または EXPRESS で金額が閾値以上の場合、HIGH_VALUE レーンに自動切替する。
+  // 閾値の優先順位: 参加行設定(hv_threshold) > 環境変数(ZC_HV_THRESHOLD) > デフォルト(1億円)
+  const DEFAULT_HV_THRESHOLD = 100_000_000
+  const hvThreshold = participant?.hv_threshold
+    ?? (env.ZC_HV_THRESHOLD ? parseInt(env.ZC_HV_THRESHOLD, 10) : null)
+    ?? DEFAULT_HV_THRESHOLD
+  if ((body.lane === 'STANDARD' || body.lane === 'EXPRESS') && body.amount.value >= hvThreshold) {
+    body.lane = 'HIGH_VALUE'
   }
 
   // Transactions レコード挿入
@@ -945,8 +956,21 @@ export async function handleGetHtlcAuthRequest(authId: string, env: Env): Promis
   return json(200, row)
 }
 
+/**
+ * Verify admin-level authorization for privileged operations.
+ * Checks ZC_ADMIN_KEY header first; falls back to ZC_HMAC_SECRET if ZC_ADMIN_KEY is unset.
+ */
+function isAdminAuthorized(req: Request, env: Env): boolean {
+  const provided = req.headers.get('X-Admin-Key') ?? req.headers.get('X-Api-Key') ?? req.headers.get('Authorization')?.replace('Bearer ', '')
+  const adminKey = env.ZC_ADMIN_KEY ?? env.ZC_HMAC_SECRET
+  return !!adminKey && provided === adminKey
+}
+
 /** POST /api/htlc/auth-whitelist  ホワイトリスト登録（管理者専用） */
 export async function handleRegisterAuthWhitelist(req: Request, env: Env): Promise<Response> {
+  if (!isAdminAuthorized(req, env)) {
+    return jsonError(403, 'FORBIDDEN', 'X-Admin-Key required for whitelist registration')
+  }
   const body = await parseBody<HtlcAuthWhitelistRegisterRequest>(req)
   if (!body?.payee_bank_id || !body.payee_account_hash) {
     return jsonError(400, 'MISSING_FIELDS', 'payee_bank_id, payee_account_hash required')
@@ -956,7 +980,10 @@ export async function handleRegisterAuthWhitelist(req: Request, env: Env): Promi
 }
 
 /** DELETE /api/htlc/auth-whitelist/:whitelist_id  ホワイトリスト削除 */
-export async function handleRevokeAuthWhitelist(whitelistId: string, env: Env): Promise<Response> {
+export async function handleRevokeAuthWhitelist(whitelistId: string, req: Request, env: Env): Promise<Response> {
+  if (!isAdminAuthorized(req, env)) {
+    return jsonError(403, 'FORBIDDEN', 'X-Admin-Key required for whitelist revocation')
+  }
   const ok = await revokeAuthWhitelist(whitelistId, env.DB)
   if (!ok) return jsonError(404, 'NOT_FOUND', `whitelist_id ${whitelistId} not found`)
   return json(200, { result: 'REVOKED', whitelist_id: whitelistId })

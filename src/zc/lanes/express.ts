@@ -5,12 +5,14 @@
  */
 import type { Env, PaymentInitiatedRequest, TransactionRow } from '../../types'
 import { nowISO } from '../../types'
-import { reserveH, lockH, releaseH } from '../h_model'
+import { reserveH, lockH } from '../h_model'
+import type { ReserveHResult } from '../h_model'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { writeFinalityLog } from '../orchestrator'
 import { callBankAuthorityCheck, callBankNameCheck, callBankReserveFunds } from '../orchestrator'
 import { newUUID } from '../../shared/idempotency'
 import { getOrCreateDnsCycle } from '../dns'
+import { cancelInFlightTx } from './_helpers'
 
 export interface ExpressResult {
   result: 'DECISION_ACCEPTED' | 'DECISION_REJECTED'
@@ -45,7 +47,7 @@ export async function processExpress(
     request_id: `AUTH-${txid}`, txid, check_type: 'INITIAL', vault_ref: req.payer.vault_ref,
   }, env)
   if (authResult.result === 'NG') {
-    await cancelTx(txid, authResult.reason_code ?? 'AUTHORITY_CHECK_NG', db)
+    await cancelInFlightTx(db, { txid, reasonCode: authResult.reason_code ?? 'AUTHORITY_CHECK_NG' })
     return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: authResult.reason_code }
   }
 
@@ -55,16 +57,17 @@ export async function processExpress(
     request_id: `NAME-${txid}`, txid, pspr_ref: req.pspr_ref, account_hash: req.payee.account_hash ?? '',
   }, env)
   if (nameResult.result === 'MISMATCH') {
-    await cancelTx(txid, 'NAME_MISMATCH', db)
+    await cancelInFlightTx(db, { txid, reasonCode: 'NAME_MISMATCH' })
     return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: 'NAME_MISMATCH' }
   }
 
   // 4. H予約
-  const reservationId = await reserveH(req.payer.bank_id, txid, req.amount.value, db)
-  if (!reservationId) {
-    await cancelTx(txid, 'H_LIMIT_EXCEEDED', db)
-    return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: 'H_LIMIT_EXCEEDED' }
+  const hResult = await reserveH(req.payer.bank_id, txid, req.amount.value, db)
+  if (!hResult.ok) {
+    await cancelInFlightTx(db, { txid, reasonCode: hResult.reason })
+    return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: hResult.reason }
   }
+  const reservationId = hResult.reservation_id
 
   // H_RESERVED 状態に遷移
   await transitionTx(txid, 'H_RESERVED', reservationId, null, db, 'PRECHECKED')
@@ -79,7 +82,7 @@ export async function processExpress(
     request_id: `RESERVE-${txid}`, txid, amount: req.amount, account_hash: req.payer.account_hash,
   }, env)
   if (reserveResult.result === 'ERROR') {
-    await cancelTx(txid, reserveResult.reason_code ?? 'RESERVE_FAILED', db)
+    await cancelInFlightTx(db, { txid, reasonCode: reserveResult.reason_code ?? 'RESERVE_FAILED' })
     return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: reserveResult.reason_code }
   }
 
@@ -151,33 +154,3 @@ async function transitionTx(
   }
 }
 
-async function cancelTx(txid: string, reasonCode: string, db: D1Database): Promise<void> {
-  const now = nowISO()
-  // キャンセル前に現在状態を取得して FinalityLog に state_from を記録
-  const txRow = await db
-    .prepare(`SELECT state FROM Transactions WHERE txid = ?`)
-    .bind(txid).first<{ state: string }>()
-  if (!txRow) return
-  // state guard を先に評価し、遷移が成立した場合のみ H 解放する。
-  // 先に H 解放すると並行して DECIDED_TO_SETTLE へ進んだ場合に
-  // LOCKED 予約が誤って解放されるため、順序を逆にする（standard.ts cancelAndLog と同一パターン）。
-  const updated = await db.prepare(
-    `UPDATE Transactions SET state = 'DECIDED_CANCEL', reason_code = ?, updated_at = ?, version = version + 1
-     WHERE txid = ? AND state IN ('RECEIVED','PRECHECKED','PRECHECKED_SUSPENDED','H_RESERVED')`
-  ).bind(reasonCode, now, txid).run()
-  if ((updated.meta.changes ?? 0) === 0) return
-  // 状態遷移確定後にH解放（二重解放は releaseH 内の is_released=0 ガードで防護）
-  const txForH = await db
-    .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)
-    .bind(txid).first<{ h_reservation_id: string | null }>()
-  if (txForH?.h_reservation_id) {
-    await releaseH(txForH.h_reservation_id, db)
-  }
-  await writeFinalityLog(db, {
-    txid, event_type: 'DecidedCancel', state_from: txRow.state, state_to: 'DECIDED_CANCEL',
-    payload_json: JSON.stringify({ reason_code: reasonCode }), txid_or_gtid: txid,
-  })
-  // DECIDED_CANCEL → CANCELLED
-  const { finalizeCancelledTx } = await import('../orchestrator')
-  await finalizeCancelledTx(txid, db)
-}

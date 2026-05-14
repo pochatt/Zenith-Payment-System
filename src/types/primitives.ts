@@ -19,6 +19,17 @@ export interface Env {
   BANK_BASE_URL: string
   CRON_SECRET: string
   QR_SECRET: string
+  /**
+   * Separate admin key for privileged operations (whitelist registration, etc.).
+   * If unset, falls back to ZC_HMAC_SECRET for backward compatibility.
+   */
+  ZC_ADMIN_KEY?: string
+  /**
+   * System-wide HIGH_VALUE auto-routing threshold in JPY (integer string).
+   * Payments at or above this amount are automatically escalated to HIGH_VALUE lane.
+   * Default: 100000000 (¥100,000,000 = 1億円). Per-bank override via Participants.hv_threshold.
+   */
+  ZC_HV_THRESHOLD?: string
   R2_BUCKET?: R2Bucket
   FOREIGN_FPS_ENDPOINT?: string
   LIMIT_DO?: DurableObjectNamespace

@@ -36,6 +36,8 @@ export interface ParticipantRow {
   /** 1 = active participant, 0 = suspended. */
   is_active: number
   registered_at: string
+  /** Per-bank HIGH_VALUE auto-routing threshold (JPY). NULL = use system default. */
+  hv_threshold: number | null
 }
 
 /** Transactions table: Core transaction record managed by the ZC orchestrator. */
@@ -62,6 +64,12 @@ export interface TransactionRow {
   case_id: string | null
   dns_cycle_id: string | null
   expires_at: string | null
+  /**
+   * IGS/BOJ external settlement status for HIGH_VALUE lane.
+   * NONE = not an HV tx; REQUESTED = IGS sent; SETTLED = BOJ confirmed;
+   * FAILED = IGS failed (recoverable); HOLD = BOJ hold (awaiting retry).
+   */
+  external_settlement_status: string
   /** Optimistic lock counter — incremented on every state transition. */
   version: number
   created_at: string
