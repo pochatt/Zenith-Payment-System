@@ -20,10 +20,36 @@ import { newUUID } from '../shared/idempotency'
 // H予約取得（楽観的ロック）
 // ---------------------------------------------------------------------------
 
-/** Discriminated result returned by reserveH. */
+/**
+ * Discriminated result returned by reserveH. Every variant carries enough
+ * context to explain WHY the call returned that way without a second query:
+ *
+ *   - ok=true: reservation_id, bank_id, amount taken, h_used_after, h_limit.
+ *   - BANK_NOT_FOUND: bank_id of the missed lookup.
+ *   - BANK_INACTIVE: bank_id of the suspended participant.
+ *   - H_LIMIT_EXCEEDED: bank_id, requested, h_used (current), h_limit, and
+ *     available (= h_limit - h_used) so callers can render a precise error.
+ */
 export type ReserveHResult =
-  | { ok: true; reservation_id: string }
-  | { ok: false; reason: 'BANK_NOT_FOUND' | 'H_LIMIT_EXCEEDED' }
+  | {
+      ok: true
+      reservation_id: string
+      bank_id: string
+      amount: number
+      h_used_after: number
+      h_limit: number
+    }
+  | { ok: false; reason: 'BANK_NOT_FOUND'; bank_id: string }
+  | { ok: false; reason: 'BANK_INACTIVE'; bank_id: string }
+  | {
+      ok: false
+      reason: 'H_LIMIT_EXCEEDED'
+      bank_id: string
+      requested: number
+      h_used: number
+      h_limit: number
+      available: number
+    }
 
 /**
  * Acquire an H-limit reservation for an outbound transfer.
@@ -33,8 +59,7 @@ export type ReserveHResult =
  * @param txid   - Transaction ID to associate with the reservation
  * @param amount - Reservation amount in minor units (JPY)
  * @param db     - D1 database handle
- * @returns ReserveHResult — ok=true with reservation_id, or ok=false with
- *          reason 'BANK_NOT_FOUND' (inactive/unknown bank) or 'H_LIMIT_EXCEEDED'.
+ * @returns ReserveHResult — see type definition for the full diagnostic set.
  */
 export async function reserveH(
   bankId: string,
@@ -56,12 +81,23 @@ export async function reserveH(
     .run()
 
   if ((upd.meta.changes ?? 0) === 0) {
-    // changes=0 は参加行なし or h_limit 超過。どちらかを区別して返す。
+    // changes=0 は (a) 参加行なし、(b) 非アクティブ、(c) h_limit 超過 のいずれか。
+    // 1 クエリで is_active と h_limit/h_used を取得して具体的な理由を返す。
     const bankRow = await db
-      .prepare(`SELECT 1 FROM Participants WHERE bank_id = ? AND is_active = 1`)
+      .prepare(`SELECT is_active, h_limit, h_used FROM Participants WHERE bank_id = ?`)
       .bind(bankId)
-      .first()
-    return { ok: false, reason: bankRow ? 'H_LIMIT_EXCEEDED' : 'BANK_NOT_FOUND' }
+      .first<{ is_active: number; h_limit: number; h_used: number }>()
+    if (!bankRow) return { ok: false, reason: 'BANK_NOT_FOUND', bank_id: bankId }
+    if (bankRow.is_active === 0) return { ok: false, reason: 'BANK_INACTIVE', bank_id: bankId }
+    return {
+      ok: false,
+      reason: 'H_LIMIT_EXCEEDED',
+      bank_id: bankId,
+      requested: amount,
+      h_used: bankRow.h_used,
+      h_limit: bankRow.h_limit,
+      available: bankRow.h_limit - bankRow.h_used,
+    }
   }
 
   // Step 2: h_used 増加成功後に HReservations を作成
@@ -74,7 +110,20 @@ export async function reserveH(
     .bind(reservationId, txid, bankId, amount, now)
     .run()
 
-  return { ok: true, reservation_id: reservationId }
+  // 成功時のスナップショット（h_used_after, h_limit）を 1 クエリで取得
+  const after = await db
+    .prepare(`SELECT h_used, h_limit FROM Participants WHERE bank_id = ?`)
+    .bind(bankId)
+    .first<{ h_used: number; h_limit: number }>()
+
+  return {
+    ok: true,
+    reservation_id: reservationId,
+    bank_id: bankId,
+    amount,
+    h_used_after: after?.h_used ?? 0,
+    h_limit: after?.h_limit ?? 0,
+  }
 }
 
 /**

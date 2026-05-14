@@ -8,6 +8,7 @@ import { nowISO } from '../../types'
 import { reserveH, lockH, releaseH } from '../h_model'
 import type { ReserveHResult } from '../h_model'
 import { writeFinalityLog, callBankAuthorityCheck, callBankExecuteDebit, callBankReleaseReserve, onPayerExecConfirmed, suspendTx, finalizeCancelledTx } from '../orchestrator'
+import { cancelInFlightTx } from './_helpers'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { sha256hex } from '../../shared/hmac'
 import { newUUID } from '../../shared/idempotency'
@@ -253,60 +254,61 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
   }
 }
 
+/**
+ * Cancel an HTLC contract and its linked transaction.
+ *
+ * Delegates to `cancelInFlightTx` so the dual-table CAS (HtlcContracts +
+ * Transactions) and H release order are governed by the same helper as the
+ * other lanes — preventing drift like the historical "release H even though
+ * HtlcContracts moved but Transactions did not" leak.
+ *
+ * The canonical state is on Transactions; HtlcContracts is treated as a
+ * side-table update inside the same D1 batch. If env is provided we also
+ * delegate the bank-side suspense release after H is freed.
+ */
 export async function cancelHtlc(
   htlcId: string, txid: string, reasonCode: string, db: D1Database, env?: Env,
 ): Promise<void> {
   const now = nowISO()
-
-  // h_reservation_id を事前に取得（H解放に使用するが、解放はstate guard成功後）
   const txForH = await db
     .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)
     .bind(txid).first<{ h_reservation_id: string | null }>()
 
-  // state guard: DECIDED_TO_SETTLE以降の状態を上書きしないようガードする
-  // Bug #1 fix: H解放はステートガード付きUPDATE成功後に実行（TOCTOU防止）
-  // changes=0 は DECIDED_TO_SETTLE 等に既に遷移済みであることを示す → H解放もスキップ
-  const batchResults = await db.batch([
-    db.prepare(`UPDATE HtlcContracts SET state='DECIDED_CANCEL', version=version+1, updated_at=? WHERE htlc_id=? AND state NOT IN ('DECIDED_TO_SETTLE','SETTLED')`).bind(now, htlcId),
-    db.prepare(`UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state NOT IN ('DECIDED_TO_SETTLE','PAYER_EXEC_CONFIRMED','PAYEE_EXEC_CONFIRMED','SETTLED')`).bind(reasonCode, now, txid),
-  ])
+  const cancelled = await cancelInFlightTx(db, {
+    txid,
+    reasonCode,
+    fromStates: ['RECEIVED', 'HTLC_RECEIVED', 'HTLC_LOCKED', 'HTLC_FULFILL_REQUESTED'],
+    eventType: 'HtlcCancelled',
+    payloadExtra: { htlc_id: htlcId },
+    sideUpdates: [{
+      sql: `UPDATE HtlcContracts SET state='DECIDED_CANCEL', version=version+1, updated_at=?
+            WHERE htlc_id=? AND state NOT IN ('DECIDED_TO_SETTLE','SETTLED')`,
+      binds: [now, htlcId],
+    }],
+  })
 
-  // Transactions UPDATE 成功時のみ H 解放（Bug C fix: Transactions が DECIDED_TO_SETTLE
-  // 以降に遷移済みであれば HtlcContracts だけ更新されても H は維持すべき）
-  const txUpdated = (batchResults[1]?.meta.changes ?? 0) > 0
-  if (txUpdated && txForH?.h_reservation_id) {
-    await releaseH(txForH.h_reservation_id, db)
-    // HTLC_LOCKED 時点で reserve-funds が実行済みのため、銀行側の別段預金も解放する。
-    // ZC が一方的に解放するのではなく、銀行に通知して銀行自身が解放する（基本思想遵守）。
-    if (env) {
-      const htlcRow = await db
-        .prepare(`SELECT payer_bank_id FROM HtlcContracts WHERE htlc_id = ?`)
-        .bind(htlcId).first<{ payer_bank_id: string }>()
-      if (htlcRow) {
-        const suspense = await db
-          .prepare(`SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' AND direction='PAY' LIMIT 1`)
-          .bind(txid, htlcRow.payer_bank_id).first<{ suspense_id: string }>()
-        await callBankReleaseReserve(htlcRow.payer_bank_id, {
-          request_id: `HTLC-CANCEL-${htlcId}`,
-          txid,
-          reservation_ref: suspense?.suspense_id ?? txForH.h_reservation_id ?? '',
-        } as ReleaseReserveRequest, env).catch(e =>
-          console.error(`[cancelHtlc] bank release-reserve failed for ${htlcId}:`, e)
-        )
-      }
-    }
-  }
-
-  if (!txUpdated) {
-    // Transactions が既に DECIDED_TO_SETTLE 等に遷移済みのため、キャンセルも H 解放も不要
+  if (!cancelled) {
     console.warn(`[cancelHtlc] state guard prevented cancel for htlc_id=${htlcId} (already settled or decided)`)
     return
   }
 
-  await writeFinalityLog(db, {
-    txid, event_type: 'HtlcCancelled', state_from: null, state_to: 'DECIDED_CANCEL',
-    payload_json: JSON.stringify({ htlc_id: htlcId, reason_code: reasonCode }), txid_or_gtid: txid,
-  })
-  // DECIDED_CANCEL → CANCELLED
-  await finalizeCancelledTx(txid, db)
+  // HTLC_LOCKED 時点で reserve-funds 済みのため、銀行側の別段預金も解放する。
+  // ZC が一方的に解放するのではなく、銀行に通知して銀行自身が解放する（基本思想遵守）。
+  if (env) {
+    const htlcRow = await db
+      .prepare(`SELECT payer_bank_id FROM HtlcContracts WHERE htlc_id = ?`)
+      .bind(htlcId).first<{ payer_bank_id: string }>()
+    if (htlcRow) {
+      const suspense = await db
+        .prepare(`SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' AND direction='PAY' LIMIT 1`)
+        .bind(txid, htlcRow.payer_bank_id).first<{ suspense_id: string }>()
+      await callBankReleaseReserve(htlcRow.payer_bank_id, {
+        request_id: `HTLC-CANCEL-${htlcId}`,
+        txid,
+        reservation_ref: suspense?.suspense_id ?? txForH?.h_reservation_id ?? '',
+      } as ReleaseReserveRequest, env).catch(e =>
+        console.error(`[cancelHtlc] bank release-reserve failed for ${htlcId}:`, e)
+      )
+    }
+  }
 }

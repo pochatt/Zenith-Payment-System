@@ -5,12 +5,13 @@
  */
 import type { Env, PaymentInitiatedRequest } from '../../types'
 import { nowISO } from '../../types'
-import { reserveH, lockH, releaseH } from '../h_model'
+import { reserveH, lockH } from '../h_model'
 import type { ReserveHResult } from '../h_model'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
-import { writeFinalityLog, callBankAuthorityCheck, callBankNameCheck, callBankReserveFunds, callBankReleaseReserve, finalizeCancelledTx } from '../orchestrator'
+import { writeFinalityLog, callBankAuthorityCheck, callBankNameCheck, callBankReserveFunds, callBankReleaseReserve } from '../orchestrator'
 import { newUUID } from '../../shared/idempotency'
 import { getOrCreateDnsCycle } from '../dns'
+import { cancelInFlightTx } from './_helpers'
 
 export interface StandardIngressResult {
   result: 'INGRESS_ACCEPTED'
@@ -59,7 +60,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     request_id: `AUTH-${txid}`, txid, check_type: 'INITIAL',
   }, env)
   if (authResult.result === 'NG') {
-    await cancelAndLog(db, txid, 'PRECHECKED', authResult.reason_code ?? 'AUTHORITY_CHECK_NG')
+    await cancelInFlightTx(db, { txid, reasonCode: authResult.reason_code ?? 'AUTHORITY_CHECK_NG', fromStates: ['PRECHECKED'] })
     return
   }
 
@@ -83,7 +84,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
   // 4. H予約
   const hResult = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
   if (!hResult.ok) {
-    await cancelAndLog(db, txid, 'PRECHECKED', hResult.reason)
+    await cancelInFlightTx(db, { txid, reasonCode: hResult.reason, fromStates: ['PRECHECKED'] })
     return
   }
   const reservationId = hResult.reservation_id
@@ -103,7 +104,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     account_hash: tx.payer_account_hash,
   }, env)
   if (reserveResult.result === 'ERROR') {
-    await cancelAndLog(db, txid, 'H_RESERVED', reserveResult.reason_code ?? 'RESERVE_FAILED')
+    await cancelInFlightTx(db, { txid, reasonCode: reserveResult.reason_code ?? 'RESERVE_FAILED', fromStates: ['H_RESERVED'] })
     return
   }
 
@@ -135,7 +136,7 @@ export async function authorizeStandard(
   if (!tx || tx.state !== 'H_RESERVED') return { ok: false, state: tx?.state ?? 'NOT_FOUND' }
 
   if (!authorized) {
-    await cancelAndLog(db, txid, 'H_RESERVED', 'CANCEL_BY_PAYER')
+    await cancelInFlightTx(db, { txid, reasonCode: 'CANCEL_BY_PAYER', fromStates: ['H_RESERVED'] })
     // H_RESERVED キャンセル時は reserve-funds 成功済みのため銀行の別段預金を解放する
     // cancelAndLog は H 予約を解放するが銀行側 SuspenseDetails は RESERVED のまま残る
     const suspense = await db
@@ -209,7 +210,7 @@ export async function resumeFromNameCheckSuspended(
   // H予約
   const hResult = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
   if (!hResult.ok) {
-    await cancelAndLog(db, txid, 'PRECHECKED', hResult.reason)
+    await cancelInFlightTx(db, { txid, reasonCode: hResult.reason, fromStates: ['PRECHECKED'] })
     return { ok: true, state: 'DECIDED_CANCEL' }
   }
   const reservationId = hResult.reservation_id
@@ -228,33 +229,9 @@ export async function resumeFromNameCheckSuspended(
     account_hash: tx.payer_account_hash,
   }, env)
   if (reserveResult.result === 'ERROR') {
-    await cancelAndLog(db, txid, 'H_RESERVED', reserveResult.reason_code ?? 'RESERVE_FAILED')
+    await cancelInFlightTx(db, { txid, reasonCode: reserveResult.reason_code ?? 'RESERVE_FAILED', fromStates: ['H_RESERVED'] })
     return { ok: true, state: 'DECIDED_CANCEL' }
   }
 
   return { ok: true, state: 'H_RESERVED' }
-}
-
-async function cancelAndLog(db: D1Database, txid: string, fromState: string, reasonCode: string): Promise<void> {
-  const now = nowISO()
-  // state guard を先に評価し、遷移が成立した場合のみ H 解放する。
-  // 先に H 解放すると並行して DECIDED_TO_SETTLE へ進んだ場合に
-  // LOCKED 予約が誤って解放されるため、順序を逆にする。
-  const updated = await db.prepare(
-    `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state=?`
-  ).bind(reasonCode, now, txid, fromState).run()
-  if ((updated.meta.changes ?? 0) === 0) return
-  // 状態遷移確定後にH解放（二重解放は releaseH 内の is_released=0 ガードで防護）
-  const txForH = await db
-    .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)
-    .bind(txid).first<{ h_reservation_id: string | null }>()
-  if (txForH?.h_reservation_id) {
-    await releaseH(txForH.h_reservation_id, db)
-  }
-  await writeFinalityLog(db, {
-    txid, event_type: 'DecidedCancel', state_from: fromState, state_to: 'DECIDED_CANCEL',
-    payload_json: JSON.stringify({ reason_code: reasonCode }), txid_or_gtid: txid,
-  })
-  // DECIDED_CANCEL → CANCELLED
-  await finalizeCancelledTx(txid, db)
 }
