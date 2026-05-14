@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createTestDb, type MockD1Database } from '../helpers/d1-mock'
 import { requestReversal, APPROVAL_REQUIRED_REASONS } from '../../src/zc/reversal'
+import { advanceStandard } from '../../src/zc/lanes/standard'
 import type { Env } from '../../src/types'
 
 let d1: MockD1Database
@@ -288,5 +289,75 @@ describe('requestReversal — approval policy (B4)', () => {
     expect(APPROVAL_REQUIRED_REASONS).toContain('FRAUD')
     expect(APPROVAL_REQUIRED_REASONS).not.toContain('DUPLICATE_PAYMENT')
     expect(APPROVAL_REQUIRED_REASONS).not.toContain('OPERATIONAL_ERROR')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// B4 regression: Reversal TX auto-authorizes (purpose=REFUND)
+// ---------------------------------------------------------------------------
+
+describe('requestReversal — reversal TX auto-authorizes via advanceStandard (B4 regression)', () => {
+  function seedParticipant(bankId: string, hLimit = 5_000_000) {
+    d1.prepare(
+      `INSERT OR REPLACE INTO Participants
+       (bank_id, bank_name, ingress_base_url, h_limit, h_used, is_active, registered_at)
+       VALUES (?, 'Test Bank', '/bank/${bankId}', ?, 0, 1, '2025-01-01T00:00:00Z')`,
+    ).bind(bankId, hLimit)._runSync()
+  }
+
+  function seedAccount(bankId: string, accountId: string, balance = 0) {
+    d1.prepare(
+      `INSERT OR IGNORE INTO BankAccounts
+       (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
+       VALUES (?, ?, 'CUST', 'Test User', 'SAVINGS', 'NORMAL', '2025-01-01T00:00:00Z')`,
+    ).bind(accountId, bankId)._runSync()
+    if (balance > 0) {
+      d1.prepare(
+        `INSERT INTO BankJournals
+         (journal_id, bank_id, account_id, amount, tx_type, tx_group_id, value_date, created_at)
+         VALUES (?, ?, ?, ?, 'CASH', 'INIT', '2025-01-01', '2025-01-01T00:00:00Z')`,
+      ).bind(`JNL-${accountId}`, bankId, accountId, balance)._runSync()
+    }
+  }
+
+  it('reversal TX reaches DECIDED_TO_SETTLE automatically without a manual /authorize call', async () => {
+    // Original TX: payer=001/0010000001, payee=002/0020000001
+    // Reversal TX: payer=002/0020000001, payee=001/0010000001
+    seedParticipant('001')
+    seedParticipant('002')
+    // Payer in reversal is bank 002 account 0020000001 — needs balance
+    seedAccount('001', '0010000001')          // payee in reversal (name-check target)
+    seedAccount('002', '0020000001', 2_000_000) // payer in reversal (needs balance for reserve-funds)
+    seedAccount('001', '001-ZCS')
+    seedAccount('002', '002-ZCS')
+    seedAccount('001', '0010000000')           // suspense for bank 001
+    seedAccount('002', '0020000000')           // suspense for bank 002
+
+    seedSettledTx('TX-REV-B4-ORIG', 100_000)
+
+    const env = makeEnv()
+    const result = await requestReversal(
+      {
+        original_txid: 'TX-REV-B4-ORIG',
+        reason: 'DUPLICATE_PAYMENT',
+        requested_by: '001',
+        idempotency_key: 'ik-rev-b4-001',
+      },
+      env,
+    )
+    expect(result.result).toBe('REVERSAL_CREATED')
+    const reversalTxid = result.reversal_txid!
+    expect(reversalTxid).toMatch(/^TX-REV-/)
+
+    // Simulate queue consumer processing ADVANCE_STANDARD for the reversal TX
+    await advanceStandard(reversalTxid, env)
+
+    const tx = await d1.prepare(`SELECT state, purpose FROM Transactions WHERE txid=?`)
+      .bind(reversalTxid)
+      .first<{ state: string; purpose: string | null }>()
+
+    expect(tx?.purpose).toBe('REFUND')
+    // Must have moved past H_RESERVED automatically — no manual /authorize needed
+    expect(tx?.state).toBe('DECIDED_TO_SETTLE')
   })
 })

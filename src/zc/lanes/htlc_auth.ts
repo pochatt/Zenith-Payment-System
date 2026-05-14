@@ -214,7 +214,7 @@ export async function approveAuthRequest(
   const vaultExpiresAt = new Date(Date.parse(authReq.capture_expires_at) + 60 * 60 * 1000).toISOString()
   await db.prepare(
     `INSERT INTO Vault (vault_ref, txid, data_type, payload_json, expires_at, is_evicted, created_at)
-     VALUES (?, NULL, 'AML_EVAL', ?, ?, 0, ?)`
+     VALUES (?, NULL, 'HTLC_PREIMAGE', ?, ?, 0, ?)`
   ).bind(vaultRef, JSON.stringify({ preimage, auth_id: authId }), vaultExpiresAt, now).run()
 
   // 送金側銀行に資金予約

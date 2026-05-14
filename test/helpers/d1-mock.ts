@@ -133,6 +133,7 @@ const SCHEMA_MIGRATIONS = [
   '0016_performance_indexes.sql',
   '0017_circuit_breaker_metrics.sql',
   '0018_bug_fixes.sql',
+  '0019_gtid_chain_fix.sql',
 ]
 
 /**

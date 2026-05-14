@@ -242,3 +242,50 @@ describe('cancelHtlc — TOCTOU regression (Bug #1)', () => {
     expect(log).not.toBeNull()
   })
 })
+
+// ---------------------------------------------------------------------------
+// cancelHtlc — bank SuspenseDetails released via actual suspense_id (B6 regression)
+// ---------------------------------------------------------------------------
+
+describe('cancelHtlc — bank suspense released with correct suspense_id (B6)', () => {
+  it('sets SuspenseDetails status to RETURNED when cancelling an HTLC_LOCKED contract', async () => {
+    const htlcId = 'HTLC-SUSP-B6-001'
+    insertHtlcReceived(d1, htlcId, 100_000)
+    const env = makeEnv(d1)
+
+    // Lock: creates H reservation + bank SuspenseDetails (status=RESERVED)
+    await lockHtlc(htlcId, env)
+
+    const txid = `TX-HTLC-${htlcId}`
+    const suspenseBefore = await d1.prepare(
+      `SELECT status FROM SuspenseDetails WHERE txid=? AND bank_id=? AND direction='PAY'`,
+    ).bind(txid, PAYER_BANK).first<{ status: string }>()
+    expect(suspenseBefore?.status).toBe('RESERVED')
+
+    // Cancel with env so bank release-reserve is called
+    await cancelHtlc(htlcId, txid, 'TIMELOCK_EXPIRED', d1 as any, env)
+
+    // Bank suspense must be RETURNED, not left as RESERVED
+    const suspenseAfter = await d1.prepare(
+      `SELECT status FROM SuspenseDetails WHERE txid=? AND bank_id=? AND direction='PAY'`,
+    ).bind(txid, PAYER_BANK).first<{ status: string }>()
+    expect(suspenseAfter?.status).toBe('RETURNED')
+  })
+
+  it('H reservation is also released when cancelling HTLC_LOCKED', async () => {
+    const htlcId = 'HTLC-SUSP-B6-002'
+    insertHtlcReceived(d1, htlcId, 150_000)
+    const env = makeEnv(d1)
+
+    await lockHtlc(htlcId, env)
+    const txid = `TX-HTLC-${htlcId}`
+
+    const hBefore = await getHStatus(PAYER_BANK, d1 as any)
+    expect(hBefore?.h_used).toBe(150_000)
+
+    await cancelHtlc(htlcId, txid, 'TIMELOCK_EXPIRED', d1 as any, env)
+
+    const hAfter = await getHStatus(PAYER_BANK, d1 as any)
+    expect(hAfter?.h_used).toBe(0)
+  })
+})
