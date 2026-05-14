@@ -37,7 +37,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
   const tx = await db
     .prepare(`SELECT * FROM Transactions WHERE txid = ?`)
     .bind(txid)
-    .first<{ state: string; payer_bank_id: string; payee_bank_id: string; amount_value: number; pspr_ref: string | null; payer_account_hash: string; payee_account_hash: string | null; version: number; expires_at: string | null }>()
+    .first<{ state: string; payer_bank_id: string; payee_bank_id: string; amount_value: number; pspr_ref: string | null; payer_account_hash: string; payee_account_hash: string | null; version: number; expires_at: string | null; purpose: string | null }>()
   if (!tx) return
 
   if (tx.state !== 'RECEIVED') return  // 既に進んでいる
@@ -106,9 +106,13 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
   }
 
   // 6. 支払人最終認可待ち（Standard固有）
-  // 送金行（または顧客）が POST /api/transfers/:txid/authorize を呼び出すまで
-  // H_RESERVED 状態で待機する。
+  // REFUND purpose（Reversal TX）は OPS 起点で自然な承認者が存在しないため自動認可する。
+  // その他の取引は送金行（または顧客）が POST /api/transfers/:txid/authorize を
+  // 呼び出すまで H_RESERVED 状態で待機する。
   // 基本思想: ZC は決定主体ではなく状態の中継者。送金の最終認可は送金行に委ねる。
+  if (tx.purpose === 'REFUND') {
+    await authorizeStandard(txid, true, env)
+  }
 }
 
 /**

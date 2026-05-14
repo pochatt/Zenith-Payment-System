@@ -232,3 +232,63 @@ describe('explainTransaction', () => {
     expect(result!.integrity.break_reason).toBe('ENTRY_HASH_MISMATCH')
   })
 })
+
+// ---------------------------------------------------------------------------
+// B9: GTID chain UNIQUE index (0019_gtid_chain_fix.sql regression)
+// ---------------------------------------------------------------------------
+
+describe('FinalityLog — GTID chain prev_hash UNIQUE constraint (B9)', () => {
+  it('rejects a second GTID entry with the same prev_hash as an existing entry', () => {
+    // First entry — should succeed
+    d1.prepare(
+      `INSERT INTO FinalityLog
+       (log_id, gtid, event_type, state_to, payload_json, event_seq, occurred_at, prev_hash, entry_hash)
+       VALUES ('LOG-GTID-B9-1', 'GT-B9-001', 'GtidRegistered', 'GT_RECEIVED', '{}', 9001, '2026-01-01T00:00:00Z', 'GENESIS_HASH', 'hash-a')`,
+    )._runSync()
+
+    // Second entry with same (gtid, prev_hash) — must be rejected by the UNIQUE index
+    expect(() => {
+      d1.prepare(
+        `INSERT INTO FinalityLog
+         (log_id, gtid, event_type, state_to, payload_json, event_seq, occurred_at, prev_hash, entry_hash)
+         VALUES ('LOG-GTID-B9-2', 'GT-B9-001', 'GtidDecided', 'GT_DECIDED_TO_SETTLE', '{}', 9002, '2026-01-01T00:00:00Z', 'GENESIS_HASH', 'hash-b')`,
+      )._runSync()
+    }).toThrow()
+  })
+
+  it('allows two GTID entries with different prev_hash values (normal chaining)', () => {
+    d1.prepare(
+      `INSERT INTO FinalityLog
+       (log_id, gtid, event_type, state_to, payload_json, event_seq, occurred_at, prev_hash, entry_hash)
+       VALUES ('LOG-GTID-B9-3', 'GT-B9-002', 'GtidRegistered', 'GT_RECEIVED', '{}', 9003, '2026-01-01T00:00:00Z', 'GENESIS_HASH', 'hash-c')`,
+    )._runSync()
+
+    // Second entry uses the first entry's entry_hash as its prev_hash (valid chain link)
+    expect(() => {
+      d1.prepare(
+        `INSERT INTO FinalityLog
+         (log_id, gtid, event_type, state_to, payload_json, event_seq, occurred_at, prev_hash, entry_hash)
+         VALUES ('LOG-GTID-B9-4', 'GT-B9-002', 'GtidDecided', 'GT_DECIDED_TO_SETTLE', '{}', 9004, '2026-01-01T00:00:00Z', 'hash-c', 'hash-d')`,
+      )._runSync()
+    }).not.toThrow()
+  })
+
+  it('does NOT apply the GTID constraint when txid is set (TX chain entries are separate)', () => {
+    // Entries with txid set are governed by idx_fl_chain_prev_hash, not the GTID index.
+    // Same (gtid, prev_hash) with txid present should be allowed by the GTID partial index.
+    d1.prepare(
+      `INSERT INTO FinalityLog
+       (log_id, txid, gtid, event_type, state_to, payload_json, event_seq, occurred_at, prev_hash, entry_hash)
+       VALUES ('LOG-GTID-B9-5', 'TX-GTID-001', 'GT-B9-003', 'PaymentInitiated', 'RECEIVED', '{}', 9005, '2026-01-01T00:00:00Z', 'GENESIS_HASH', 'hash-e')`,
+    )._runSync()
+
+    // Second entry with same gtid + prev_hash but txid IS NOT NULL: GTID partial index does not apply
+    expect(() => {
+      d1.prepare(
+        `INSERT INTO FinalityLog
+         (log_id, txid, gtid, event_type, state_to, payload_json, event_seq, occurred_at, prev_hash, entry_hash)
+         VALUES ('LOG-GTID-B9-6', 'TX-GTID-002', 'GT-B9-003', 'PaymentInitiated', 'RECEIVED', '{}', 9006, '2026-01-01T00:00:00Z', 'GENESIS_HASH', 'hash-f')`,
+      )._runSync()
+    }).not.toThrow()
+  })
+})

@@ -474,3 +474,56 @@ describe('checkAndFinalizeGtid — no-op for wrong GT state', () => {
     expect(gt?.state).toBe('GT_SETTLED')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Bug 1 regression: PAYER bank suspense released on GTID cancel
+// ---------------------------------------------------------------------------
+
+describe('advanceGtid — PAYER bank suspense released on cancel (B1 regression)', () => {
+  it('releases bank SuspenseDetails (RESERVED→RETURNED) for PAYER leg when H_LIMIT_EXCEEDED triggers cancel', async () => {
+    // Exhaust H limit so the H-reservation phase fails after leg-ready-checks pass.
+    // bankLegReadyCheck for PAYER creates SuspenseDetails(RESERVED) before H reservation is attempted.
+    await reserveH(BANK_A, 'TX-EXHAUST-SUSP', H_LIMIT, d1 as any)
+
+    const gtid = 'GT-B1-SUSP-001'
+    await registerGtid(makeTwoLegRequest(gtid, 100_000), makeEnv(d1))
+    await advanceGtid(gtid, makeEnv(d1))
+
+    const gt = await d1.prepare(`SELECT state FROM GtidTransactions WHERE gtid=?`)
+      .bind(gtid).first<{ state: string }>()
+    expect(gt?.state).toBe('GT_CANCELLED')
+
+    // The PAYER leg suspense that was created by bankLegReadyCheck must now be RETURNED
+    const payerLegId = `${gtid}-LEG-PAYER`
+    const predictedTxid = `TX-GT-${payerLegId}`
+    const suspense = await d1.prepare(
+      `SELECT status FROM SuspenseDetails WHERE txid=? AND bank_id=?`,
+    ).bind(predictedTxid, BANK_A).first<{ status: string }>()
+
+    expect(suspense?.status).toBe('RETURNED')
+  })
+
+  it('releases bank SuspenseDetails when all leg-ready-checks pass but PAYER account balance is insufficient for H (leg NG path)', async () => {
+    // Freeze PAYER account so bankLegReadyCheck fails (account not NORMAL).
+    // The leg will be LEG_FAILED (no bank suspense created), GT transitions to GT_CANCELLED.
+    // This verifies that we do NOT crash trying to release non-existent suspense.
+    d1.prepare(`UPDATE BankAccounts SET status='FROZEN' WHERE account_id=?`)
+      .bind(ACCOUNT_A)._runSync()
+
+    const gtid = 'GT-B1-NG-001'
+    await registerGtid(makeTwoLegRequest(gtid, 100_000), makeEnv(d1))
+    await advanceGtid(gtid, makeEnv(d1))
+
+    const gt = await d1.prepare(`SELECT state FROM GtidTransactions WHERE gtid=?`)
+      .bind(gtid).first<{ state: string }>()
+    expect(gt?.state).toBe('GT_CANCELLED')
+
+    // No suspense should exist (bankLegReadyCheck returned NG before reserving)
+    const payerLegId = `${gtid}-LEG-PAYER`
+    const predictedTxid = `TX-GT-${payerLegId}`
+    const suspense = await d1.prepare(
+      `SELECT status FROM SuspenseDetails WHERE txid=? AND bank_id=?`,
+    ).bind(predictedTxid, BANK_A).first<{ status: string }>()
+    expect(suspense).toBeNull()
+  })
+})

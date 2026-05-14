@@ -5,7 +5,7 @@
  */
 import type { Env, GtidRegisterRequest, GtidTransactionRow, GtidLegRow } from '../../types'
 import { nowISO } from '../../types'
-import { writeFinalityLog, callBankLegReadyCheck } from '../orchestrator'
+import { writeFinalityLog, callBankLegReadyCheck, callBankReleaseReserve } from '../orchestrator'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { newUUID } from '../../shared/idempotency'
 import { reserveH, lockH, releaseH } from '../h_model'
@@ -115,7 +115,7 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
       txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
       payload_json: JSON.stringify({ gtid, reason: 'LEG_READY_CHECK_NG' }), txid_or_gtid: gtid,
     })
-    await finalizeGtidCancelled(gtid, db)
+    await finalizeGtidCancelled(gtid, db, env)
     return
   }
 
@@ -160,7 +160,7 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
       txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
       payload_json: JSON.stringify({ gtid, reason: 'MISSING_LEG_ROLE' }), txid_or_gtid: gtid,
     })
-    await finalizeGtidCancelled(gtid, db)
+    await finalizeGtidCancelled(gtid, db, env)
     return
   }
 
@@ -183,7 +183,7 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
         total_payee_amount: totalPayeeAmount,
       }), txid_or_gtid: gtid,
     })
-    await finalizeGtidCancelled(gtid, db)
+    await finalizeGtidCancelled(gtid, db, env)
     return
   }
 
@@ -205,7 +205,7 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
         txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
         payload_json: JSON.stringify({ gtid, reason: 'H_LIMIT_EXCEEDED' }), txid_or_gtid: gtid,
       })
-      await finalizeGtidCancelled(gtid, db)
+      await finalizeGtidCancelled(gtid, db, env)
       return
     }
     // DECIDED_TO_SETTLE 直行なので即 LOCK
@@ -298,7 +298,32 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
 // ---------------------------------------------------------------------------
 // GTID キャンセル終端処理: GT_DECIDED_CANCEL → GT_CANCELLED
 // ---------------------------------------------------------------------------
-async function finalizeGtidCancelled(gtid: string, db: D1Database): Promise<void> {
+async function finalizeGtidCancelled(gtid: string, db: D1Database, env?: Env): Promise<void> {
+  // Release bank suspense for any PAYER legs that already reserved funds via leg-ready-check.
+  // Each successful PAYER leg-ready-check creates a SuspenseDetails row with txid=TX-GT-{leg_id}.
+  if (env) {
+    const payerLegs = await db
+      .prepare(`SELECT leg_id, bank_id FROM GtidLegs WHERE gtid = ? AND role = 'PAYER'`)
+      .bind(gtid)
+      .all<{ leg_id: string; bank_id: string }>()
+    for (const leg of payerLegs.results ?? []) {
+      const predictedTxid = `TX-GT-${leg.leg_id}`
+      const suspense = await db
+        .prepare(`SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' LIMIT 1`)
+        .bind(predictedTxid, leg.bank_id)
+        .first<{ suspense_id: string }>()
+      if (suspense) {
+        await callBankReleaseReserve(leg.bank_id, {
+          request_id: `GTID-CANCEL-${leg.leg_id}`,
+          txid: predictedTxid,
+          reservation_ref: suspense.suspense_id,
+        }, env).catch(e =>
+          console.error(`[gtid] bank release-reserve failed for leg ${leg.leg_id}:`, e)
+        )
+      }
+    }
+  }
+
   const now = nowISO()
   const updated = await db.prepare(
     `UPDATE GtidTransactions SET state='GT_CANCELLED', updated_at=?, version=version+1

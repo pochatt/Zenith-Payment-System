@@ -153,4 +153,33 @@ describe('daily limit auto-reset on date change (B8)', () => {
     // daily_amount_used should be 5000 (the amount of this first-transfer-of-the-day), not 999000+5000
     expect(row?.daily_amount_used).toBeLessThan(999000)
   })
+
+  it('rejects first-of-day request when amount itself exceeds daily limit (B2 regression)', async () => {
+    // Before fix: the reset UPDATE had no limit check, so a first-of-day request with
+    // amount > daily_amount_limit would be accepted (daily_amount_used set to the over-limit amount).
+    const DAILY_LIMIT = 50000
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+
+    d1.prepare(
+      `UPDATE Participants
+       SET daily_amount_limit = ?, daily_amount_used = 0, daily_amount_last_reset_date = ?
+       WHERE bank_id = ?`,
+    ).bind(DAILY_LIMIT, yesterday, PAYER_BANK)._runSync()
+
+    const env = makeEnv()
+    // amount (60000) > daily_amount_limit (50000)
+    const resp = await handlePostTransfers(makeRequest(validPayload('TX-B2-001', 'ik-b2-001', 60000)), env)
+    const json = await resp.clone().json<any>()
+
+    expect(resp.status).toBe(422)
+    expect(json.reason_code).toBe('DAILY_LIMIT_EXCEEDED')
+
+    // Confirm that daily_amount_used was NOT updated (the reset should not have applied)
+    const row = await d1.prepare(
+      `SELECT daily_amount_used, daily_amount_last_reset_date FROM Participants WHERE bank_id = ?`,
+    ).bind(PAYER_BANK).first<{ daily_amount_used: number; daily_amount_last_reset_date: string | null }>()
+
+    expect(row?.daily_amount_used).toBe(0)
+    expect(row?.daily_amount_last_reset_date).toBe(yesterday)
+  })
 })

@@ -279,10 +279,13 @@ export async function cancelHtlc(
         .prepare(`SELECT payer_bank_id FROM HtlcContracts WHERE htlc_id = ?`)
         .bind(htlcId).first<{ payer_bank_id: string }>()
       if (htlcRow) {
+        const suspense = await db
+          .prepare(`SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' AND direction='PAY' LIMIT 1`)
+          .bind(txid, htlcRow.payer_bank_id).first<{ suspense_id: string }>()
         await callBankReleaseReserve(htlcRow.payer_bank_id, {
           request_id: `HTLC-CANCEL-${htlcId}`,
           txid,
-          reservation_ref: txForH.h_reservation_id,
+          reservation_ref: suspense?.suspense_id ?? txForH.h_reservation_id ?? '',
         } as ReleaseReserveRequest, env).catch(e =>
           console.error(`[cancelHtlc] bank release-reserve failed for ${htlcId}:`, e)
         )

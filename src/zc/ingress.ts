@@ -114,8 +114,8 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
         const upd = await db.prepare(
           `UPDATE Participants
            SET daily_amount_used = ?, daily_amount_last_reset_date = ?
-           WHERE bank_id = ? AND daily_amount_last_reset_date IS NOT ?`,
-        ).bind(body.amount.value, today, body.payer.bank_id, today).run()
+           WHERE bank_id = ? AND daily_amount_last_reset_date IS NOT ? AND ? <= daily_amount_limit`,
+        ).bind(body.amount.value, today, body.payer.bank_id, today, body.amount.value).run()
         success = upd.meta.changes > 0
         if (!success) {
           // Another isolate already reset and incremented — fall through to normal increment.
