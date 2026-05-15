@@ -1,18 +1,20 @@
 /**
  * @file EXPRESS lane processing. Synchronous end-to-end settlement within a
  *       single request: PreCheck -> H-Reserve -> Decision -> Debit -> Credit -> Settle.
+ *
+ * Migrated to use `transitionWithLog` / `cancelInFlightTx` so every state
+ * advance is validated against `ALLOWED_TRANSITIONS` and batched atomically
+ * with its FinalityLog entry.
+ *
  * @module zc/lanes/express
  */
-import type { Env, PaymentInitiatedRequest, TransactionRow } from '../../types'
+import type { Env, PaymentInitiatedRequest } from '../../types'
 import { nowISO } from '../../types'
 import { reserveH, lockH } from '../h_model'
-import type { ReserveHResult } from '../h_model'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
-import { writeFinalityLog } from '../orchestrator'
 import { callBankAuthorityCheck, callBankNameCheck, callBankReserveFunds } from '../orchestrator'
-import { newUUID } from '../../shared/idempotency'
 import { getOrCreateDnsCycle } from '../dns'
-import { cancelInFlightTx } from './_helpers'
+import { transitionWithLog, cancelInFlightTx } from './_helpers'
 
 export interface ExpressResult {
   result: 'DECISION_ACCEPTED' | 'DECISION_REJECTED'
@@ -34,12 +36,17 @@ export async function processExpress(
   const txid = req.txid
   const now = nowISO()
 
-  // 1. PRECHECKED
-  await transitionTx(txid, 'PRECHECKED', null, null, db, 'RECEIVED')
-  await writeFinalityLog(db, {
-    txid, event_type: 'PreCheckPassed', state_from: 'RECEIVED', state_to: 'PRECHECKED',
-    payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
+  // 1. PRECHECKED — validated via transitionWithLog (ALLOWED_TRANSITIONS check + atomic log).
+  const prechecked = await transitionWithLog(db, {
+    txid,
+    fromState: 'RECEIVED',
+    toState: 'PRECHECKED',
+    eventType: 'PreCheckPassed',
+    payload: { txid },
   })
+  if (!prechecked.applied) {
+    return { result: 'DECISION_REJECTED', txid, state: prechecked.previousState ?? 'NOT_FOUND', reason_code: 'INVALID_STATE' }
+  }
 
   // 2. AML/Authority Check（payerBank）
   // 決定論的 request_id（同一 txid なら同一 request_id を生成）
@@ -52,7 +59,6 @@ export async function processExpress(
   }
 
   // 3. Name Check（PSPR参照または payeeAccount）
-  // 決定論的 request_id
   const nameResult = await callBankNameCheck(req.payee.bank_id, {
     request_id: `NAME-${txid}`, txid, pspr_ref: req.pspr_ref, account_hash: req.payee.account_hash ?? '',
   }, env)
@@ -70,14 +76,19 @@ export async function processExpress(
   const reservationId = hResult.reservation_id
 
   // H_RESERVED 状態に遷移
-  await transitionTx(txid, 'H_RESERVED', reservationId, null, db, 'PRECHECKED')
-  await writeFinalityLog(db, {
-    txid, event_type: 'HReserved', state_from: 'PRECHECKED', state_to: 'H_RESERVED',
-    payload_json: JSON.stringify({ reservation_id: reservationId }), txid_or_gtid: txid,
+  const reserved = await transitionWithLog(db, {
+    txid,
+    fromState: 'PRECHECKED',
+    toState: 'H_RESERVED',
+    eventType: 'HReserved',
+    payload: { reservation_id: reservationId },
+    setColumns: { h_reservation_id: reservationId },
   })
+  if (!reserved.applied) {
+    return { result: 'DECISION_REJECTED', txid, state: reserved.previousState ?? 'NOT_FOUND', reason_code: 'CAS_LOST' }
+  }
 
   // 5. Bank reserve-funds 呼び出し
-  // 決定論的 request_id
   const reserveResult = await callBankReserveFunds(req.payer.bank_id, {
     request_id: `RESERVE-${txid}`, txid, amount: req.amount, account_hash: req.payer.account_hash,
   }, env)
@@ -86,25 +97,29 @@ export async function processExpress(
     return { result: 'DECISION_REJECTED', txid, state: 'DECIDED_CANCEL', reason_code: reserveResult.reason_code }
   }
 
-  // 6. Decision確定
+  // 6. Decision 確定
   const decisionProofRef = newDecisionProofRef()
   const finalityLogRef = newFinalityLogRef()
   // DECIDED_TO_SETTLE 時に dns_cycle_id を設定（H解放のために必要）
   const dnsCycleId = await getOrCreateDnsCycle(db, now)
-  await db.prepare(
-    `UPDATE Transactions
-     SET state = 'DECIDED_TO_SETTLE', decision_proof_ref = ?, finality_log_ref = ?,
-         dns_cycle_id = ?, updated_at = ?, version = version + 1
-     WHERE txid = ? AND state = 'H_RESERVED'`
-  ).bind(decisionProofRef, finalityLogRef, dnsCycleId, now, txid).run()
+  const decided = await transitionWithLog(db, {
+    txid,
+    fromState: 'H_RESERVED',
+    toState: 'DECIDED_TO_SETTLE',
+    eventType: 'DecidedToSettle',
+    payload: { decision_proof_ref: decisionProofRef },
+    setColumns: {
+      decision_proof_ref: decisionProofRef,
+      finality_log_ref: finalityLogRef,
+      dns_cycle_id: dnsCycleId,
+    },
+  })
+  if (!decided.applied) {
+    return { result: 'DECISION_REJECTED', txid, state: decided.previousState ?? 'NOT_FOUND', reason_code: 'CAS_LOST' }
+  }
 
   // H予約を RESERVED → LOCKED に切り替え（DNS清算まで保持）
   await lockH(reservationId, db)
-
-  await writeFinalityLog(db, {
-    txid, event_type: 'DecidedToSettle', state_from: 'H_RESERVED', state_to: 'DECIDED_TO_SETTLE',
-    payload_json: JSON.stringify({ decision_proof_ref: decisionProofRef }), txid_or_gtid: txid,
-  })
 
   // 7. 非同期で Execution をキューに投入
   await env.QUEUE.send({
@@ -119,38 +134,3 @@ export async function processExpress(
 
   return { result: 'DECISION_ACCEPTED', txid, state: 'DECIDED_TO_SETTLE', decision_proof_ref: decisionProofRef }
 }
-
-// ---------------------------------------------------------------------------
-// ヘルパー（Express専用）
-// ---------------------------------------------------------------------------
-// 状態ガード＋楽観ロック（AND state=? AND version=? で許可遷移のみ実行可能に）
-// Bug #4 fix: version チェックを追加し、キュー再配信時の二重 H 予約を防止する
-async function transitionTx(
-  txid: string, state: string, reservationId: string | null, reasonCode: string | null, db: D1Database,
-  fromState?: string,
-): Promise<void> {
-  if (fromState) {
-    // version を取得して CAS UPDATE（楽観ロック）
-    const cur = await db
-      .prepare(`SELECT version FROM Transactions WHERE txid = ? AND state = ?`)
-      .bind(txid, fromState).first<{ version: number }>()
-    if (!cur) return  // 既に状態が変わっている: 冪等処理としてスキップ
-    await db.prepare(
-      `UPDATE Transactions SET state = ?, h_reservation_id = COALESCE(?, h_reservation_id),
-       reason_code = COALESCE(?, reason_code), updated_at = ?, version = version + 1
-       WHERE txid = ? AND state = ? AND version = ?`
-    ).bind(state, reservationId, reasonCode, nowISO(), txid, fromState, cur.version).run()
-  } else {
-    // fromState指定なしでも楽観ロックを適用
-    const cur = await db
-      .prepare(`SELECT version FROM Transactions WHERE txid = ?`)
-      .bind(txid).first<{ version: number }>()
-    if (!cur) return
-    await db.prepare(
-      `UPDATE Transactions SET state = ?, h_reservation_id = COALESCE(?, h_reservation_id),
-       reason_code = COALESCE(?, reason_code), updated_at = ?, version = version + 1
-       WHERE txid = ? AND version = ?`
-    ).bind(state, reservationId, reasonCode, nowISO(), txid, cur.version).run()
-  }
-}
-

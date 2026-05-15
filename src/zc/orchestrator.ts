@@ -192,19 +192,25 @@ export async function onPayeeExecConfirmed(
     console.error(`[orchestrator] debit-settled notification failed for ${txid}:`, err)
   }
 
-  if (txid.startsWith('TX-REV-')) {
+  // Reversal cascade: look up by ReversalRecords.reversal_txid instead of a
+  // txid prefix so future txid format changes do not silently skip the
+  // completion callback.
+  const reversalRow = await db.prepare(
+    `SELECT reversal_id FROM ReversalRecords WHERE reversal_txid = ? LIMIT 1`
+  ).bind(txid).first<{ reversal_id: string }>()
+  if (reversalRow) {
     const { completeReversal } = await import('./reversal')
     await completeReversal(txid, db).catch(e =>
       console.error(`[orchestrator] completeReversal failed for ${txid}:`, e))
   }
 
-  if (txid.startsWith('TX-GT-')) {
-    const leg = await db.prepare(
-      `SELECT gtid FROM GtidLegs WHERE txid = ?`
-    ).bind(txid).first<{ gtid: string }>()
-    if (leg) {
-      await checkAndFinalizeGtid(leg.gtid, db)
-    }
+  // GTID cascade: query GtidLegs by txid (the foreign-key already exists)
+  // instead of inferring lane membership from a txid prefix.
+  const leg = await db.prepare(
+    `SELECT gtid FROM GtidLegs WHERE txid = ?`
+  ).bind(txid).first<{ gtid: string }>()
+  if (leg) {
+    await checkAndFinalizeGtid(leg.gtid, db)
   }
 }
 

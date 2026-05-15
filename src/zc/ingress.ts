@@ -37,6 +37,7 @@ import { registerRtp, registerRtpRequest, attemptRtp } from './lanes/rtp'
 import { processHighValueIngress, advanceHighValue } from './lanes/highvalue'
 import { releaseH } from './h_model'
 import { writeFinalityLog, callBankReleaseReserve, finalizeCancelledTx } from './orchestrator'
+import { cancelInFlightTx } from './lanes/_helpers'
 import { linkEdiToTransaction } from './edi'
 import { resolveProxy } from './proxy'
 import { validateFatfR16 } from '../shared/fatf_validator'
@@ -359,31 +360,20 @@ export async function handlePostCancel(req: Request, txid: string, env: Env): Pr
     return jsonError(409, 'INVALID_STATE', `Cannot cancel tx in state ${tx.state}`)
   }
 
-  // ① 状態変更を先に実行（CAS付き: 同時更新による TOCTOU を防止）
-  // Decision/Execution分離原則: 状態遷移が確定してから副作用を実行する
-  const updated = await db.prepare(
-    `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1
-     WHERE txid=? AND version=? AND state IN ('RECEIVED','PRECHECKED','PRECHECKED_SUSPENDED','H_RESERVED')`
-  ).bind(body.reason_code, now, txid, tx.version).run()
-  if ((updated.meta.changes ?? 0) === 0) {
+  // CAS + FinalityLog + H release + finalize は cancelInFlightTx に集約。
+  // 銀行側別段解放だけが ingress 固有のため別途呼び出す。
+  const cancelled = await cancelInFlightTx(db, {
+    txid,
+    reasonCode: body.reason_code,
+    fromStates: cancelableStates,
+  })
+  if (!cancelled) {
     return jsonError(409, 'STATE_CONFLICT', `Cancel conflict: tx ${txid} was concurrently modified`)
   }
 
-  // ② CAS成功後にH解放・銀行側別段解放
-  if (tx.h_reservation_id) {
-    await releaseH(tx.h_reservation_id, db)
-  }
   await callBankReleaseReserve(tx.payer_bank_id, {
     request_id: `CANCEL-${txid}`, txid, reservation_ref: tx.h_reservation_id ?? txid,
   }, env).catch(e => console.error(`[cancel] release-reserve failed: ${e}`))
-
-  await writeFinalityLog(db, {
-    txid, event_type: 'DecidedCancel', state_from: tx.state, state_to: 'DECIDED_CANCEL',
-    payload_json: JSON.stringify({ reason_code: body.reason_code }), txid_or_gtid: txid,
-  })
-
-  // ③ DECIDED_CANCEL → CANCELLED（トランジェント状態を即時解消）
-  await finalizeCancelledTx(txid, db)
 
   return json(200, { result: 'CANCELLED', txid, state: 'CANCELLED' })
 }

@@ -1,17 +1,19 @@
 /**
  * @file STANDARD lane processing. Async multi-step flow: PreCheck -> H-Reserve
  *       -> Authorization -> Decision -> Debit -> Credit -> Settle.
+ *
+ * Migrated to use `transitionWithLog` / `cancelInFlightTx` so each state
+ * advance is validated against `ALLOWED_TRANSITIONS` and atomically logged.
+ *
  * @module zc/lanes/standard
  */
 import type { Env, PaymentInitiatedRequest } from '../../types'
 import { nowISO } from '../../types'
 import { reserveH, lockH } from '../h_model'
-import type { ReserveHResult } from '../h_model'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
-import { writeFinalityLog, callBankAuthorityCheck, callBankNameCheck, callBankReserveFunds, callBankReleaseReserve } from '../orchestrator'
-import { newUUID } from '../../shared/idempotency'
+import { callBankAuthorityCheck, callBankNameCheck, callBankReserveFunds, callBankReleaseReserve } from '../orchestrator'
 import { getOrCreateDnsCycle } from '../dns'
-import { cancelInFlightTx } from './_helpers'
+import { transitionWithLog, cancelInFlightTx } from './_helpers'
 
 export interface StandardIngressResult {
   result: 'INGRESS_ACCEPTED'
@@ -24,38 +26,34 @@ export interface StandardIngressResult {
  * 後続処理（PreCheck → NameCheck → AuthorityCheck）はキューで非同期実行
  */
 export function processStandardIngress(req: PaymentInitiatedRequest): StandardIngressResult {
-  // レコードはすでに Transactions に INSERT 済み（ingress.ts で実施）
   return { result: 'INGRESS_ACCEPTED', txid: req.txid, state: 'RECEIVED' }
 }
 
 /**
- * Standard非同期処理: PRECHECKED → PRECHECKED_SUSPENDED(名義待ち) → H_RESERVED → DECIDED_TO_SETTLE
+ * Standard非同期処理: RECEIVED → PRECHECKED → (PRECHECKED_SUSPENDED) → H_RESERVED → DECIDED_TO_SETTLE
  * Queueコンシューマーから呼ばれる
  */
 export async function advanceStandard(txid: string, env: Env): Promise<void> {
   const db = env.DB
-  const now = nowISO()
 
   const tx = await db
     .prepare(`SELECT * FROM Transactions WHERE txid = ?`)
     .bind(txid)
     .first<{ state: string; payer_bank_id: string; payee_bank_id: string; amount_value: number; pspr_ref: string | null; payer_account_hash: string; payee_account_hash: string | null; version: number; expires_at: string | null; purpose: string | null }>()
   if (!tx) return
-
   if (tx.state !== 'RECEIVED') return  // 既に進んでいる
 
-  // 1. PRECHECKED — CAS ガード: 並行キュー再配信で二重実行を防ぐ
-  const toPrechecked = await db.prepare(
-    `UPDATE Transactions SET state='PRECHECKED', updated_at=?, version=version+1 WHERE txid=? AND state='RECEIVED'`
-  ).bind(now, txid).run()
-  if ((toPrechecked.meta.changes ?? 0) === 0) return  // 別コールが先に遷移済み
-  await writeFinalityLog(db, {
-    txid, event_type: 'PreCheckPassed', state_from: 'RECEIVED', state_to: 'PRECHECKED',
-    payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
+  // 1. PRECHECKED
+  const prechecked = await transitionWithLog(db, {
+    txid,
+    fromState: 'RECEIVED',
+    toState: 'PRECHECKED',
+    eventType: 'PreCheckPassed',
+    payload: { txid },
   })
+  if (!prechecked.applied) return  // 別コールが先に遷移済み
 
   // 2. AML Authority Check
-  // キュー再試行で同一 request_id を保証
   const authResult = await callBankAuthorityCheck(tx.payer_bank_id, {
     request_id: `AUTH-${txid}`, txid, check_type: 'INITIAL',
   }, env)
@@ -65,18 +63,18 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
   }
 
   // 3. Name Check（Standard は口座情報→名義結果を提示）
-  // キュー再試行で同一 request_id を保証
   const nameResult = await callBankNameCheck(tx.payee_bank_id, {
     request_id: `NAME-${txid}`, txid, pspr_ref: tx.pspr_ref ?? undefined, account_hash: tx.payee_account_hash ?? '',
   }, env)
   if (nameResult.result === 'MISMATCH') {
     // 名義確認結果を PRECHECKED_SUSPENDED に遷移して待機（顧客最終確認）
-    await db.prepare(
-      `UPDATE Transactions SET state='PRECHECKED_SUSPENDED', reason_code='SUSPEND_NAMECHECK_PENDING', updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`
-    ).bind(now, txid).run()
-    await writeFinalityLog(db, {
-      txid, event_type: 'PreCheckSuspended', state_from: 'PRECHECKED', state_to: 'PRECHECKED_SUSPENDED',
-      payload_json: JSON.stringify({ reason_code: 'SUSPEND_NAMECHECK_PENDING' }), txid_or_gtid: txid,
+    await transitionWithLog(db, {
+      txid,
+      fromState: 'PRECHECKED',
+      toState: 'PRECHECKED_SUSPENDED',
+      eventType: 'PreCheckSuspended',
+      payload: { reason_code: 'SUSPEND_NAMECHECK_PENDING' },
+      setColumns: { reason_code: 'SUSPEND_NAMECHECK_PENDING' },
     })
     return
   }
@@ -89,16 +87,17 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
   }
   const reservationId = hResult.reservation_id
 
-  await db.prepare(
-    `UPDATE Transactions SET state='H_RESERVED', h_reservation_id=?, updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`
-  ).bind(reservationId, now, txid).run()
-  await writeFinalityLog(db, {
-    txid, event_type: 'HReserved', state_from: 'PRECHECKED', state_to: 'H_RESERVED',
-    payload_json: JSON.stringify({ reservation_id: reservationId }), txid_or_gtid: txid,
+  const reserved = await transitionWithLog(db, {
+    txid,
+    fromState: 'PRECHECKED',
+    toState: 'H_RESERVED',
+    eventType: 'HReserved',
+    payload: { reservation_id: reservationId },
+    setColumns: { h_reservation_id: reservationId },
   })
+  if (!reserved.applied) return
 
   // 5. Bank reserve-funds
-  // キュー再試行で同一 request_id を保証（newUUID() は再試行ごとに変わる）
   const reserveResult = await callBankReserveFunds(tx.payer_bank_id, {
     request_id: `RESERVE-${txid}`, txid, amount: { value: tx.amount_value, currency: 'JPY' },
     account_hash: tx.payer_account_hash,
@@ -138,7 +137,6 @@ export async function authorizeStandard(
   if (!authorized) {
     await cancelInFlightTx(db, { txid, reasonCode: 'CANCEL_BY_PAYER', fromStates: ['H_RESERVED'] })
     // H_RESERVED キャンセル時は reserve-funds 成功済みのため銀行の別段預金を解放する
-    // cancelAndLog は H 予約を解放するが銀行側 SuspenseDetails は RESERVED のまま残る
     const suspense = await db
       .prepare(`SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' AND direction='PAY' LIMIT 1`)
       .bind(txid, tx.payer_bank_id).first<{ suspense_id: string }>()
@@ -152,21 +150,26 @@ export async function authorizeStandard(
 
   const decisionProofRef = newDecisionProofRef()
   const finalityLogRef = newFinalityLogRef()
-  // dns_cycle_id を設定
   const dnsCycleId = await getOrCreateDnsCycle(db, now)
-  await db.prepare(
-    `UPDATE Transactions SET state='DECIDED_TO_SETTLE', decision_proof_ref=?, finality_log_ref=?, dns_cycle_id=?, updated_at=?, version=version+1 WHERE txid=? AND state='H_RESERVED'`
-  ).bind(decisionProofRef, finalityLogRef, dnsCycleId, now, txid).run()
+
+  const decided = await transitionWithLog(db, {
+    txid,
+    fromState: 'H_RESERVED',
+    toState: 'DECIDED_TO_SETTLE',
+    eventType: 'DecidedToSettle',
+    payload: { decision_proof_ref: decisionProofRef },
+    setColumns: {
+      decision_proof_ref: decisionProofRef,
+      finality_log_ref: finalityLogRef,
+      dns_cycle_id: dnsCycleId,
+    },
+  })
+  if (!decided.applied) return { ok: false, state: decided.previousState ?? 'STATE_CONFLICT' }
 
   // H予約を RESERVED → LOCKED に切り替え（DNS清算まで保持）
   if (tx.h_reservation_id) {
     await lockH(tx.h_reservation_id, db)
   }
-
-  await writeFinalityLog(db, {
-    txid, event_type: 'DecidedToSettle', state_from: 'H_RESERVED', state_to: 'DECIDED_TO_SETTLE',
-    payload_json: JSON.stringify({ decision_proof_ref: decisionProofRef }), txid_or_gtid: txid,
-  })
 
   // Execution をキューに投入
   await env.QUEUE.send({
@@ -179,7 +182,7 @@ export async function authorizeStandard(
 }
 
 /**
- * 名義不一致サスペンド後の再開: PRECHECKED_SUSPENDED → H_RESERVED
+ * 名義不一致サスペンド後の再開: PRECHECKED_SUSPENDED → PRECHECKED → H_RESERVED
  * 送金行が顧客確認を経て /resume-namecheck を呼び出した際に実行される。
  */
 export async function resumeFromNameCheckSuspended(
@@ -187,7 +190,6 @@ export async function resumeFromNameCheckSuspended(
   env: Env,
 ): Promise<{ ok: boolean; state: string }> {
   const db = env.DB
-  const now = nowISO()
 
   const tx = await db
     .prepare(`SELECT * FROM Transactions WHERE txid = ?`)
@@ -197,15 +199,15 @@ export async function resumeFromNameCheckSuspended(
   if (tx.state !== 'PRECHECKED_SUSPENDED') return { ok: false, state: tx.state }
 
   // PRECHECKED_SUSPENDED → PRECHECKED（名義チェック上書き承認）
-  const updated = await db.prepare(
-    `UPDATE Transactions SET state='PRECHECKED', reason_code=NULL, updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED_SUSPENDED'`
-  ).bind(now, txid).run()
-  if ((updated.meta.changes ?? 0) === 0) return { ok: false, state: 'STATE_CONFLICT' }
-
-  await writeFinalityLog(db, {
-    txid, event_type: 'NameCheckOverridden', state_from: 'PRECHECKED_SUSPENDED', state_to: 'PRECHECKED',
-    payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
+  const resumed = await transitionWithLog(db, {
+    txid,
+    fromState: 'PRECHECKED_SUSPENDED',
+    toState: 'PRECHECKED',
+    eventType: 'NameCheckOverridden',
+    payload: { txid },
+    setColumns: { reason_code: null },
   })
+  if (!resumed.applied) return { ok: false, state: 'STATE_CONFLICT' }
 
   // H予約
   const hResult = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db)
@@ -215,13 +217,15 @@ export async function resumeFromNameCheckSuspended(
   }
   const reservationId = hResult.reservation_id
 
-  await db.prepare(
-    `UPDATE Transactions SET state='H_RESERVED', h_reservation_id=?, updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`
-  ).bind(reservationId, now, txid).run()
-  await writeFinalityLog(db, {
-    txid, event_type: 'HReserved', state_from: 'PRECHECKED', state_to: 'H_RESERVED',
-    payload_json: JSON.stringify({ reservation_id: reservationId }), txid_or_gtid: txid,
+  const reserved = await transitionWithLog(db, {
+    txid,
+    fromState: 'PRECHECKED',
+    toState: 'H_RESERVED',
+    eventType: 'HReserved',
+    payload: { reservation_id: reservationId },
+    setColumns: { h_reservation_id: reservationId },
   })
+  if (!reserved.applied) return { ok: false, state: 'STATE_CONFLICT' }
 
   // Bank reserve-funds
   const reserveResult = await callBankReserveFunds(tx.payer_bank_id, {

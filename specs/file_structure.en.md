@@ -22,7 +22,14 @@ This document describes the directory layout and responsibilities within the Zen
 │   ├── 0011_fix_gtid_legs.sql              # GtidLegs schema fixes
 │   ├── 0012_fix_dns_cycles.sql             # DnsCycles schema fixes
 │   ├── 0013_retained_earnings_account.sql  # Retained earnings account
-│   └── 0014_circuit_breaker_reversal.sql   # Circuit Breaker & Reversal tables
+│   ├── 0014_circuit_breaker_reversal.sql   # Circuit Breaker & Reversal tables
+│   ├── 0015_finality_hash_chain.sql        # FinalityLog tamper-evident hash chain (prev_hash / entry_hash)
+│   ├── 0016_performance_indexes.sql        # Hot-path indexes
+│   ├── 0017_circuit_breaker_metrics.sql    # CircuitBreakerState observability columns (6)
+│   ├── 0018_bug_fixes.sql                  # B4 approval_ref / B5,B6 partial UNIQUE / B8 daily reset col
+│   ├── 0019_gtid_chain_fix.sql             # B9 GTID-chain prev_hash partial UNIQUE
+│   ├── 0020_hv_threshold.sql               # Participants.hv_threshold (HIGH_VALUE auto-escalation)
+│   └── 0021_finality_seq_counter.sql       # B10 FinalitySeq monotonic event_seq counter
 │
 ├── schema/             # Integrated schema snapshot (review & reference)
 │   └── baseline.sql                        # Consolidated DDL of all migrations
@@ -36,8 +43,8 @@ This document describes the directory layout and responsibilities within the Zen
 │   ├── api-contracts.en.md                 # API contracts (English)
 │   └── file_structure.md                   # This file (Japanese)
 │
-├── src/                # Source code (Hono-based web server)
-│   ├── index.ts                            # Main Hono router, Worker entry point, Queue/Cron handlers
+├── src/                # Source code (plain Cloudflare Workers fetch handler — no web framework)
+│   ├── index.ts                            # Worker entry point, HTTP router, Queue/Cron handlers
 │   ├── html.d.ts                           # Type declaration for importing .html as strings
 │   ├── types.ts                            # Single barrel export of all type definitions
 │   │
@@ -127,7 +134,7 @@ This document describes the directory layout and responsibilities within the Zen
 │
 ├── remote_participants.json                # Remote environment seed data
 ├── test.json                               # Local test payloads
-├── package.json                            # Node.js dependencies (Hono, wrangler, vitest)
+├── package.json                            # Node.js dependencies (wrangler, vitest, better-sqlite3 — no web framework)
 ├── tsconfig.json                           # TypeScript compilation config
 ├── tsconfig.test.json                      # Test TypeScript config
 ├── vitest.config.ts                        # vitest configuration
@@ -141,5 +148,5 @@ This document describes the directory layout and responsibilities within the Zen
 - **Domain Separation**: ZC core is in `src/zc/`, bank mock is in `src/bank/`, shared utilities in `src/shared/`.
 - **Async Processing**: Queue consumer (`src/zc/orchestrator.ts` and `orchestrator/`) executes state transitions. `src/cron/` handles EOD settlement and timeout sweeping.
 - **Single Type Export**: All types are exported from `src/types.ts`; implementations split across `src/types/` submodules.
-- **Frontend**: HTML files in `src/dashboard/` are Alpine.js + Tailwind CSS SPAs served statically by Hono.
+- **Frontend**: HTML files in `src/dashboard/` are Alpine.js + Tailwind CSS SPAs served statically as `Response(htmlString)` by the Worker fetch handler.
 - **Testing**: `test/` mirrors `src/` structure, using in-memory SQLite (better-sqlite3) for integration tests.
