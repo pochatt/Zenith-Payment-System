@@ -179,12 +179,18 @@ cancelInFlightTx(db, {
 | 5     | `htlc.ts`           | 完了  | Transactions と HtlcContracts は並走（HtlcContracts は別 UPDATE） |
 | 6     | `htlc_auth/approve.ts` | 完了 | canonical RECEIVED 入口を経由（旧: HTLC_LOCKED 直挿入はバグ源） |
 | 7     | `ingress.ts/handlePostCancel` | 完了 | `cancelInFlightTx` に統合 |
-| 8     | `gtid.ts`           | 未着手 | `GtidTransactions` は独自状態空間。`Transactions` は leg 単位で `DECIDED_TO_SETTLE` 直挿入する設計（GT-level 決定後に leg 行を最初から確定状態で生む）— 将来 canonical 化する場合は専用 helper を切る必要あり |
+| 8     | `gtid.ts`           | 未着手 | `GtidTransactions` は独自状態空間。`Transactions` は leg 単位で `DECIDED_TO_SETTLE` 直挿入する設計（GT-level 決定後に leg 行を最初から確定状態で生む）— 将来 canonical 化する場合は専用 helper を切る必要あり（**→ 別 issue 化推奨**） |
 
-**残課題**: `gtid.ts` の Transactions 直挿入（lane code line 272 周辺）は仕様
-として残置。`HtlcContracts` の状態更新を `transitionWithLog.setColumns` に
-持ち込むには helper シグネチャ拡張が必要で、現状は CAS 直後に別 UPDATE で
-追従している（バッチ外）。これらは段階的に整理する。
+**残課題**:
+
+- **`gtid.ts` の Transactions 直挿入**（`lane code line 272` 周辺）は設計上の逸脱として残置。
+  「GT-level 決定後に leg 行を `DECIDED_TO_SETTLE` で直挿入」の canonical 化には
+  GTID 専用 helper が必要（`cancelInFlightTx` と同等の GTID 版）。別 issue として追跡する。
+
+- **`HtlcContracts` の状態更新統合**: `transitionWithLog` に `sideUpdates` パラメータを追加
+  することで `cancelInFlightTx` と対称化できる（cancel 経路は既にアトミック — `_helpers.ts:204-212`）。
+  lock / fulfillReq / decide の 3 遷移が現状バッチ外 UPDATE（`htlc.ts:144, 214, 238`）。
+  helper シグネチャ拡張は breaking change のため別 issue として追跡する。
 
 ---
 
@@ -233,12 +239,13 @@ cancelInFlightTx(db, {
 新規バグ修正は**この suite の `expect()` が落ちる**ことで検出できる。新レーン
 追加時はこの suite に 1 ケース足すのを義務付けたい。
 
-### 推奨される追加テスト（次の PR）
-1. **冪等キー再送**（同 idempotency_key で 2 回叩いて同一レスポンス）。
-2. **Bank コールバック失敗時のリトライ → ack ループ**（DomainError
-   category × queue.retry 挙動）。
-3. **HTLC cancel パス**で payer suspense が銀行側 release-reserve で
-   普通預金に戻ることまで balance 確認。
+### 追加テスト（実装済み）
+1. **冪等キー再送**（`test/integration/idempotency_replay.test.ts`）— EXPRESS / STANDARD / HTLC で
+   同一 idempotency_key の 2 回目リクエストが同一レスポンスを返し、Transactions 行が 1 本のみであることを確認。
+2. **Queue retry/ack ポリシー**（`test/integration/queue_retry_policy.test.ts`）— DomainError
+   category × `msg.retry()` / `msg.ack()` の対応を全カテゴリで検証。non-DomainError も retry 対象であることを確認。
+3. **HTLC cancel payer 残高**（`test/integration/htlc_cancel_balance.test.ts`）— `TIMELOCK_EXPIRED`
+   および直接 cancel の 2 経路で payer suspense が普通預金に戻り、行内ゼロサムが保たれることを確認。
 
 ---
 
