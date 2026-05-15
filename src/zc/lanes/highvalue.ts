@@ -1,15 +1,27 @@
 /**
  * @file HIGH_VALUE lane processing. Large-amount transfers with BOJ pre-fund
  *       checks and IGS settlement.
+ *
+ * Lane characteristics:
+ *   - Bypasses H_RESERVED entirely (`PRECHECKED → DECIDED_TO_SETTLE` directly).
+ *     This is the central-bank RTGS path: liquidity is checked against the
+ *     payer bank's BOJ current-account balance, so H-limit accounting is not
+ *     applicable. The state-machine table explicitly permits this edge
+ *     (see `ALLOWED_TRANSITIONS.PRECHECKED`).
+ *   - Settlement completes via IGS callback (`handleIgsCallback`).
+ *
+ * Migrated to use `transitionWithLog` / `cancelInFlightTx` so each transition
+ * is validated and atomically logged.
+ *
  * @module zc/lanes/highvalue
  */
 // proof_type = PAYER_HV_ISOLATION_PROOF
 import type { Env, PaymentInitiatedRequest } from '../../types'
 import { nowISO } from '../../types'
-import { writeFinalityLog, callBankAuthorityCheck, callBankNameCheck, finalizeCancelledTx } from '../orchestrator'
+import { callBankAuthorityCheck, callBankNameCheck } from '../orchestrator'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
-import { newUUID } from '../../shared/idempotency'
 import { calcBalance } from '../../bank/ledger'
+import { transitionWithLog, cancelInFlightTx } from './_helpers'
 
 export function processHighValueIngress(req: PaymentInitiatedRequest) {
   return { result: 'INGRESS_ACCEPTED' as const, txid: req.txid, state: 'RECEIVED' as const }
@@ -17,7 +29,8 @@ export function processHighValueIngress(req: PaymentInitiatedRequest) {
 
 /**
  * HIGH_VALUE 非同期処理:
- * RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE → (a_HV) → IGS待ち → b
+ * RECEIVED → PRECHECKED → DECIDED_TO_SETTLE → (a_HV) → IGS待ち → b
+ * （H_RESERVED はスキップ。中央銀行 RTGS = BOJ プレファンドで担保するため）
  */
 export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   const db = env.DB
@@ -34,78 +47,83 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   if (!tx || tx.state !== 'RECEIVED') return
 
   // 1. PRECHECKED
-  await db.prepare(`UPDATE Transactions SET state='PRECHECKED', updated_at=?, version=version+1 WHERE txid=? AND state='RECEIVED'`).bind(now, txid).run()
-  await writeFinalityLog(db, {
-    txid, event_type: 'PreCheckPassed', state_from: 'RECEIVED', state_to: 'PRECHECKED',
-    payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
+  const prechecked = await transitionWithLog(db, {
+    txid,
+    fromState: 'RECEIVED',
+    toState: 'PRECHECKED',
+    eventType: 'PreCheckPassed',
+    payload: { txid },
   })
+  if (!prechecked.applied) return
 
   // 2. AML Authority Check
-  // キュー再試行で同一 request_id を保証
   const authResult = await callBankAuthorityCheck(tx.payer_bank_id, { request_id: `AUTH-${txid}`, txid, check_type: 'INITIAL' }, env)
   if (authResult.result === 'NG') {
-    await db.prepare(`UPDATE Transactions SET state='DECIDED_CANCEL', reason_code=?, updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`).bind(authResult.reason_code, now, txid).run()
-    // FinalityLog 記録と DECIDED_CANCEL → CANCELLED 遷移
-    await writeFinalityLog(db, {
-      txid, event_type: 'DecidedCancel', state_from: 'PRECHECKED', state_to: 'DECIDED_CANCEL',
-      payload_json: JSON.stringify({ reason_code: authResult.reason_code }), txid_or_gtid: txid,
+    await cancelInFlightTx(db, {
+      txid,
+      reasonCode: authResult.reason_code ?? 'AUTHORITY_CHECK_NG',
+      fromStates: ['PRECHECKED'],
+      skipReleaseH: true,  // HV は H 予約を取らないため
     })
-    await finalizeCancelledTx(txid, db)
     return
   }
 
   // 3. Name Check
-  // キュー再試行で同一 request_id を保証
   const nameResult = await callBankNameCheck(tx.payee_bank_id, {
     request_id: `NAME-${txid}`, txid, pspr_ref: tx.pspr_ref ?? undefined, account_hash: tx.payee_account_hash ?? '',
   }, env)
   if (nameResult.result === 'MISMATCH') {
-    await db.prepare(`UPDATE Transactions SET state='PRECHECKED_SUSPENDED', reason_code='SUSPEND_NAMECHECK_PENDING', updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`).bind(now, txid).run()
-    // FinalityLog 記録
-    await writeFinalityLog(db, {
-      txid, event_type: 'PreCheckSuspended', state_from: 'PRECHECKED', state_to: 'PRECHECKED_SUSPENDED',
-      payload_json: JSON.stringify({ reason_code: 'SUSPEND_NAMECHECK_PENDING' }), txid_or_gtid: txid,
+    // PRECHECKED → PRECHECKED_SUSPENDED (bookkeeping state; ALLOWED_TRANSITIONS permits it).
+    const suspended = await transitionWithLog(db, {
+      txid,
+      fromState: 'PRECHECKED',
+      toState: 'PRECHECKED_SUSPENDED',
+      eventType: 'PreCheckSuspended',
+      payload: { reason_code: 'SUSPEND_NAMECHECK_PENDING' },
+      setColumns: { reason_code: 'SUSPEND_NAMECHECK_PENDING' },
     })
+    if (!suspended.applied) return
     return
   }
 
   // 4. BOJ残高チェック（プレファンドRTGS）
-  // BOJ(-) = 積立残高あり。calcBalance + amount > 0 なら残高不足
+  // BOJ 残高は負債会計のため負値。`bojBalance + amount > 0` で残高不足。
   const bojBalance = await calcBalance(`${tx.payer_bank_id}-BOJ`, db)
   if (bojBalance + tx.amount_value > 0) {
-    await db.prepare(
-      `UPDATE Transactions SET state='DECIDED_CANCEL', reason_code='BOJ_INSUFFICIENT_FUNDS',
-       updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`
-    ).bind(now, txid).run()
-    await writeFinalityLog(db, {
-      txid, event_type: 'DecidedCancel', state_from: 'PRECHECKED', state_to: 'DECIDED_CANCEL',
-      payload_json: JSON.stringify({
-        reason_code: 'BOJ_INSUFFICIENT_FUNDS',
+    await cancelInFlightTx(db, {
+      txid,
+      reasonCode: 'BOJ_INSUFFICIENT_FUNDS',
+      fromStates: ['PRECHECKED'],
+      skipReleaseH: true,
+      payloadExtra: {
         boj_balance: bojBalance,
         amount: tx.amount_value,
         available: -bojBalance,
-      }),
-      txid_or_gtid: txid,
+      },
     })
-    await finalizeCancelledTx(txid, db)
     return
   }
 
-  // 5. HIGH_VALUE は H予約スキップ（h_limit 消費なし）
-  // Decision確定
+  // 5. PRECHECKED → DECIDED_TO_SETTLE（H_RESERVED をスキップ）
+  // この直行遷移は ALLOWED_TRANSITIONS.PRECHECKED に明示的に列挙されている。
   const decisionProofRef = newDecisionProofRef()
   const finalityLogRef = newFinalityLogRef()
-  await db.prepare(`UPDATE Transactions SET state='DECIDED_TO_SETTLE', decision_proof_ref=?, finality_log_ref=?, updated_at=?, version=version+1 WHERE txid=? AND state='PRECHECKED'`).bind(decisionProofRef, finalityLogRef, now, txid).run()
-  await writeFinalityLog(db, {
-    txid, event_type: 'DecidedToSettle', state_from: 'PRECHECKED', state_to: 'DECIDED_TO_SETTLE',
-    payload_json: JSON.stringify({ decision_proof_ref: decisionProofRef, lane: 'HIGH_VALUE' }), txid_or_gtid: txid,
+  const decided = await transitionWithLog(db, {
+    txid,
+    fromState: 'PRECHECKED',
+    toState: 'DECIDED_TO_SETTLE',
+    eventType: 'DecidedToSettle',
+    payload: { decision_proof_ref: decisionProofRef, lane: 'HIGH_VALUE' },
+    setColumns: {
+      decision_proof_ref: decisionProofRef,
+      finality_log_ref: finalityLogRef,
+    },
   })
+  if (!decided.applied) return
 
   // 6. ExecuteDebit（a_HV: proof_type=PAYER_HV_ISOLATION_PROOF）
   // payer_account_hash を渡す（HVは reserve-funds を経由しないため Bank 側で account を特定できない）
   // IGS決済開始はデビット確認後（onPayerExecConfirmed）に行う。
-  // ここで initiateIgsSettlement を呼ぶと ZC_BANK_DEBIT より先に ZC_IGS_CALLBACK が
-  // 処理される競合状態が発生し、BOJ清算仕訳が欠落する可能性がある。
   await env.QUEUE.send({
     type: 'ZC_BANK_DEBIT',
     payload: {
