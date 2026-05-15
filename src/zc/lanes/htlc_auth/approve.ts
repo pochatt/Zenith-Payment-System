@@ -1,6 +1,21 @@
 /**
  * @file HTLC Auth approval (payer-side accept). Reserves funds, mints preimage,
- *       and creates the HTLC contract + transaction in HTLC_LOCKED state.
+ *       and creates the HTLC contract + transaction via the canonical state
+ *       machine entry path (RECEIVED → HTLC_LOCKED).
+ *
+ * Earlier revisions inserted Transactions directly at `HTLC_LOCKED`, which
+ * bypassed the canonical `RECEIVED` entry, skipped ALLOWED_TRANSITIONS
+ * validation, and lost the `PaymentInitiated` audit event. Capture (claimHtlc)
+ * later CAS-updates `WHERE state='HTLC_LOCKED'`, so any drift in the entry
+ * state produced silent payee non-credit (regression fixed in
+ * `test/integration/balance_invariants.test.ts`).
+ *
+ * This implementation:
+ *   1. INSERTs the Transactions row at `RECEIVED` and writes the
+ *      `PaymentInitiated` audit event.
+ *   2. Uses `transitionWithLog` to advance `RECEIVED → HTLC_LOCKED` so the
+ *      ALLOWED_TRANSITIONS table is enforced and CAS+log are atomic.
+ *
  * @module zc/lanes/htlc_auth/approve
  */
 import type {
@@ -13,13 +28,16 @@ import { newUUID } from '../../../shared/idempotency'
 import { sha256hex } from '../../../shared/hmac'
 import { writeFinalityLog, callBankReserveFunds } from '../../orchestrator'
 import { logTxEvent } from '../../trace'
+import { transitionWithLog } from '../_helpers'
 
 /**
  * 送金側（顧客）がオーソリを承認する。
  * POST /api/htlc/auth/:auth_id/approve
- * - preimage + hashlock を生成して Vault に保管
- * - 送金側銀行に資金予約をかける
- * - HtlcContracts + Transactions を作成（AUTH_APPROVED → HTLC_LOCKED）
+ *   1. preimage + hashlock を生成して Vault に保管
+ *   2. 送金側銀行に資金予約をかける
+ *   3. Transactions を RECEIVED で INSERT（canonical entry）
+ *   4. RECEIVED → HTLC_LOCKED へ `transitionWithLog` で遷移
+ *      （ALLOWED_TRANSITIONS チェック + FinalityLog 同時記録）
  */
 export async function approveAuthRequest(
   authId: string,
@@ -80,19 +98,17 @@ export async function approveAuthRequest(
     return { result: 'ERROR', reason_code: (reserveResp as { reason_code?: string }).reason_code ?? 'RESERVE_FAILED' }
   }
 
-  // Transactions レコード作成。
-  // HtlcContracts と同じ HTLC_LOCKED 状態で挿入することが必須。
-  // captureHtlcAuth → claimHtlc は `WHERE state='HTLC_LOCKED'` で CAS
-  // するため、ここを H_RESERVED にすると Transactions が動かないまま
-  // Bank 側だけ debit され、payee が永遠に着金しない（regression: 過去に
-  // 発生したバグ — `test/integration/balance_invariants.test.ts` で固定）。
-  // H 予約は ZC 側では行わない（別段預金で資金確保済みのため）。
+  // Step 1: canonical entry — INSERT Transactions at RECEIVED and write the
+  // PaymentInitiated audit event. The H reservation is already held by the
+  // bank's suspense account (reserve-funds above), so ZC does not allocate
+  // an H_RESERVED row; the lane goes RECEIVED → HTLC_LOCKED directly per
+  // ALLOWED_TRANSITIONS.
   await db.prepare(
     `INSERT OR IGNORE INTO Transactions
      (txid, lane, state, amount_value, amount_currency, payer_bank_id, payer_account_hash,
       payee_bank_id, payee_account_hash, idempotency_key, schema_version,
       version, created_at, updated_at)
-     VALUES (?, 'HTLC', 'HTLC_LOCKED', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', 0, ?, ?)`
+     VALUES (?, 'HTLC', 'RECEIVED', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', 0, ?, ?)`
   ).bind(
     txid, authReq.amount_value,
     authReq.payer_bank_id, authReq.payer_account_hash,
@@ -100,7 +116,15 @@ export async function approveAuthRequest(
     req.idempotency_key, now, now,
   ).run()
 
+  await writeFinalityLog(db, {
+    txid, event_type: 'PaymentInitiated', state_from: null, state_to: 'RECEIVED',
+    payload_json: JSON.stringify({ txid, lane: 'HTLC', flow: 'HTLC_AUTH', auth_id: authId }),
+    txid_or_gtid: txid,
+  })
+
   // HtlcContracts レコード作成（HTLC_LOCKED 状態: 資金確保済み）
+  // Transactions の遷移より先に作成しておくことで、claimHtlc がリードする
+  // hashlock/timelock を確実に提供する。
   await db.prepare(
     `INSERT OR IGNORE INTO HtlcContracts
      (htlc_id, txid, state, hashlock, timelock, amount_value,
@@ -112,6 +136,22 @@ export async function approveAuthRequest(
     authReq.amount_value, authReq.payer_bank_id, authReq.payee_bank_id, now, now,
   ).run()
 
+  // Step 2: RECEIVED → HTLC_LOCKED via the canonical helper.
+  // ALLOWED_TRANSITIONS contains this edge (state_machine.ts: RECEIVED → HTLC_LOCKED),
+  // so the validator allows it and the CAS+log batch is atomic.
+  const transition = await transitionWithLog(db, {
+    txid,
+    fromState: 'RECEIVED',
+    toState: 'HTLC_LOCKED',
+    eventType: 'HtlcAuthApproved',
+    payload: { auth_id: authId, htlc_id: htlcId, hashlock },
+  })
+  if (!transition.applied) {
+    // INSERT OR IGNORE meant Transactions already existed in a non-RECEIVED
+    // state — surface as INVALID_AUTH_STATE rather than partially proceeding.
+    return { result: 'ERROR', reason_code: 'INVALID_AUTH_STATE' }
+  }
+
   // HtlcAuthRequests を AUTH_APPROVED に更新
   await db.prepare(
     `UPDATE HtlcAuthRequests
@@ -119,13 +159,6 @@ export async function approveAuthRequest(
          approved_at=?, updated_at=?, version=version+1
      WHERE auth_id=? AND status='AUTH_REQUESTED'`
   ).bind(htlcId, txid, vaultRef, hashlock, now, now, authId).run()
-
-  await writeFinalityLog(db, {
-    txid, event_type: 'HtlcAuthApproved',
-    state_from: 'AUTH_REQUESTED', state_to: 'HTLC_LOCKED',
-    payload_json: JSON.stringify({ auth_id: authId, htlc_id: htlcId, hashlock }),
-    txid_or_gtid: txid,
-  })
 
   await logTxEvent(db, {
     txid, actor: `BANK_${authReq.payer_bank_id}`, action: 'HTLC_AUTH_APPROVED', status: 'OK',
