@@ -2,9 +2,14 @@
 -- schema/baseline.sql — Consolidated clean schema for Zenith Mock
 --
 -- This is NOT a migration. It documents the fully-intended schema as of
--- migrations 0001–0014, with each design decision stated explicitly.
+-- migrations 0001–0021, with each design decision stated explicitly.
 -- Use this as the authoritative reference when bootstrapping a fresh DB
 -- or reasoning about table structure.
+--
+-- Note: ALTER TABLE additions from 0004 (Participants.participation_mode,
+-- tx_amount_limit, daily_amount_limit, daily_amount_used; Transactions
+-- cross-border columns) are not yet consolidated here — those were
+-- pre-existing gaps. All changes from 0015–0021 are reflected below.
 --
 -- Run order for fresh setup:
 --   1. Apply this file (or run all migrations in order, which is equivalent).
@@ -36,7 +41,12 @@ CREATE TABLE Participants (
   h_limit          INTEGER NOT NULL DEFAULT 0,
   h_used           INTEGER NOT NULL DEFAULT 0,
   is_active        INTEGER NOT NULL DEFAULT 1,
-  registered_at    TEXT    NOT NULL
+  registered_at    TEXT    NOT NULL,
+  -- 0018 B8: daily limit reset date for auto-reset on EOD-cron-missed days
+  daily_amount_last_reset_date TEXT,              -- 'YYYY-MM-DD'
+  -- 0020: per-participant HIGH_VALUE auto-escalation threshold;
+  --       NULL = fall back to ZC_HV_THRESHOLD env var (default 100,000,000 JPY)
+  hv_threshold     INTEGER
 );
 
 CREATE TABLE Transactions (
@@ -71,6 +81,9 @@ CREATE INDEX idx_tx_state ON Transactions(state);
 CREATE INDEX idx_tx_payer ON Transactions(payer_bank_id, state);
 CREATE INDEX idx_tx_payee ON Transactions(payee_bank_id, state);
 CREATE INDEX idx_tx_dns   ON Transactions(dns_cycle_id);
+-- 0016: hot-path indexes added after profiling showed full-table scans
+CREATE INDEX IF NOT EXISTS idx_tx_updated_at ON Transactions(updated_at);    -- timeout sweep
+CREATE INDEX IF NOT EXISTS idx_tx_lane_state ON Transactions(lane, state);   -- dashboard lane×state filter
 
 CREATE TABLE HReservations (
   reservation_id TEXT    PRIMARY KEY,
@@ -85,9 +98,10 @@ CREATE TABLE HReservations (
 
 CREATE INDEX idx_hres_bank ON HReservations(bank_id, is_released);
 
--- Immutable audit trail; append-only. event_seq uses timestamp-based
--- monotonic generation (Date.now()*1000 + jitter, MAX fallback) so it
--- survives Worker isolate restarts.
+-- Immutable audit trail; append-only. event_seq is allocated by FinalitySeq
+-- (0021) — a single-row counter atomically incremented via RETURNING,
+-- replacing the previous Date.now()*1000+jitter scheme.
+-- prev_hash / entry_hash (0015) form a SHA-256 hash chain for tamper evidence.
 CREATE TABLE FinalityLog (
   log_id       TEXT    PRIMARY KEY,
   txid         TEXT,
@@ -97,12 +111,29 @@ CREATE TABLE FinalityLog (
   state_to     TEXT    NOT NULL,
   payload_json TEXT    NOT NULL,
   event_seq    INTEGER NOT NULL,
-  occurred_at  TEXT    NOT NULL
+  occurred_at  TEXT    NOT NULL,
+  -- 0015: SHA-256 hash chain (chain_id = COALESCE(txid, gtid, 'GLOBAL'))
+  prev_hash    TEXT,              -- entry_hash of the predecessor in this chain
+  entry_hash   TEXT               -- SHA-256 of this row's content
 );
 
 CREATE INDEX idx_fl_txid ON FinalityLog(txid);
 CREATE INDEX idx_fl_gtid ON FinalityLog(gtid);
 CREATE INDEX idx_fl_seq  ON FinalityLog(event_seq);
+-- 0015: hash chain verification scans in (chain_id, event_seq) order
+CREATE INDEX IF NOT EXISTS idx_fl_chain_seq   ON FinalityLog(txid, event_seq);
+CREATE INDEX IF NOT EXISTS idx_fl_gchain_seq  ON FinalityLog(gtid, event_seq);
+-- 0016: time-range audit queries
+CREATE INDEX IF NOT EXISTS idx_fl_occurred_at ON FinalityLog(occurred_at);
+-- 0018 B5: prevent two concurrent writes sharing the same prev_hash (chain fork)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fl_chain_prev_hash
+  ON FinalityLog(txid, prev_hash) WHERE txid IS NOT NULL;
+-- 0018 B6: belt-and-braces guard against colliding event_seq values
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fl_event_seq_unique
+  ON FinalityLog(event_seq);
+-- 0019 B9: same fork-prevention for GTID-only entries (txid IS NULL)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fl_gtid_chain_prev_hash
+  ON FinalityLog(gtid, prev_hash) WHERE gtid IS NOT NULL AND txid IS NULL;
 
 -- business_date is intentionally NOT UNIQUE. Multiple cycle_ids can share
 -- the same date (e.g. an intraday hold that spawns a new cycle after
@@ -121,6 +152,8 @@ CREATE TABLE DnsCycles (
 );
 
 CREATE INDEX idx_dns_business_date ON DnsCycles(business_date);
+-- 0016: state-based DNS cycle scans
+CREATE INDEX IF NOT EXISTS idx_dns_state ON DnsCycles(state, created_at);
 
 CREATE TABLE DnsNetPositions (
   id            TEXT    PRIMARY KEY,
@@ -148,6 +181,11 @@ CREATE TABLE HtlcContracts (
   created_at                 TEXT    NOT NULL,
   updated_at                 TEXT    NOT NULL
 );
+
+-- 0016: timeout sweep and bank-side HTLC list queries
+CREATE INDEX IF NOT EXISTS idx_htlc_payee_state ON HtlcContracts(payee_bank_id, state);
+CREATE INDEX IF NOT EXISTS idx_htlc_payer_state ON HtlcContracts(payer_bank_id, state);
+CREATE INDEX IF NOT EXISTS idx_htlc_timelock    ON HtlcContracts(timelock, state);
 
 CREATE TABLE GtidTransactions (
   gtid               TEXT    PRIMARY KEY,
@@ -199,6 +237,9 @@ CREATE TABLE Cases (
 );
 
 CREATE INDEX idx_case_txid ON Cases(related_txid);
+-- 0016: ops dashboard and GTID-case lookups
+CREATE INDEX IF NOT EXISTS idx_case_state ON Cases(state, created_at);
+CREATE INDEX IF NOT EXISTS idx_case_gtid  ON Cases(related_gtid);
 
 CREATE TABLE Vault (
   vault_ref    TEXT    PRIMARY KEY,
@@ -253,6 +294,11 @@ CREATE TABLE RtpRequests (
   updated_at       TEXT    NOT NULL
 );
 
+-- 0016: bank-side RTP list and expiry sweep queries
+CREATE INDEX IF NOT EXISTS idx_rtp_payer_state ON RtpRequests(payer_bank_id, state);
+CREATE INDEX IF NOT EXISTS idx_rtp_payee_state ON RtpRequests(payee_bank_id, state);
+CREATE INDEX IF NOT EXISTS idx_rtp_expires     ON RtpRequests(expires_at, state);
+
 CREATE TABLE IdempotencyKeys (
   key           TEXT PRIMARY KEY,
   status        TEXT NOT NULL DEFAULT 'PROCESSING',   -- PROCESSING|DONE
@@ -260,6 +306,9 @@ CREATE TABLE IdempotencyKeys (
   created_at    TEXT NOT NULL,
   updated_at    TEXT
 );
+
+-- 0016: TTL sweep deletes keys older than 24h
+CREATE INDEX IF NOT EXISTS idx_idemp_created ON IdempotencyKeys(created_at);
 
 -- ---------------------------------------------------------------------------
 -- BANK SIDE
@@ -615,7 +664,14 @@ CREATE TABLE CircuitBreakerState (
   last_failure_at      TEXT,
   opened_at            TEXT,
   half_open_at         TEXT,
-  updated_at           TEXT    NOT NULL
+  updated_at           TEXT    NOT NULL,
+  -- 0017: observable metrics for operator dashboards and HALF_OPEN probe throttling
+  total_requests     INTEGER NOT NULL DEFAULT 0,   -- lifetime allowed requests (CLOSED + HALF_OPEN)
+  total_successes    INTEGER NOT NULL DEFAULT 0,   -- lifetime recordSuccess() calls
+  total_failures     INTEGER NOT NULL DEFAULT 0,   -- lifetime recordFailure() calls
+  total_denied       INTEGER NOT NULL DEFAULT 0,   -- lifetime fast-failed requests (state=OPEN)
+  half_open_inflight INTEGER NOT NULL DEFAULT 0,   -- probes currently outstanding
+  last_success_at    TEXT                          -- ISO-8601 timestamp of latest success
 );
 
 -- Post-settlement compensation; original_txid must be in SETTLED state.
@@ -628,6 +684,8 @@ CREATE TABLE ReversalRecords (
   status        TEXT    NOT NULL DEFAULT 'REQUESTED', -- REQUESTED|APPROVED|TX_CREATED|COMPLETED|REJECTED
   requested_by  TEXT    NOT NULL,
   description   TEXT,
+  -- 0018 B4: approval reference required for certain reversal reason codes
+  approval_ref  TEXT,
   created_at    TEXT    NOT NULL,
   updated_at    TEXT    NOT NULL
 );
@@ -645,6 +703,23 @@ INSERT OR IGNORE INTO Participants
 VALUES
   ('001', 'みずほ銀行',  '/bank/001', 100000000, 0, 1, '2025-01-01T00:00:00Z'),
   ('002', '三菱UFJ銀行', '/bank/002', 100000000, 0, 1, '2025-01-01T00:00:00Z');
+
+-- ---------------------------------------------------------------------------
+-- FINALITY SEQ COUNTER (0021)
+-- ---------------------------------------------------------------------------
+
+-- Monotonic event_seq allocator for FinalityLog. Replaces the previous
+-- Date.now()*1000+jitter scheme. Single row enforced by CHECK(id = 1).
+-- Allocated via: UPDATE FinalitySeq SET next_seq = next_seq + 1 WHERE id = 1 RETURNING next_seq
+CREATE TABLE IF NOT EXISTS FinalitySeq (
+  id        INTEGER PRIMARY KEY CHECK (id = 1),
+  next_seq  INTEGER NOT NULL
+);
+
+-- Seed at MAX(event_seq) so monotonicity is preserved across migration.
+-- INSERT OR IGNORE makes this idempotent on re-application.
+INSERT OR IGNORE INTO FinalitySeq (id, next_seq)
+VALUES (1, COALESCE((SELECT MAX(event_seq) FROM FinalityLog), 0));
 
 -- Retained Earnings internal accounts (one per bank, type ASSET)
 -- Added in 0013 to separate interest accrual from suspense balances.
