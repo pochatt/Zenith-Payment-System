@@ -121,8 +121,8 @@ child.info('lane.dispatch')
 ### 動機
 全 8 レーン（express, standard, htlc, gtid, rtp, highvalue, bulk, htlc_auth）
 は **同じ 2 パターン**を独自実装していた:
-1. `Transactions` の状態遷移（CAS UPDATE）→ `FinalityLog` 書き込み（厳密
-   にはアトミックでないが、業務上ペアであるべき）。
+1. `Transactions` の状態遷移（CAS UPDATE）→ `FinalityLog` 書き込み。
+   原則ペアであるべきだが、別 SQL で発行されるとアトミックではない。
 2. 取消時に「状態ガード → H 解放 → ログ → 終了状態化」という TOCTOU
    セーフな順序で進める。
 
@@ -134,41 +134,57 @@ child.info('lane.dispatch')
 ```ts
 transitionWithLog(db, {
   txid, fromState, toState, eventType,
-  payload?, setColumns?, strict?,  // strict:true で CONCURRENCY_CONFLICT throw
+  payload?, setColumns?, strict?, skipStateMachineCheck?,
 }): Promise<{ applied: boolean; previousState: string | null }>
 
 cancelInFlightTx(db, {
-  txid, reasonCode, fromStates?, skipReleaseH?,
+  txid, reasonCode, fromStates?, skipReleaseH?, sideUpdates?, eventType?, payloadExtra?,
 }): Promise<boolean>
 ```
 
-### 不変条件
-- `transitionWithLog` の UPDATE は `version = ?` での CAS。並列 N 本でも
-  applied:true は最大 1 本（テストで保証: `lane_helpers.test.ts`）。
-- `cancelInFlightTx` は **状態ガード成立後にのみ** H 解放を行う。逆順だと
-  並列 decision 経路に勝った場合に LOCKED 予約を誤って解放してしまう
-  （ZC で発生済みのバグと同型）。
+### 不変条件（実装で担保）
+- **アトミック CAS + ログ**: `transitionWithLog` は CAS UPDATE と
+  `FinalityLog` INSERT を 1 つの `db.batch()` で発行する。INSERT は直前
+  UPDATE の `changes() > 0` をガードに用いる条件付き INSERT のため、CAS
+  に勝てなかった呼び出しはログも書き込まれない。バッチ内で例外が起きれば
+  両方ロールバック。これにより「状態だけ進んで監査ログが残らない」窓は
+  存在しない。
+- **状態機械検証**: `isValidTransition` を CAS UPDATE 前に常に呼ぶ。
+  `ALLOWED_TRANSITIONS` に無い遷移は DB に到達せず、`INVARIANT_VIOLATION`
+  を投げる（または `applied:false` を返す）。`skipStateMachineCheck` は
+  既定で無効、ホワイトリスト的な例外時のみ使用。
+- **CAS 並列安全**: `version = ?` 楽観ロック。並列 N 本でも `applied:true`
+  は最大 1 本（テスト: `lane_helpers.test.ts`、`atomic_finality.test.ts`）。
+- **取消順序**: `cancelInFlightTx` は **状態ガード成立後にのみ** H 解放を
+  行う。逆順だと並列 decision 経路に勝った場合に LOCKED 予約を誤って解放
+  してしまう（ZC で発生済みのバグと同型）。`DecidedCancel` ログも同じ
+  `db.batch()` でアトミックに書き込む。
+- **event_seq 単調性**: `writeFinalityLog` は `FinalitySeq.next_seq` を
+  `UPDATE ... RETURNING` でアトミック増分し event_seq を割り当てる
+  （migration 0021）。Date.now() + 乱数 + UNIQUE リトライ方式は廃止。
 
 ### Lane Refactor Roadmap
-既存レーン 8 本は段階的に移行する。順序は **小さく安全な順 → 大物**:
 
-| Phase | Target              | LOC delta (見込) | 備考                                                        |
-|-------|---------------------|-----------------|-------------------------------------------------------------|
-| 0     | (完了)             | —               | `_helpers.ts` 追加、テストで挙動確証                         |
-| 1     | `bulk.ts` (103L)    | -30             | 最小レーン。リスク低                                         |
-| 2     | `highvalue.ts`(119L)| -40             | IGS 連携部は維持                                             |
-| 3     | `express.ts` (183L) | -60             | 既存テスト 10 本でリグレッション保証                         |
-| 4     | `standard.ts` (253L)| -80             | name-check 中断・再開の特別ケース有り                        |
-| 5     | `htlc.ts`  (305L)   | -90             | preimage / timelock の状態を helper に持ち込まない           |
-| 6     | `gtid.ts`  (287L)   | -70             | leg 集約は別 helper（`gtidLegsHelper.ts`）に切り出し検討     |
-| 7     | `rtp.ts`   (421L)   | -120            | 銀行コールバック多段、helper を強化してから着手              |
-| 8     | `htlc_auth.ts`(498L)| -150            | 最大。Whitelist 周りに専用 helper を切り出すと吉             |
+レーン 8 本の移行は完了している（2026-05）。すべてのレーンで `transitionWithLog` /
+`cancelInFlightTx` を使用しており、生 `UPDATE Transactions SET state=...` は
+レーンコードから排除した。`isValidTransition` がアプリ層全域で強制される。
 
-**着手原則**:
-- 1 PR = 1 レーンに限定する（レビュー範囲を小さく）。
-- 既存テストを 1 本も削らない／追加した動作はテストで担保する。
-- helper のシグネチャ変更が必要になったら、まず `_helpers.ts` の PR を独
-  立で出してテストで挙動を固定する。
+| Phase | Target              | 状態  | 備考                                                        |
+|-------|---------------------|-------|-------------------------------------------------------------|
+| 0     | `_helpers.ts`       | 完了  | アトミックバッチ + 状態機械検証 + 単調 event_seq            |
+| 1     | `bulk.ts`           | 完了  | 最初の参照実装                                              |
+| 2     | `highvalue.ts`      | 完了  | `PRECHECKED → DECIDED_TO_SETTLE` 直行を `ALLOWED_TRANSITIONS` に明示 |
+| 3     | `express.ts`        | 完了  | 旧 `transitionTx` ヘルパー削除                              |
+| 4     | `standard.ts`       | 完了  | `PRECHECKED_SUSPENDED` / `resume-namecheck` 経路もヘルパー化 |
+| 5     | `htlc.ts`           | 完了  | Transactions と HtlcContracts は並走（HtlcContracts は別 UPDATE） |
+| 6     | `htlc_auth/approve.ts` | 完了 | canonical RECEIVED 入口を経由（旧: HTLC_LOCKED 直挿入はバグ源） |
+| 7     | `ingress.ts/handlePostCancel` | 完了 | `cancelInFlightTx` に統合 |
+| 8     | `gtid.ts`           | 未着手 | `GtidTransactions` は独自状態空間。`Transactions` は leg 単位で `DECIDED_TO_SETTLE` 直挿入する設計（GT-level 決定後に leg 行を最初から確定状態で生む）— 将来 canonical 化する場合は専用 helper を切る必要あり |
+
+**残課題**: `gtid.ts` の Transactions 直挿入（lane code line 272 周辺）は仕様
+として残置。`HtlcContracts` の状態更新を `transitionWithLog.setColumns` に
+持ち込むには helper シグネチャ拡張が必要で、現状は CAS 直後に別 UPDATE で
+追従している（バッチ外）。これらは段階的に整理する。
 
 ---
 

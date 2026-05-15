@@ -256,7 +256,7 @@ EDI参照IDで照会
 Request:
 ```json
 {
-  "proxy_type": "PHONE|EMAIL|CORPORATE_ID|TAX_ID",
+  "proxy_type": "PHONE|EMAIL|NATIONAL_ID",
   "proxy_value": "090-xxxx-xxxx",
   "bank_id": "001",
   "account_id": "0010000001",
@@ -387,10 +387,86 @@ Query: `?state=...&payer_bank_id=...&payee_bank_id=...&lane=...&limit=50&offset=
 #### GET /api/transactions/:txid/events
 取引イベントログ照会
 
+#### GET /api/transactions/:txid/explain
+人間可読な状態遷移サマリー + 改ざん検知付き。`FinalityLog` を辿って
+イベントごとに日本語の reason / actors を付与し、`integrity.chain_verified`
+で同 TX のハッシュチェーン健全性を返す。
+
+Response（抜粋）:
+```json
+{
+  "txid": "TX-...",
+  "lane": "EXPRESS",
+  "current_state": "SETTLED",
+  "summary": "送金は正常に最終確定しました",
+  "timeline": [
+    { "seq": 1, "at": "...", "event": "PaymentInitiated",
+      "state_from": null, "state_to": "RECEIVED",
+      "reason": "送金リクエストを受け付けました", "actors": ["ZC"], "payload": {} },
+    ...
+  ],
+  "integrity": {
+    "chain_verified": true,
+    "entries_checked": 7,
+    "break_at_seq": null,
+    "break_reason": null,
+    "algorithm": "SHA-256 hash-chain v1"
+  },
+  "proofs": { "decision_proof_ref": "...", "payer_bank_proof_ref": "...",
+              "payee_bank_proof_ref": "...", "finality_log_ref": "..." }
+}
+```
+
+#### GET /api/transactions/:txid/story
+`/explain` の構造化データに加えて、ナラティブ段落 + Mermaid sequenceDiagram +
+健全性ヴァーディクト（`OK | WATCH | STUCK | TERMINAL`）を返す。オペレータが
+1 件の TX を画面でレビューする用途。
+
+Response（抜粋）:
+```json
+{
+  "txid": "TX-...",
+  "headline": "[EXPRESS] 001 → 002 の ¥5,000 は最終確定済み",
+  "narrative": "09:00:01 JST に 001 から 002 への ¥5,000 の取引（EXPRESS）が動き出しました。...",
+  "mermaid_sequence": "sequenceDiagram\n  autonumber\n  ...",
+  "pacing": {
+    "started_at": "...", "last_event_at": "...", "elapsed_ms": 123,
+    "longest_gap": { "from_event": "...", "to_event": "...", "gap_ms": 80 }
+  },
+  "health": { "status": "TERMINAL", "message": "...", "next_expected": [] },
+  "integrity": { "chain_verified": true, "entries_checked": 7 }
+}
+```
+`health.status = STUCK`（最後のイベントから 60 秒以上経過し、まだ終端状態に
+到達していない）が返ったら運用調査の合図。
+
+#### GET /api/transactions/:txid/verify
+TX チェーンのハッシュチェーン全件検証。
+
+Response:
+```json
+{
+  "chain_id": "TX-...",
+  "valid": true,
+  "entries_checked": 7,
+  "break_at_seq": null,
+  "break_reason": null,
+  "algorithm": "SHA-256 hash-chain v1"
+}
+```
+`valid: false` のとき `break_reason` は
+`LEGACY_UNCHAINED_ENTRY | PREV_HASH_MISMATCH | ENTRY_HASH_MISMATCH` のいずれか。
+
+#### GET /api/gtid/:gtid/verify
+GTID チェーン専用のハッシュチェーン検証。Response 形は `/transactions/:txid/verify`
+と同形（`chain_id` に gtid が入る）。
+
 #### GET /api/events
 全体イベントログ（最近N件）
 
 Query: `?limit=100&offset=0`
+
+Index: `idx_fl_occurred_at`（migration 0016）。
 
 #### GET /api/gtid/:gtid
 GTID照会
@@ -473,6 +549,76 @@ TigerBeetle風 DOベースH限度額直列化
 
 Request: `{ "amount": 1000 }`
 Response: `{ "success": true, "reservation_id": "H-DO-RES-..." }`
+
+---
+
+### Reversal（救済取引）
+
+SETTLED 済み TX に対する苦情・誤送金・二重送金などへの補償フロー。
+詳細は `zenith_policy.md` 制度編、データ構造は `schema.md § ReversalRecords`。
+
+#### POST /api/reversals
+補償取引を起票する。一部の `reason` は `approval_ref` 必須（社内統制の事前
+承認チケット番号など）。受理されると lane=STANDARD, purpose=REFUND の
+新規 TX が生成される。
+
+Request:
+```json
+{
+  "original_txid": "TX-...",
+  "amount": 5000,
+  "reason": "CUSTOMER_DISPUTE|DUPLICATE_PAYMENT|FRAUD|WRONG_RECIPIENT|...",
+  "requested_by": "001 (bank_id) | OPS",
+  "approval_ref": "string (required when reason ∈ APPROVAL_REQUIRED_REASONS)",
+  "description": "optional"
+}
+```
+Response 201:
+```json
+{
+  "result": "REVERSAL_CREATED",
+  "reversal_id": "REV-...",
+  "reversal_txid": "TX-...",
+  "status": "TX_CREATED"
+}
+```
+Response 422: `result` に `APPROVAL_REQUIRED | INVALID_ORIGINAL_STATE | AMOUNT_MISMATCH` 等。
+
+#### GET /api/reversals/:reversal_id
+特定 Reversal の状態と関連 TX を返す。
+
+#### GET /api/transactions/:txid/reversals
+ある TX に紐づく Reversal 一覧。
+
+---
+
+### Circuit Breaker（参加行疎通監視）
+
+ZC→Bank 呼び出しの連続失敗に対するブレーカー。状態は `CLOSED → OPEN → HALF_OPEN → CLOSED`。
+詳細は `schema.md § CircuitBreakerState` / `zenith_policy.md` § 縮退運用。
+
+#### GET /api/circuit-breaker
+全行のサーキットブレーカー状態とメトリクスを一覧。
+
+Response:
+```json
+{ "circuit_breakers": [
+  { "bank_id": "001", "state": "CLOSED", "consecutive_failures": 0,
+    "total_requests": 1234, "total_successes": 1200, "total_failures": 34,
+    "total_denied": 0, "half_open_inflight": 0,
+    "last_success_at": "...", "last_failure_at": "..." },
+  ...
+] }
+```
+
+#### GET /api/circuit-breaker/:bank_id
+特定行のサーキットブレーカー状態。未登録（メトリクスがまだ無い）行は
+`state: CLOSED` の初期値が返る（404 ではない）。
+
+#### POST /api/circuit-breaker/:bank_id/reset
+強制 CLOSED へリセット（運用オペレーション）。
+
+Response: `{ "result": "RESET", "bank_id": "..." }`
 
 ---
 
@@ -857,6 +1003,8 @@ Request: `{ "cycle_id": "..." }`
 | `/` `/dashboard` | メインダッシュボード（取引一覧・状態可視化） |
 | `/console` | オペレーションコンソール（Alpine.js + ECharts） |
 | `/bank-app` | 顧客向け銀行アプリ（Alpine.js） |
+| `/theater` `/theatre` | Settlement Theater — 状態遷移のアニメーション再生 |
+| `/sky` | Sky モード（システム俯瞰ビュー） |
 
 ---
 

@@ -22,10 +22,17 @@
 │   ├── 0011_fix_gtid_legs.sql              # GtidLegs スキーマ修正
 │   ├── 0012_fix_dns_cycles.sql             # DnsCycles スキーマ修正
 │   ├── 0013_retained_earnings_account.sql  # 利益剰余金勘定の追加
-│   └── 0014_circuit_breaker_reversal.sql   # Circuit Breaker / Reversal テーブル
+│   ├── 0014_circuit_breaker_reversal.sql   # Circuit Breaker / Reversal テーブル
+│   ├── 0015_finality_hash_chain.sql        # FinalityLog ハッシュチェーン化（prev_hash / entry_hash 列）
+│   ├── 0016_performance_indexes.sql        # ホットパスの索引追加
+│   ├── 0017_circuit_breaker_metrics.sql    # CircuitBreakerState に観測メトリクス 6 列追加
+│   ├── 0018_bug_fixes.sql                  # B4 approval_ref / B5・B6 FinalityLog 部分UNIQUE / B8 daily reset 列
+│   ├── 0019_gtid_chain_fix.sql             # B9 GTID チェーンの prev_hash 部分UNIQUE
+│   ├── 0020_hv_threshold.sql               # Participants.hv_threshold（HV 自動エスカレーション閾値）
+│   └── 0021_finality_seq_counter.sql       # B10 FinalitySeq カウンタ（event_seq の単調割当）
 │
 ├── schema/             # 統合済みスキーマのスナップショット（レビュー・参照用）
-│   └── baseline.sql                        # 全マイグレーションを統合した現時点のベースラインDDL
+│   └── baseline.sql                        # 全マイグレーションを統合した現時点のベースラインDDL（0015 以降の列が未反映の場合がある — 正は migrations/ と schema.md）
 │
 ├── specs/              # 仕様書・設計ドキュメント等のドキュメント群
 │   ├── zenith_public.html                  # ZC（中央基盤）の対外向け公的仕様書（ビューアー）
@@ -33,10 +40,11 @@
 │   ├── zenith_policy.md                    # 取引制度・業務ルール等のポリシー定義
 │   ├── schema.md                           # データベーステーブルの詳細なスキーマおよび関係の仕様
 │   ├── api-contracts.md                    # 基盤のAPI I/F仕様やJSONのスキーマ
+│   ├── architecture.md                     # 横断実装規約（errors / logger / lane helpers）とロードマップ
 │   └── file_structure.md                   # ［本ファイル］ディレクトリ構造の解説
 │
-├── src/                # バックエンド・フロントエンドのソースコード（HonoベースのWebサーバー）
-│   ├── index.ts                            # Honoのメインルーター・Workerエントリーポイント・Queue/Cron ハンドラ
+├── src/                # バックエンド・フロントエンドのソースコード（素の Cloudflare Workers fetch ハンドラ）
+│   ├── index.ts                            # Worker エントリーポイント・HTTP ルータ・Queue/Cron ハンドラ
 │   ├── html.d.ts                           # `.html` を文字列としてインポートするための型宣言
 │   ├── types.ts                            # 全型定義の単一バレル（下記 types/ を re-export）
 │   │
@@ -64,10 +72,12 @@
 │   │   ├── eod.ts                          # EOD 8 ステップ（DNS kick/settle・利息計上・残高スナップショット等）
 │   │   └── timeout_sweep.ts                # 1 分毎の停滞取引・HTLC タイムロック・GTID 失効処理
 │   │
-│   ├── dashboard/                          # フロントエンドの実装（静的HTMLとしてHonoからServeされる）
-│   │   ├── index.html                      # ZC（基盤）の全体の稼働状況やダッシュボード画面
-│   │   ├── console.html                    # 銀行および基盤向けのオペレーションコンソール
-│   │   └── bank-app.html                   # エンドユーザー（銀行ユーザー）向けのモックアプリ
+│   ├── dashboard/                          # フロントエンドの実装（静的HTMLとして Worker から Serve される）
+│   │   ├── index.html                      # ZC（基盤）の全体の稼働状況やダッシュボード画面（/, /dashboard）
+│   │   ├── console.html                    # 銀行および基盤向けのオペレーションコンソール（/console）
+│   │   ├── bank-app.html                   # エンドユーザー（銀行ユーザー）向けのモックアプリ（/bank-app）
+│   │   ├── theater.html                    # Settlement Theater — 状態遷移アニメーション（/theater, /theatre）
+│   │   └── sky.html                        # Sky モード — システム俯瞰ビュー（/sky）
 │   │
 │   ├── openapi/                            # OpenAPI 形式での API スキーマ生成
 │   │   ├── zc-api.ts                       # ZC Core API のスキーマ
@@ -83,15 +93,25 @@
 │   │   │   └── gtid.ts                     # GTID 多脚ファイナライズ判定
 │   │   │
 │   │   ├── lanes/                          # 個別レーン（送金の性質ごとの処理）の実装
-│   │   │   ├── _helpers.ts                 # 共通プリミティブ（transitionWithLog: CAS+FinalityLog、cancelInFlightTx: TOCTOU安全な取消順）
+│   │   │   ├── _helpers.ts                 # 共通プリミティブ（transitionWithLog: ALLOWED_TRANSITIONS 検証 + CAS+FinalityLog の atomic batch、cancelInFlightTx: TOCTOU安全な取消順）
 │   │   │   ├── express.ts                  # Fast-track 店舗決済等（H 予約で即時確定）
 │   │   │   ├── standard.ts                 # 名義確認・オーソリを伴う標準の一般送金
 │   │   │   ├── bulk.ts                     # 一括決済・LSM キューイング
-│   │   │   ├── highvalue.ts                # 日銀 RTGS 決済を介在する高額送金
+│   │   │   ├── highvalue.ts                # 日銀 RTGS 決済を介在する高額送金（H 予約スキップ）
 │   │   │   ├── htlc.ts                     # 条件付きスマートコントラクト的取引（Hash Time-Lock）
-│   │   │   ├── htlc_auth.ts                # HTLC Auth（受取側起点オーソリ）フロー・ホワイトリスト自動承認
+│   │   │   ├── htlc_auth.ts                # HTLC Auth バレル（受取側起点オーソリ）
+│   │   │   ├── htlc_auth/                  # HTLC Auth 機能分割
+│   │   │   │   ├── whitelist.ts            # 加盟店ホワイトリスト管理（register / revoke / list）
+│   │   │   │   ├── request.ts              # 受取側オーソリリクエスト + 送金側 decline
+│   │   │   │   ├── approve.ts              # 送金側承認（preimage 生成 + canonical RECEIVED → HTLC_LOCKED）
+│   │   │   │   ├── capture.ts              # 受取側キャプチャ + ボイド
+│   │   │   │   └── query.ts                # オーソリ参照（list / get）
 │   │   │   ├── gtid.ts                     # グローバル ID による原子決済・多脚決済
-│   │   │   └── rtp.ts                      # 請求からのプル型決済（Request to Pay）
+│   │   │   ├── rtp.ts                      # RTP バレル
+│   │   │   └── rtp/                        # RTP 機能分割
+│   │   │       ├── register.ts             # RTP 請求作成・支払人通知
+│   │   │       ├── respond.ts              # 支払人 accept / decline
+│   │   │       └── query.ts                # RTP 参照・期限切れ cron sweep
 │   │   │
 │   │   ├── dns.ts                          # 日次ネット清算（DNS）サイクルの処理
 │   │   ├── igs.ts                          # 高額送金等のプレファンド制約即時清算
@@ -108,6 +128,9 @@
 │   │   ├── case.ts                         # CASE（紛争・例外）管理 OPEN→IN_PROGRESS→RESOLVED/ESCALATED
 │   │   ├── reversal.ts                     # Reversal（b ファイナリティ後の救済別取引）
 │   │   ├── circuit_breaker.ts              # 参加行ヘルス監視と段階的遮断・再開
+│   │   ├── finality_chain.ts               # FinalityLog の SHA-256 ハッシュチェーン計算・検証
+│   │   ├── explain.ts                      # GET /api/transactions/:txid/explain（理由付き timeline + 改ざん検知）
+│   │   ├── story.ts                        # GET /api/transactions/:txid/story（ナラティブ + Mermaid + 健全性）
 │   │   ├── query.ts                        # Transaction 参照 API（Appendix E.6 QueryResponse）
 │   │   ├── stream.ts                       # 銀行向け SSE（tx_state_change / credit_notification / rtp_request）
 │   │   ├── stream_rafiki.ts                # Rafiki風ストリーミング決済 WebSocket/DOバッファ
@@ -132,7 +155,7 @@
 │
 ├── remote_participants.json                # リモート環境での参加行シードデータ
 ├── test.json                               # ローカル動作確認用の試験ペイロード
-├── package.json                            # Node.js 依存関係定義（Hono, wrangler, vitest 等）
+├── package.json                            # Node.js 依存関係定義（wrangler, vitest, better-sqlite3 等。Web フレームワークは使わず素の Workers fetch ハンドラ）
 ├── tsconfig.json                           # TypeScript コンパイル設定
 ├── tsconfig.test.json                      # テスト用 TypeScript 設定
 ├── vitest.config.ts                        # vitest 設定
@@ -146,5 +169,5 @@
 - **ドメイン分割**: ZC（中央基盤）のコアは `src/zc/` に、参加銀行のモックは `src/bank/` に分かれます。両者から呼ばれる純粋ユーティリティは `src/shared/` に集約しています。
 - **非同期処理**: Queue consumer（`src/zc/orchestrator.ts` とその配下の `orchestrator/`）が状態遷移の実行役となり、`src/cron/` は EOD 清算とタイムアウト掃引を担当します。
 - **型定義の単一化**: 型はすべて `src/types.ts` から公開され、実体は `src/types/` 配下の 4 つのサブモジュールに分割されています。利用側は常に `src/types.ts` からのみインポートします。
-- **フロントエンドダッシュボード**: `src/dashboard/` 内の HTML ファイルは、Alpine.js と Tailwind CSS で書かれた SPA 的なフロント実装で、Hono から静的に Serve されます。
+- **フロントエンドダッシュボード**: `src/dashboard/` 内の HTML ファイルは、Alpine.js と Tailwind CSS で書かれた SPA 的なフロント実装で、Worker が `Response(htmlString)` で静的 Serve します。
 - **テスト**: `test/` は `src/` のディレクトリ構成をミラーし、`test/helpers/d1-mock.ts` が提供する in-memory SQLite（better-sqlite3）を用いた統合テストとして動作します。
