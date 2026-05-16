@@ -1,278 +1,149 @@
-<!-- 
-SEO Keywords: payment system, payment settlement, fintech, cloudflare workers, typescript, banking, japan, dtm, rtgs, payment rails, financial infrastructure, distributed settlement, real-time settlement, payment coordination, settlement architecture, financial rails
-Recommended GitHub Topics: payment-system, fintech, cloudflare-workers, typescript, settlement, banking, financial-infrastructure, payment-rails, settlement-engine
--->
-
 # Zenith Payment System
 
-Reference implementation of the Zenith Coordinator—a next-generation payment settlement architecture designed for transparency, auditability, and distributed coordination.
-
-**Status:** Reference Implementation | **License:** MIT | **Cost:** Zero operational cost (Cloudflare free tier)
-
----
-
-## Overview
-
-Traditional payment systems operate as black boxes. Money is sent, disappears into infrastructure, and neither the customer nor support staff can explain what happened or where funds are at any moment.
-
-Zenith treats payments as explicable state sequences rather than opaque transactions:
-
-```
-RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE 
-→ PAYER_EXEC_CONFIRMED → PAYEE_EXEC_CONFIRMED → SETTLED
-```
-
-Every state change is logged in an append-only FinalityLog, making the entire settlement process auditable and real-time transparent.
-
-### Core Principles
-
-- **Explicability** — Every state transition is recorded, auditable, and understandable
-- **Coordination** — Multi-bank settlements with atomic guarantees where possible
-- **Auditability** — Append-only event log with full context for each state change
-- **Resilience** — Circuit breaker patterns, graceful degradation, automatic health monitoring
-- **Idempotency** — Safe retry semantics for all operations
+> 決済を「ブラックボックス」ではなく、「説明できる状態の連なり」として扱うための、共通基盤の参照実装です。
+> — Zenith 構想より
 
 ---
 
-## Unified TradFi / DeFi Settlement Semantics
+## 日本語
 
-Zenith is not a bridge between two worlds — it collapses them into a single state vocabulary.
+### この文書について
 
-Traditional payment rails (RTGS, deferred net settlement, Zengin-style retail transfers, ISO 20022 messaging, FATF R.16 travel rule) and DeFi-native primitives (hash-time-locked contracts, multi-leg atomic swaps, preimage-conditional release) are expressed as **different lanes over the same state machine** (`RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE → … → SETTLED`), written to the same `FinalityLog`, and governed by the same idempotency and optimistic-locking guarantees.
+このリポジトリは、**Zenith Coordinator（ZC）** という構想の参照実装です。
 
-| Lane | Heritage | Finality primitive |
-|------|---------|--------------------|
-| EXPRESS / STANDARD / BULK | TradFi (retail, Zengin-era) | H-reserve + netting |
-| HIGH-VALUE | TradFi (central bank RTGS) | BOJ-style real-time gross settlement |
-| DNS cycle | TradFi (clearing house) | End-of-day net position |
-| HTLC / HTLC-AUTH | DeFi-native | Hashlock + timelock (preimage release) |
-| GTID | Hybrid (atomic multi-leg) | All-or-nothing across legs |
-| RTP | Hybrid (pull-based, payee-initiated) | Name verification + authorization |
+かつて銀行のなかで決済の制度・サービス企画と、政府渉外（規制当局・関係省庁との対話）に携わっていた個人が、現在はまったく異なる仕事をしている立場から、**機密資料は一切用いずに**、「こうした基盤があれば、日本の決済はもう一段上に行けるかもしれない」という願いをこめて、基本コンセプトから書き起こしたものです。
 
-### How this relates to prior art
+業務知見をもとに「決済を説明可能な状態機械として扱う」という設計思想を一貫して通し、TypeScript と Cloudflare Workers のうえで、最後まで動くところまで実装してあります。趣味で書いたものなので、現実のいずれの組織・システム・運用も示していません。
 
-The closest precedents in the public literature are central-bank experiments, each of which covers only a subset of what Zenith unifies:
+構想そのものの出発点は、別ページにまとまっています：[Zenith 構想・基本コンセプト](https://www.sakuolia.jp/zenith.md)
 
-- **BIS Project Stella Phase 2** (Bank of Japan + ECB, 2018) — HTLC-based cross-DLT synchronised settlement. Research PoC; no RTGS, DNS, or FATF integration.
-- **BIS Project Jasper-Ubin** (Bank of Canada + MAS) — HTLC atomic cross-border payment between two separate DLTs.
-- **BIS Project Agorá** (7 central banks + private banks, 2024–) — Tokenised deposits + wholesale CBDC on a unified ledger. Design-stage; reference code not public.
-- **BIS Project mBridge** — Multi-CBDC cross-border payment, permissioned DLT.
-- **Partior** (DBS / JPMorgan / Temasek / Standard Chartered) — Blockchain-native multi-currency clearing.
-- **Fnality** — Tokenised central bank money for wholesale settlement.
-- **JPM Onyx / Coin Systems**, **Canton Network**, **DCJPY / Progmat** — Deposit-token issuance layers.
+### なぜ作ったのか
 
-What is unusual about Zenith — and what we have not found in a public open-source codebase — is the explicit choice to express **HTLC, GTID atomic multi-leg, RTGS, and DNS netting as coequal lanes inside one orchestrator**, rather than as separate systems with adapters. Most prior work treats "TradFi rails" and "DLT rails" as distinct ledgers joined by a bridge; Zenith treats them as different lanes on the same state machine. See `src/zc/orchestrator/state_machine.ts` and `src/zc/lanes/` for the implementation.
+日本の決済システムは、世界水準で見ても堅牢で、長く安定して動いてきました。これは多くの先達と現場の積み重ねの結果です。一方で、利用者の側から眺めたときの **「いま、自分のお金がどこにあるのか」「なぜ遅れているのか」「誰に聞けば分かるのか」** といった説明可能性については、まだ伸びしろが残っているように感じています。
 
-This makes Zenith a reference for questions like:
-- What does a tokenised-deposit HTLC look like if its lifecycle is logged in the same append-only audit trail as an RTGS settlement?
-- How should FATF R.16 travel-rule data attach to a hash-time-locked payment?
-- Can DNS end-of-day netting coexist with intraday atomic multi-leg (GTID) in one coordinator?
+Zenith 構想は、既存のレールを置き換えるものではありません。各金融機関の勘定系と口座管理は、これまで通りそれぞれの責任のもとに置いたまま、**その「間」で起きていることを、後からでも同じ取引番号で説明できる**ようにする協調層を、社会の共有物として描き直す試みです。
 
----
+この実装は、その構想を読み物として伝えるだけでなく、**手で触れて動かせる形** にすることを意図しています。
 
-## Use Cases
+### このシステムは何をするか・何をしないか
 
-### For Financial Institutions
+- **すること**：複数の銀行のあいだで起きる決済を、**受理 → Decision（決定）→ Execution（実施確認）→ b（確定）** という状態の連なりに固定し、すべての状態遷移を追記専用の FinalityLog に記録します。利用者・事業者・当局のいずれに対しても、同じ取引番号で同じ説明ができるようにします。
+- **しないこと**：参加者の勘定系・口座管理を置き換えません。本人確認・与信・限度管理の基準は各参加主体の裁量に委ねます。法的判断は行いません。
 
-Reference implementation for modernizing settlement infrastructure. Demonstrates best practices for:
-- State machine design under concurrency
-- Auditability and compliance logging
-- Multi-bank coordination protocols
-- Graceful failure and recovery
+### 設計思想・10 箇条の要点
 
-### For Fintech Builders
+1. 唯一の正は **Finality Log**。派生ビューは捨てて再構築できる。
+2. **Decision と Execution は必ず分離** する。
+3. 不可逆境界は原則 **b（PAYEE_EXEC_CONFIRMED）**。b 後の救済は Reversal（別取引）として扱う。
+4. **説明できない状態は禁止**。未決・不整合は必ず CASE へ収束させる。
+5. 同期応答の意味は契約で固定する。
+6. 証跡は後付けしない。
+7. レーンは UX 区分ではなく、**確定点と証跡の契約**。
+8. **H（仕向超過限度）は状態として管理** し、絶対超過を許さない。
+9. 危機対応は例外ではなく **制度化された状態遷移** として扱う。
+10. 単一正本性は分散合意ログで担保し、不確定時は Read-only へ縮退する。
 
-Pre-integration testing environment before connecting to real bank APIs. Validate:
-- Settlement lane behavior
-- Edge cases and failure modes
-- API contract compliance
-- Performance characteristics under load
+詳細は [`specs/zenith_public.md`](specs/zenith_public.md) に書きました。
 
-### For Payment Researchers
+### 同じ語彙で TradFi と DeFi を語る
 
-Sandbox for exploring novel settlement architectures without regulatory constraints. Experiment with:
-- New lane patterns
-- Alternative state machines
-- Cross-border settlement mechanisms
-- Netting and clearing strategies
+Zenith は、伝統的決済レール（RTGS、DNS ネッティング、全銀系リテール、ISO 20022、FATF R.16）と、新しい原始要素（ハッシュタイムロック、原子マルチレグ）を、**橋渡し（bridge）ではなく、同じ状態機械のうえに並ぶレーン** として扱います。
 
-### For Developers
+| レーン | 出自 | ファイナリティ原始要素 |
+| --- | --- | --- |
+| EXPRESS / STANDARD / BULK | 伝統系（リテール、全銀系） | H 予約 + ネッティング |
+| HIGH_VALUE | 伝統系（中央銀行 RTGS） | 即時グロス決済 |
+| DNS サイクル | 伝統系（清算機関） | 日次ネットポジション |
+| HTLC / HTLC_AUTH | DeFi ネイティブ | ハッシュロック + タイムロック |
+| GTID | ハイブリッド（原子マルチレグ） | レッグ横断 all-or-nothing |
+| RTP | ハイブリッド（受取人発起プル） | 名義確認 + 事前承認 |
 
-Educational codebase for understanding modern payment system design. Learn:
-- How payments actually flow through settlement infrastructure
-- Distributed consensus under financial constraints
-- Database design for auditability
-- Concurrency control in financial systems
+公開されている先行例（BIS Project Stella Phase 2、Jasper-Ubin、Agorá、mBridge、Partior、Fnality、JPM Onyx、Canton Network、DCJPY / Progmat 等）は、いずれも上の表の一部のみを扱っています。**HTLC・GTID 原子マルチレグ・RTGS・DNS ネッティングを 1 つのオーケストレータの対等なレーンとして表現したオープンソース実装** は、知る限り見当たりませんでした。そこをひとつの状態機械に畳んだことが、この参照実装の中心的な貢献です。実装は [`src/zc/orchestrator/state_machine.ts`](src/zc/orchestrator/state_machine.ts) と [`src/zc/lanes/`](src/zc/lanes/) を参照してください。
 
----
+### 「制度」として書かれている部分
 
-## Getting Started
+このリポジトリの特色は、コードや方式設計と並んで、**制度（規程・ガバナンス）の文書を同じ語彙・同じ温度で書いている** ことだと考えています。
 
-### Requirements
+- 4 眼承認、ブレークグラス手続き
+- 利用目的コード（P01〜P07）と最小化原則
+- DNS_HOLD 時の初動連絡・公表統制・LPB（流動性供給銀行）スキーム・共同拠出・最終的な中央銀行手当の発動順序
+- WORM 保全と第三者保証の接続
+- 「規範」と「推奨」の使い分け
 
-- Node.js 18+
-- npm 8+
-- Cloudflare account (free tier eligible)
+これらは [`specs/zenith_policy.md`](specs/zenith_policy.md) に集約しています。技術仕様だけでは決済システムは社会に着地しないため、**制度面までを同じ姿勢で書き切る** ことを大切にしました。
 
-### 5-Minute Deploy
+### 触れてみる
+
+#### 必要なもの
+
+- Node.js 18 以上
+- npm 8 以上
+- Cloudflare アカウント（無料枠で動作）
+
+#### ローカルで動かす
 
 ```bash
-# 1. Clone and install
-git clone https://github.com/pochatt/zenith-mock.git
-cd zenith-mock
+git clone https://github.com/pochatt/zenith-payment-system.git
+cd zenith-payment-system
 npm install
+npm run db:migrate:local
+npm run dev   # http://localhost:8787
+```
 
-# 2. Authenticate with Cloudflare
+#### Cloudflare 上にデプロイする
+
+```bash
 npx wrangler login
-
-# 3. Create resources
 npx wrangler d1 create zenith-db
 npx wrangler queues create zenith-mock-queue
 npx wrangler r2 bucket create zenith-mock-r2
-
-# 4. Configure
 cp wrangler.toml.example wrangler.toml
-# Edit wrangler.toml with your database_id
-
-# 5. Apply migrations
+# wrangler.toml の database_id 等を埋める
 npm run db:migrate:remote
-
-# 6. Deploy
 npm run deploy
-
-# 7. Seed initial data
-curl -X POST https://zenith-mock.<your-domain>.workers.dev/internal/seed
+curl -X POST https://<your-worker>.workers.dev/internal/seed
 ```
 
-Dashboard is now live at `https://zenith-mock.<your-domain>.workers.dev`
+ダッシュボードはデプロイ先 URL のルートで表示されます。
 
-### Local Development
+### コマンド一覧
 
 ```bash
-npm run db:migrate:local
-npm run dev  # http://localhost:8787
+npm run dev               # ローカル開発サーバー
+npm run deploy            # Cloudflare へデプロイ
+npm run type-check        # TypeScript 型チェック
+npm run test              # テストスイート（399 ケース）
+npm run test:watch        # ウォッチモード
+npm run db:migrate:local  # ローカル D1 にマイグレーション
+npm run db:migrate:remote # リモート D1 にマイグレーション
 ```
 
----
-
-## Features
-
-### Settlement Lanes
-
-| Lane | Purpose | Finality Model |
-|------|---------|---|
-| EXPRESS | Instant retail payments | H-reserve backed |
-| STANDARD | General P2P transfers | Name verification + authorization |
-| HTLC | Conditional escrow settlement | Hash-time-lock release |
-| RTP | Invoice-initiated collections | Payee-initiated pull |
-| GTID | Multi-bank atomic transfers | Coordinated all-or-nothing |
-| HIGH-VALUE | Large RTGS transfers | BOJ real-time gross settlement |
-| BULK | Batch processing | End-of-day netting |
-
-### Advanced Features
-
-- **Daily Net Settlement (DNS)** — EOD cycle with position netting
-- **Limit Operations (TigerBeetle-style DO)** — Strict single-threaded Headroom reservation overcoming D1 lock limits
-- **Directory ALS (Mojaloop KV)** — O(1) alias caching bypassing DB loads
-- **Streaming Micro-payments (Rafiki-style)** — WebSockets & DO-alarm based batched finality
-- **QR Payments** — Static and dynamic codes with HMAC validation
-- **Alias Resolution** — Phone, email, corporate ID routing
-- **Cross-Border** — FATF R.16 compliant international transfers
-- **Account Verification** — Pre-settlement name and account matching
-- **EDI / Rich Data** — Structured commercial data integration
-- **Circuit Breaker** — Automatic health monitoring with graceful degradation
-- **Event Stream** — Real-time SSE notifications to participating banks
-
----
-
-## Architecture
-
-### State Machine
-
-All transactions follow a deterministic state machine with explicit allowed transitions. Prevents invalid state combinations and ensures consistency across concurrent writes.
+### 状態機械（中核）
 
 ```typescript
-// From src/zc/orchestrator/state_machine.ts
+// src/zc/orchestrator/state_machine.ts
 const ALLOWED_TRANSITIONS = {
-  RECEIVED:              ['PRECHECKED', 'HTLC_LOCKED', 'DECIDED_CANCEL'],
-  PRECHECKED:            ['PRECHECKED_SUSPENDED', 'H_RESERVED', 'DECIDED_CANCEL', 'DECIDED_TO_SETTLE'], // HIGH_VALUE only
-  PRECHECKED_SUSPENDED:  ['PRECHECKED', 'DECIDED_CANCEL'],
-  H_RESERVED:            ['DECIDED_TO_SETTLE', 'DECIDED_CANCEL'],
-  DECIDED_TO_SETTLE:     ['PAYER_EXEC_CONFIRMED', 'PAYEE_EXEC_CONFIRMED', 'SUSPENDED'], // PAYEE_EXEC_CONFIRMED: GTID PAYEE leg
-  DECIDED_CANCEL:        ['CANCELLED'],
-  PAYER_EXEC_CONFIRMED:  ['PAYEE_EXEC_CONFIRMED', 'SUSPENDED'],
-  PAYEE_EXEC_CONFIRMED:  ['SETTLED'],
-  SUSPENDED:             ['PAYER_EXEC_CONFIRMED', 'PAYEE_EXEC_CONFIRMED', 'FAILED_EXECUTION'],
-  HTLC_LOCKED:           ['HTLC_FULFILL_REQUESTED', 'DECIDED_CANCEL'],
-  HTLC_FULFILL_REQUESTED:['DECIDED_TO_SETTLE', 'FAILED_EXECUTION'],
-  // Terminal: SETTLED, FAILED_EXECUTION, CANCELLED
-};
+  RECEIVED:               ['PRECHECKED', 'HTLC_LOCKED', 'DECIDED_CANCEL'],
+  PRECHECKED:             ['PRECHECKED_SUSPENDED', 'H_RESERVED', 'DECIDED_CANCEL', 'DECIDED_TO_SETTLE'],
+  PRECHECKED_SUSPENDED:   ['PRECHECKED', 'DECIDED_CANCEL'],
+  H_RESERVED:             ['DECIDED_TO_SETTLE', 'DECIDED_CANCEL'],
+  DECIDED_TO_SETTLE:      ['PAYER_EXEC_CONFIRMED', 'PAYEE_EXEC_CONFIRMED', 'SUSPENDED'],
+  DECIDED_CANCEL:         ['CANCELLED'],
+  PAYER_EXEC_CONFIRMED:   ['PAYEE_EXEC_CONFIRMED', 'SUSPENDED'],
+  PAYEE_EXEC_CONFIRMED:   ['SETTLED'],
+  SUSPENDED:              ['PAYER_EXEC_CONFIRMED', 'PAYEE_EXEC_CONFIRMED', 'FAILED_EXECUTION'],
+  HTLC_LOCKED:            ['HTLC_FULFILL_REQUESTED', 'DECIDED_CANCEL'],
+  HTLC_FULFILL_REQUESTED: ['DECIDED_TO_SETTLE', 'FAILED_EXECUTION'],
+  // 終端: SETTLED, FAILED_EXECUTION, CANCELLED
+}
 ```
 
-Lane-specific edges:
-- `RECEIVED → HTLC_LOCKED` (HTLC / HTLC_AUTH canonical entry)
-- `PRECHECKED → DECIDED_TO_SETTLE` (HIGH_VALUE only — H-reserve skipped because BOJ RTGS path carries the liquidity guarantee)
-- `DECIDED_TO_SETTLE → PAYEE_EXEC_CONFIRMED` (GTID PAYEE leg only — no payer-side debit)
-- `SUSPENDED → PAYEE_EXEC_CONFIRMED` (HIGH_VALUE only, on `EVT_CB_SETTLED`)
+すべての状態遷移は `transitionWithLog` ヘルパを通り、`Transactions` への CAS UPDATE と `FinalityLog` への INSERT を 1 つの D1 バッチでアトミックに発行します。**「状態だけが進んで監査ログが残らない窓」は構造的に存在しません。**
 
-### Request Flow
+### API のかたち（最小例）
 
-```
-HTTP Request
-    ↓
-[Validation & Schema Check]
-    ↓
-[Lane-Specific Logic]
-    ↓
-[State Machine Verification]
-    ↓
-[FinalityLog Append]
-    ↓
-[Queue Enqueue]
-    ↓
-HTTP 202 Accepted
-    ↓
-[Async Processing]
-    ↓
-[Bank Calls via Circuit Breaker]
-    ↓
-[Finality Confirmation]
-```
-
-### Database Design
-
-28 optimized tables across core settlement, traceability, and bank operations:
-
-**Core Settlement**
-- `Transactions` — Payment records with state tracking
-- `Participants` — Participating banks with H-limits
-- `HReservations` — H-model funds reservation
-
-**Traceability**
-- `FinalityLog` — Append-only state change log
-- `TxEventLog` — Detailed processing events and audit trail
-- `BankAuditLog` — Per-bank command history
-
-**Specialized Lanes**
-- `HtlcContracts`, `GtidTransactions`, `RtpRequests`
-
-**Bank Operations**
-- `BankAccounts` — Account master
-- `BankJournals` — Zero-sum double-entry ledger
-- `SuspenseDetails` — Custody and suspense handling
-
-See `specs/schema.md` for full schema documentation.
-
----
-
-## API
-
-All endpoints are documented in `specs/api-contracts.md`.
-
-### Core Endpoints
-
-**Initiate Payment**
 ```bash
+# 送金の起票
 POST /api/transfers
 Content-Type: application/json
 
@@ -280,491 +151,341 @@ Content-Type: application/json
   "schema_version": "1.0",
   "message_type": "EVENT",
   "name": "PaymentInitiated",
-  "txid": "TX-...",
-  "lane": "EXPRESS",
+  "txid":  "TX-...",
+  "lane":  "EXPRESS",
   "amount": { "value": 5000, "currency": "JPY" },
-  "payer": { "bank_id": "001", "account_hash": "h:..." },
-  "payee": { "bank_id": "002", "account_hash": "h:..." }
+  "payer":  { "bank_id": "001", "account_hash": "h:..." },
+  "payee":  { "bank_id": "002", "account_hash": "h:..." }
 }
+
+# 取引の照会（誰が照会しても、同じ取引番号で同じ説明が返る）
+GET /api/transactions/TX-...
 ```
 
-**Query Transaction**
-```bash
-GET /api/transactions/TX-123
+エンドポイントの全容は [`specs/api-contracts.md`](specs/api-contracts.md) に記載しています。
 
-{
-  "txid": "TX-123",
-  "state": "SETTLED",
-  "decision": { "status": "DECIDED_TO_SETTLE" },
-  "execution": {
-    "a": "OK",
-    "b": "OK",
-    "payer_bank_proof_ref": "PROOF-...",
-    "payee_bank_proof_ref": "PROOF-..."
-  },
-  "as_of": "2026-04-18T12:34:56Z"
-}
-```
+### 主な機能
 
-**List Transactions**
-```bash
-GET /api/transactions?state=SETTLED&lane=EXPRESS&limit=50&offset=0
-```
+| レーン | 用途 | ファイナリティ |
+| --- | --- | --- |
+| EXPRESS | 店舗・即時 | H 予約担保 |
+| STANDARD | 通常送金 | 名義確認 + 承認 |
+| HTLC | 条件付きエスクロー | ハッシュロック解放 |
+| HTLC_AUTH | 受取側起点オーソリ | Capture で b 成立 |
+| RTP | 請求型回収 | 受取人発起 |
+| GTID | 多者協調 | 全 leg の b 一致 |
+| HIGH_VALUE | 高額即時（中銀経由） | RTGS 確定 |
+| BULK | 大量バッチ | 日次ネッティング |
 
----
+横断機能：
 
-## Performance
+- 日次ネット清算（DNS）サイクル管理
+- 限度額直列化（TigerBeetle 流 Durable Object）
+- ディレクトリ ALS（O(1) エイリアス解決キャッシュ）
+- ストリーミング・マイクロ決済（Rafiki 流）
+- QR 決済（静的／動的、HMAC 検証）
+- エイリアス解決（電話・メール・法人 ID）
+- FATF R.16 に沿ったクロスボーダー
+- 口座名義確認、EDI／リッチデータ
+- サーキットブレーカと自動健全性監視
+- SSE による参加銀行向けイベントストリーム
 
-Measured on Cloudflare Workers (shared infrastructure):
-
-| Operation | Latency (p99) | Throughput |
-|-----------|---|---|
-| Payment initiation → decision | 120–180ms | - |
-| Bank ingress call + response | 200–300ms | - |
-| Query transaction | <50ms | - |
-| Single Worker | - | ~500 TPS |
-
-Horizontal scaling available across Cloudflare's global edge.
-
----
-
-## Testing
+### テスト
 
 ```bash
-npm run test              # Run all tests
-npm run test:watch       # Watch mode
-npx vitest test/zc/express.test.ts  # Single file
+npm run test                          # 全 399 ケース
+npx vitest test/zc/express.test.ts    # 単一ファイル
 ```
 
-Integration tests run against in-memory SQLite (via better-sqlite3), with full schema and realistic settlement scenarios including:
-- Concurrent transaction processing
-- Network failures and retries
-- State machine constraint violations
-- Circuit breaker activation/recovery
+`better-sqlite3` を D1 のインメモリ・モックとして用い、本物のスキーマに対して並行処理・冪等再送・ゼロサム残高不変条件・サーキットブレーカ復帰などを統合的に検証します。`test/integration/balance_invariants.test.ts` では、各レーンについて「payer 顧客 Δ = −amount」「payee 顧客 Δ = +amount」「行内ゼロサム」「BOJ 系の保存則」を仕訳まで往復で固定しています。
+
+### 文書地図
+
+このリポジトリは **構想（読み物）→ 方式設計 → 制度・ガバナンス → インタフェース／データ** の四層で整理しています。
+
+- **構想（読み物）**
+  - [Zenith 構想・基本コンセプト](https://www.sakuolia.jp/zenith.md)
+- **方式設計**
+  - [`specs/zenith_public.md`](specs/zenith_public.md) — 設計思想、状態機械、レーン別フロー、補遺 A〜F（全 15 章）
+  - [`specs/architecture.md`](specs/architecture.md) — 横断的な実装規約と、コード品質を引き上げるためのロードマップ
+- **制度・ガバナンス**
+  - [`specs/zenith_policy.md`](specs/zenith_policy.md) — 規程、データガバナンス、DNS_HOLD 時の発動順序
+- **インタフェース／データ**
+  - [`specs/api-contracts.md`](specs/api-contracts.md) — エンドポイント一覧と Error Catalog
+  - [`specs/schema.md`](specs/schema.md) — テーブル定義、マイグレーション運用、Index Catalog
+  - [`specs/file_structure.md`](specs/file_structure.md) — ディレクトリ構成
+
+### 実装の現状と限界（誠実に）
+
+このリポジトリは個人による趣味の参照実装であり、本番運用を意図したものではありません。
+
+- 銀行ーコーディネータ間は HMAC-SHA256 署名検証のみです。TLS / mTLS、認証・認可、保存時暗号化、規制適合の制御は実装範囲外です。
+- パフォーマンスの値は Cloudflare の開発環境での観測値であり、本番ワークロードでの保証ではありません。
+- 一部の規範要件（DNS_HOLD の igs_mode 階層遷移、長期 H_locked の自動解放、`MisrecordCorrected`、Bulk LSM の最適化、GTID の N:M fan-in / fan-out など）は方式設計に記述しましたが、実装は道半ばです。詳細は [`specs/architecture.md`](specs/architecture.md) § 7 を参照してください。
+
+意図は **実物の代わりではなく、議論のたたき台** を提供することです。
+
+### 想定する読者
+
+- 決済の制度・サービス企画にかかわるかた、または関心のあるかた
+- 銀行・決済事業者のシステム部門、システムインテグレータのエンジニアのかた
+- 中央銀行・規制当局周辺で、説明可能性や監査性に関心のあるかた
+- 学生、研究者、個人開発者のかた
+
+異なる立場のかたに、それぞれの視点で読んでいただけるよう、構想・方式・制度・コードを同じ温度で並べました。
+
+### ライセンス
+
+MIT License。詳細は [LICENSE](LICENSE) をご覧ください。
+
+### 連絡
+
+- 質問・議論：[GitHub Issues](https://github.com/pochatt/zenith-payment-system/issues)
+- 構想全体：[Zenith 構想（sakuolia.jp）](https://www.sakuolia.jp/zenith.md)
+
+> このリポジトリと付属文書はフィクションであり、実在のいずれの組織・システム・運用も示していません。
 
 ---
 
-## Deployment
+## English
 
-### Production Considerations
+### About this document
 
-This reference implementation is suitable for:
-- Development and testing environments
-- Integration testing before production deployment
-- Sandbox/training systems
-- Research prototypes
-
-**Not suitable for production without:**
-- TLS termination
-- Authentication and authorization
-- Encryption at rest
-- Regulatory audit and compliance review
-- Formal security assessment
-
-### Production Deployment Pattern
-
-Use this implementation as a reference for building your own settlement system:
-
-1. **Study the state machines** — `src/zc/orchestrator/state_machine.ts`
-2. **Understand the protocols** — `specs/zenith_public.md`
-3. **Review the data model** — `specs/schema.md`
-4. **Implement in your stack** — Apply the patterns to your infrastructure
-5. **Apply compliance framework** — Add regulatory controls for your jurisdiction
-
----
-
-## Configuration
-
-Configuration lives in `wrangler.toml` (created from template `wrangler.toml.example`):
-
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "zenith-db"
-database_id = "YOUR_DATABASE_ID"
-
-[[queues.producers]]
-binding = "QUEUE"
-queue = "zenith-mock-queue"
-
-[[queues.consumers]]
-queue = "zenith-mock-queue"
-max_batch_size = 100
-max_batch_timeout = 30
-
-[[r2_buckets]]
-binding = "R2"
-bucket_name = "zenith-mock-r2"
-
-[env.production]
-vars = { LOG_LEVEL = "info" }
-```
-
----
-
-## Database Migrations
-
-Migrations are sequential and immutable. New schema changes always go in a new numbered file:
-
-```bash
-cat > migrations/0015_add_feature.sql << 'EOF'
-ALTER TABLE Transactions ADD COLUMN feature_flag TEXT;
-CREATE INDEX idx_feature ON Transactions(feature_flag);
-EOF
-
-npm run db:migrate:remote
-```
-
-To reset database (development only):
-```bash
-npx wrangler d1 delete zenith-db --yes
-npx wrangler d1 create zenith-db
-# Update database_id in wrangler.toml
-npm run db:migrate:remote
-```
-
----
-
-## Commands
-
-```bash
-npm run dev              # Local dev server
-npm run deploy           # Deploy to Cloudflare
-npm run type-check       # TypeScript type checking
-npm run test             # Run test suite
-npm run test:watch       # Test watch mode
-npm run db:migrate:local # Apply migrations locally
-npm run db:migrate:remote # Apply migrations to remote D1
-```
+This repository is a reference implementation of the **Zenith Coordinator (ZC)** concept.
 
----
-
-## Directory Structure
+It was written by an individual who once worked on payment-system planning and government relations inside the Japanese banking sector, and who is now in a different line of work. **No confidential material has been used**; everything here has been rebuilt from first principles, as a personal project, in the hope that — with a coordination layer of this kind — Japan's payment infrastructure could take one more step forward.
 
-```
-zenith-mock/
-├── migrations/           # D1 SQL migrations (0001–0021)
-├── schema/
-│   └── baseline.sql      # Schema snapshot (reference)
-├── specs/                # Documentation
-│   ├── zenith_public.md  # Architecture & design
-│   ├── api-contracts.md  # Endpoint reference
-│   ├── schema.md         # Database reference
-│   └── zenith_policy.md  # Business rules
-├── src/
-│   ├── index.ts          # Worker entry point
-│   ├── types.ts          # Type definitions barrel
-│   ├── types/            # Type modules
-│   ├── shared/           # Shared utilities
-│   ├── cron/             # Scheduled jobs
-│   ├── dashboard/        # Frontend UI
-│   ├── openapi/          # OpenAPI schemas
-│   ├── zc/               # Coordinator logic
-│   │   ├── lanes/        # Settlement lanes
-│   │   ├── orchestrator/ # Async processing
-│   │   └── [features]    # HTLC, DNS, etc.
-│   └── bank/             # Bank mock implementation
-├── test/                 # Test suite
-├── package.json
-├── tsconfig.json
-├── vitest.config.ts
-└── wrangler.toml         # Cloudflare configuration
-```
+The implementation runs end-to-end on TypeScript and Cloudflare Workers. It is a reference, not a system in operation, and it does not represent any real institution, system, or way of working.
 
----
+The starting concept lives on a separate page: [Zenith concept (Japanese)](https://www.sakuolia.jp/zenith.md).
 
-## Documentation
+### Why this exists
 
-### Reference
+Japan's payment systems are, by international standards, robust, and they have been remarkably stable for a long time. That stability is the work of many people across decades, and it deserves respect.
 
-- **[Zenith Architecture](specs/zenith_public.md)** — Design philosophy, state machines, settlement flows
-- **[API Contracts](specs/api-contracts.md)** — Complete endpoint reference
-- **[Database Schema](specs/schema.md)** — Table definitions and relationships
-- **[Business Policy](specs/zenith_policy.md)** — Transaction rules and constraints
-- **[File Structure](specs/file_structure.md)** — Codebase organization
+What still feels incomplete, from the user's side, is **explicability** — knowing where one's money is at this moment, why something is delayed, and who can answer when one asks.
 
-### Getting Started
+Zenith is not a replacement for the existing rails. Each financial institution keeps its own core banking and account management exactly as today. Zenith reimagines, as a shared public good, the **coordination layer** that sits between institutions, so that whatever happens in that space can later be explained, by anyone, under a single transaction identifier.
 
-1. Read `specs/zenith_public.md` for architectural overview
-2. Deploy locally with `npm run dev`
-3. Explore dashboard at http://localhost:8787
-4. Review `specs/api-contracts.md` for API usage
-5. Check `test/` for realistic usage examples
+This implementation is meant not only to be read, but to be run and touched.
 
----
+### What it does, and what it does not
 
-## Security
+- **It does:** treat each settlement as an explicit sequence of states — **Acceptance → Decision → Execution Confirmation → Finality (b)** — across multiple banks, and record every transition in an append-only FinalityLog, so that users, businesses, and authorities can each obtain the same explanation under the same transaction id.
+- **It does not:** replace participants' core banking or account ledgers; decide identity, credit, or limits; or take legal positions. Those remain with the participants.
 
-Security measures in this implementation:
+### Design principles, in ten lines
 
-- HMAC-SHA256 signature validation on all bank-to-coordinator calls
-- Idempotency key tracking prevents duplicate settlement
-- Append-only audit log (FinalityLog) for non-repudiation
-- Optimistic versioning for optimistic locking under concurrency
-- Name verification before settlement confirmation
-- AML/sanctions screening hooks (mock implementation)
+1. The single source of truth is the **Finality Log**. Derived views can be discarded and rebuilt.
+2. **Decision and Execution are always separated**.
+3. The irreversible boundary is **b (PAYEE_EXEC_CONFIRMED)**. Remedies after b are Reversals, posted as new transactions.
+4. **States that cannot be explained are forbidden.** Unresolved or inconsistent states must converge into a CASE.
+5. The meaning of a synchronous response is fixed by contract.
+6. Evidence is never added after the fact.
+7. Lanes are not UX categories — they are **contracts about finality points and evidence**.
+8. **H (sending-side over-limit)** is managed as a state; absolute over-limit is impossible by construction.
+9. Crisis handling is not an exception path; it is an **institutionalised state transition**.
+10. Single-truth integrity is held by a distributed consensus log; under quorum loss, the system degrades to read-only rather than risk a wrong decision.
 
-**Important:** This is a reference implementation. Before production use:
+The full text lives in [`specs/zenith_public.md`](specs/zenith_public.md).
 
-- Implement TLS/mTLS for all network calls
-- Add authentication and authorization layers
-- Encrypt sensitive data at rest and in transit
-- Conduct security audit and penetration testing
-- Implement regulatory compliance controls
-- Review and test failure scenarios thoroughly
+### TradFi and DeFi in one vocabulary
 
----
+Zenith expresses traditional payment rails (RTGS, DNS netting, Zengin-style retail, ISO 20022, FATF R.16) and newer cryptographic primitives (hash-time-locked contracts, atomic multi-leg) **not as separate ledgers joined by a bridge, but as different lanes on the same state machine**:
 
-## Contributing
+| Lane | Heritage | Finality primitive |
+| --- | --- | --- |
+| EXPRESS / STANDARD / BULK | TradFi (retail, Zengin) | H-reserve + netting |
+| HIGH_VALUE | TradFi (central-bank RTGS) | Real-time gross settlement |
+| DNS cycle | TradFi (clearing house) | End-of-day net position |
+| HTLC / HTLC_AUTH | DeFi-native | Hash-lock + time-lock |
+| GTID | Hybrid (atomic multi-leg) | All-or-nothing across legs |
+| RTP | Hybrid (pull-based, payee-initiated) | Name verification + authorisation |
 
-Contributions are welcome. Please:
+The closest precedents in the public literature — BIS Project Stella Phase 2, Jasper-Ubin, Agorá, mBridge, Partior, Fnality, JPM Onyx, Canton Network, DCJPY / Progmat — each address only part of this table. We are not aware of a published open-source codebase that expresses **HTLC, atomic multi-leg, RTGS, and DNS netting as coequal lanes inside one orchestrator**. Folding them into a single state machine is the central contribution of this reference. The implementation lives in [`src/zc/orchestrator/state_machine.ts`](src/zc/orchestrator/state_machine.ts) and [`src/zc/lanes/`](src/zc/lanes/).
 
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Write tests first (test-driven development)
-4. Ensure tests pass: `npm run test`
-5. Submit a pull request with clear description
+### The institutional layer
 
----
+Perhaps the most distinctive feature of this repository is that, alongside code and method design, the **institutional and governance documents are written in the same register**:
 
-## License
+- four-eyes approval and break-glass access
+- purpose codes (P01–P07) and the data-minimisation rule
+- in DNS_HOLD scenarios, the ordered sequence of initial communication, public-disclosure control, the liquidity-providing-bank scheme, mutual contribution, and last-resort central-bank funding
+- WORM retention and third-party assurance
+- the careful separation of "normative" and "recommended" wording
 
-MIT License. See [LICENSE](LICENSE) for details.
+These are gathered in [`specs/zenith_policy.md`](specs/zenith_policy.md). A payment system does not land in society on technical specification alone, and we wanted the institutional surface to be written with the same care as the code.
 
----
+### Getting hands on
 
-## Support
-
-- **Questions?** Open an [issue](https://github.com/pochatt/zenith-mock/issues)
-- **Bug report?** Use [bug template](https://github.com/pochatt/zenith-mock/issues/new?template=bug.md)
-- **Technical discussion?** See `specs/` for detailed documentation
-
----
-
----
-
-# 日本語版
-
-## 概要
-
-従来の決済システムはブラックボックスです。送金されたお金はインフラに吸い込まれ、顧客もサポート担当者も、何が起きたのか、資金がどこにあるのかを説明することができません。
-
-Zenithは決済を不透明なトランザクションではなく、説明可能な状態の連なりとして扱います：
-
-```
-RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE 
-→ PAYER_EXEC_CONFIRMED → PAYEE_EXEC_CONFIRMED → SETTLED
-```
-
-すべての状態変化は追記型のFinalityLogに記録され、決済プロセス全体が監査可能で、リアルタイム透明性を持ちます。
-
-### 基本原則
-
-- **説明可能性** — すべての状態遷移が記録され、監査可能で、理解できる
-- **協調性** — 複数銀行による決済、原子性保証を可能な限り
-- **監査性** — 完全なコンテキストを持つ追記型イベントログ
-- **回復性** — サーキットブレーカーパターン、段階的機能低下、自動ヘルス監視
-- **冪等性** — すべての操作に対して安全な再試行セマンティクス
-
-## TradFi と DeFi を同一セマンティクスで記述する
-
-Zenith は「2つの世界をつなぐブリッジ」ではありません。**両者を同じ状態機械の語彙に畳み込む** 統合型コーディネーターです。
-
-伝統的決済レール（RTGS、DNS、全銀レガシー、ISO 20022、FATF R.16）と、DeFiネイティブな原始要素（HTLC、マルチレグ原子スワップ、preimage 条件開示）を、**同一の状態機械 (`RECEIVED → PRECHECKED → H_RESERVED → … → SETTLED`) 上の異なるレーン** として記述し、同じ `FinalityLog` に追記し、同じ冪等キーと楽観ロックで統治します。
-
-| レーン | 出自 | ファイナリティ原始要素 |
-|------|------|-----------------|
-| EXPRESS / STANDARD / BULK | TradFi（リテール、全銀系） | H予約 + ネッティング |
-| HIGH-VALUE | TradFi（中央銀行RTGS） | 日銀ネット型即時グロス決済 |
-| DNS サイクル | TradFi（清算機関） | 日次ネットポジション |
-| HTLC / HTLC-AUTH | DeFi ネイティブ | ハッシュロック + タイムロック（preimage 開示） |
-| GTID | ハイブリッド（原子マルチレグ） | レッグ横断的オール・オア・ナッシング |
-| RTP | ハイブリッド（受取人発起型プル） | 名義確認 + 事前承認 |
-
-### 先行例との関係
-
-公開文献で最も近い先行例はいずれも中央銀行の実験で、**Zenithが統合している領域の一部のみを扱っています**：
-
-- **BIS Project Stella Phase 2**（日銀 + ECB, 2018）— HTLCによるDLT間同期決済の研究PoC。RTGS/DNS/FATF統合なし。
-- **BIS Project Jasper-Ubin**（カナダ中銀 + MAS）— 別個の2つのDLT間のHTLCクロスボーダー原子決済。
-- **BIS Project Agorá**（7中銀＋民間銀行, 2024–）— トークン化預金と卸売CBDCを統一台帳で扱う。設計段階、参照コード非公開。
-- **BIS Project mBridge** — マルチCBDCクロスボーダー、パーミッションドDLT。
-- **Partior**（DBS / JPM / Temasek / SC）— ブロックチェーンネイティブなマルチ通貨清算。
-- **Fnality** — ホールセール決済向けトークン化中銀マネー。
-- **JPM Onyx / Canton Network / DCJPY / Progmat** — 預金トークン発行レイヤー。
-
-Zenith の特異な点は、そして **公開されたオープンソース実装としては類例を見つけられなかった** 点は、**HTLC、GTID 原子マルチレグ、RTGS、DNS ネッティングを 1 つのオーケストレーター内の対等なレーンとして表現している** ことです。従来の研究は「TradFi レール」と「DLT レール」を別台帳として扱い、間をブリッジで繋ぎます。Zenith は両者を同じ状態機械上の異なるレーンとして扱います。実装は `src/zc/orchestrator/state_machine.ts` と `src/zc/lanes/` を参照してください。
-
-これにより以下のような問いのリファレンスになります：
-
-- トークン化預金の HTLC が、RTGS 決済と同じ追記型監査証跡でログされたらライフサイクルはどう見えるか？
-- FATF R.16 のトラベルルール情報は、ハッシュタイムロック決済にどう添付されるべきか？
-- DNS の日次ネッティングと、日中の原子マルチレグ (GTID) は、1 つのコーディネーターで共存できるか？
-
-
-## 利用シーン
-
-### 金融機関向け
-
-決済インフラの現代化のためのリファレンス実装。以下のベストプラクティスを実証：
-- 並行処理下での状態機械設計
-- 監査性とコンプライアンスロギング
-- 複数銀行間の協調プロトコル
-- 優雅なフェイルオーバーと回復
-
-### Fintech開発者向け
-
-実銀行API接続前の統合試験環境。以下を検証：
-- 送金レーンの挙動
-- エッジケースと障害モード
-- APIコントラクト適合性
-- 負荷下でのパフォーマンス特性
-
-### 決済研究者向け
-
-規制制約なしで新しい決済アーキテクチャを検証するサンドボックス。以下を実験：
-- 新しいレーンパターン
-- 代替状態機械
-- クロスボーダー決済メカニズム
-- ネッティング・清算戦略
-
-### 開発者の学習向け
-
-現代的な決済システム設計を理解するための教育的コードベース。学習内容：
-- 決済がいかに決済インフラを流れるのか
-- 金融制約下での分散合意
-- 監査性のためのデータベース設計
-- 金融システムにおける並行制御
-
-## クイックスタート
-
-### 要件
+**Requirements**
 
 - Node.js 18+
 - npm 8+
-- Cloudflareアカウント（無料枠対象）
+- A Cloudflare account (free tier is sufficient)
 
-### デプロイ手順
+**Run locally**
 
 ```bash
-# 1. クローンとインストール
-git clone https://github.com/pochatt/zenith-mock.git
-cd zenith-mock
+git clone https://github.com/pochatt/zenith-payment-system.git
+cd zenith-payment-system
 npm install
+npm run db:migrate:local
+npm run dev   # http://localhost:8787
+```
 
-# 2. Cloudflareで認証
+**Deploy to Cloudflare**
+
+```bash
 npx wrangler login
-
-# 3. リソース作成
 npx wrangler d1 create zenith-db
 npx wrangler queues create zenith-mock-queue
 npx wrangler r2 bucket create zenith-mock-r2
-
-# 4. 設定
 cp wrangler.toml.example wrangler.toml
-# wrangler.tomlをdatabase_idで編集
-
-# 5. マイグレーション適用
+# fill in database_id and bindings
 npm run db:migrate:remote
-
-# 6. デプロイ
 npm run deploy
-
-# 7. 初期データ投入
-curl -X POST https://zenith-mock.<your-domain>.workers.dev/internal/seed
+curl -X POST https://<your-worker>.workers.dev/internal/seed
 ```
 
-ダッシュボードは `https://zenith-mock.<your-domain>.workers.dev` で利用可能です。
+The dashboard is served at the root of the deployed worker.
 
-## 主要機能
-
-### 送金レーン
-
-| レーン | 目的 | ファイナリティ |
-|--------|------|---|
-| EXPRESS | 即時小売決済 | H予約担保 |
-| STANDARD | 一般P2P | 名義確認+承認 |
-| HTLC | 条件付きエスクロー | ハッシュロック解放 |
-| RTP | 請求型回収 | 受取人発起型 |
-| GTID | 複数銀行原子転送 | 協調型オールオアナッシング |
-| HIGH-VALUE | 大口RTGS | 日銀即時グロス清算 |
-| BULK | バッチ処理 | 営業終了時ネッティング |
-
-### 高度な機能
-
-- **日次ネット清算 (DNS)** — EODサイクルと建玉ネッティング
-- **限度額直列化 (TigerBeetle的DO)** — D1のロック限界を超えるシングルスレッドH予約
-- **超高速ディレクトリ ALS (Mojaloop的KV)** — DB負荷を回避するO(1)のエイリアスキャッシュ
-- **ストリーミング・マイクロ決済 (Rafiki的)** — WebSocketとDOタイマーによる巨大バッチ遅延確定
-- **QR決済** — 静的・動的コードとHMAC検証
-- **エイリアス解決** — 電話番号・メール・法人IDルーティング
-- **クロスボーダー** — FATF R.16準拠の国際送金
-- **口座確認** — 清算前の名義・口座確認
-- **EDI/リッチデータ** — 構造化された商流データ統合
-- **サーキットブレーカー** — 自動ヘルス監視と段階的機能低下
-- **イベントストリーム** — 参加銀行へのリアルタイムSSE通知
-
-## テスト
+### Commands
 
 ```bash
-npm run test              # 全テスト実行
-npm run test:watch       # ウォッチモード
-npx vitest test/zc/express.test.ts  # 単一ファイル
+npm run dev               # local dev server
+npm run deploy            # deploy to Cloudflare
+npm run type-check        # TypeScript type check
+npm run test              # full test suite (399 cases)
+npm run test:watch        # watch mode
+npm run db:migrate:local  # apply migrations locally
+npm run db:migrate:remote # apply migrations to remote D1
 ```
 
-統合テストはインメモリSQLite（better-sqlite3経由）で実行され、完全なスキーマと現実的な決済シナリオを含みます：
-- 並行トランザクション処理
-- ネットワーク障害と再試行
-- 状態機械制約違反
-- サーキットブレーカーの起動と回復
+### State machine, in code
 
-## コマンド
+```typescript
+// src/zc/orchestrator/state_machine.ts
+const ALLOWED_TRANSITIONS = {
+  RECEIVED:               ['PRECHECKED', 'HTLC_LOCKED', 'DECIDED_CANCEL'],
+  PRECHECKED:             ['PRECHECKED_SUSPENDED', 'H_RESERVED', 'DECIDED_CANCEL', 'DECIDED_TO_SETTLE'],
+  PRECHECKED_SUSPENDED:   ['PRECHECKED', 'DECIDED_CANCEL'],
+  H_RESERVED:             ['DECIDED_TO_SETTLE', 'DECIDED_CANCEL'],
+  DECIDED_TO_SETTLE:      ['PAYER_EXEC_CONFIRMED', 'PAYEE_EXEC_CONFIRMED', 'SUSPENDED'],
+  DECIDED_CANCEL:         ['CANCELLED'],
+  PAYER_EXEC_CONFIRMED:   ['PAYEE_EXEC_CONFIRMED', 'SUSPENDED'],
+  PAYEE_EXEC_CONFIRMED:   ['SETTLED'],
+  SUSPENDED:              ['PAYER_EXEC_CONFIRMED', 'PAYEE_EXEC_CONFIRMED', 'FAILED_EXECUTION'],
+  HTLC_LOCKED:            ['HTLC_FULFILL_REQUESTED', 'DECIDED_CANCEL'],
+  HTLC_FULFILL_REQUESTED: ['DECIDED_TO_SETTLE', 'FAILED_EXECUTION'],
+  // terminal: SETTLED, FAILED_EXECUTION, CANCELLED
+}
+```
+
+Every state advance is routed through the `transitionWithLog` helper, which issues the CAS UPDATE on `Transactions` and the INSERT into `FinalityLog` as a single D1 batch. **There is no window in which the state moves forward without its paired audit entry.**
+
+### A minimal look at the API
 
 ```bash
-npm run dev              # ローカル開発サーバー
-npm run deploy           # Cloudflareにデプロイ
-npm run type-check       # TypeScript型チェック
-npm run test             # テストスイート実行
-npm run test:watch       # テストウォッチモード
-npm run db:migrate:local # ローカルマイグレーション適用
-npm run db:migrate:remote # リモートD1マイグレーション適用
+# Initiate a transfer
+POST /api/transfers
+Content-Type: application/json
+
+{
+  "schema_version": "1.0",
+  "message_type": "EVENT",
+  "name": "PaymentInitiated",
+  "txid":  "TX-...",
+  "lane":  "EXPRESS",
+  "amount": { "value": 5000, "currency": "JPY" },
+  "payer":  { "bank_id": "001", "account_hash": "h:..." },
+  "payee":  { "bank_id": "002", "account_hash": "h:..." }
+}
+
+# Query a transaction — anyone who asks under this id gets the same explanation
+GET /api/transactions/TX-...
 ```
 
-## ドキュメント
+The complete endpoint reference lives in [`specs/api-contracts.md`](specs/api-contracts.md).
 
-### リファレンス
+### Features
 
-- **[Zenith設計](specs/zenith_public.md)** — 設計思想、状態機械、決済フロー
-- **[API仕様](specs/api-contracts.md)** — エンドポイント完全リファレンス
-- **[DBスキーマ](specs/schema.md)** — テーブル定義と関係
-- **[業務ポリシー](specs/zenith_policy.md)** — 取引ルールと制約
-- **[ファイル構成](specs/file_structure.md)** — コードベース構成
+| Lane | Purpose | Finality |
+| --- | --- | --- |
+| EXPRESS | retail / point-of-sale | H-reserve backed |
+| STANDARD | general transfer | name check + authorisation |
+| HTLC | conditional escrow | hash-lock release |
+| HTLC_AUTH | payee-initiated authorisation | b on Capture |
+| RTP | invoice / pull | payee-initiated |
+| GTID | multi-party atomic | b on all legs |
+| HIGH_VALUE | central-bank routed | RTGS final |
+| BULK | batch | end-of-day netting |
 
-## セキュリティ
+Cross-cutting:
 
-本実装に含まれるセキュリティ対策：
+- daily net settlement (DNS) cycles
+- TigerBeetle-style single-threaded limit Durable Object
+- O(1) directory / alias cache
+- Rafiki-style streaming micro-payments
+- QR codes (static and dynamic, HMAC-validated)
+- alias resolution (phone, email, corporate id)
+- FATF R.16 framing for cross-border
+- name and account verification
+- EDI / rich commercial data
+- circuit breaker and self-monitoring
+- SSE event stream to participating banks
 
-- すべての銀行-コーディネーター通信のHMAC-SHA256署名検証
-- 冪等キー追跡で重複決済を防止
-- 追記型監査ログ（FinalityLog）で否認防止
-- 楽観的バージョンで並行処理時の楽観的ロック
-- 決済確認前の名義確認
-- AML/制裁スクリーニングフック（モック実装）
+### Tests
 
-**重要:** これはリファレンス実装です。本番運用前に以下を確認してください：
-- すべてのネットワーク通信にTLS/mTLSを実装
-- 認証・認可レイヤーを追加
-- 保存時・転送時の機密データ暗号化
-- セキュリティ監査とペネトレーションテスト実施
-- 規制コンプライアンス制御を実装
-- 障害シナリオを十分にテスト
+```bash
+npm run test                          # full suite, 399 cases
+npx vitest test/zc/express.test.ts    # a single file
+```
 
-## ライセンス
+The suite runs against an in-memory SQLite mock of D1 (via `better-sqlite3`) on the real production schema, including concurrent processing, idempotent replays, zero-sum balance invariants, and circuit-breaker recovery. `test/integration/balance_invariants.test.ts` pins, lane by lane, that `payer Δ = −amount`, `payee Δ = +amount`, row-level zero sum, and the BOJ-side conservation law all hold all the way through the journals.
 
-MIT License。[LICENSE](LICENSE)を参照してください。
+### How to read the documents
 
-## サポート
+The repository is layered as **concept → method → institution → interface / data**.
 
-- **質問？** [issueを開く](https://github.com/pochatt/zenith-mock/issues)
-- **バグ報告？** [バグテンプレート使用](https://github.com/pochatt/zenith-mock/issues/new?template=bug.md)
-- **技術的な議論？** `specs/`の詳細ドキュメント参照
+- **Concept (essay)**
+  - [Zenith concept (Japanese)](https://www.sakuolia.jp/zenith.md)
+- **Method design**
+  - [`specs/zenith_public.md`](specs/zenith_public.md) — design principles, state machines, lane-by-lane flows, appendices A–F (15 chapters)
+  - [`specs/architecture.md`](specs/architecture.md) — cross-cutting implementation conventions and roadmap
+- **Institutional and governance**
+  - [`specs/zenith_policy.md`](specs/zenith_policy.md) — rules, data governance, the DNS_HOLD protocol
+- **Interface and data**
+  - [`specs/api-contracts.md`](specs/api-contracts.md) — endpoints and the error catalog
+  - [`specs/schema.md`](specs/schema.md) — tables, migration policy, index catalog
+  - [`specs/file_structure.md`](specs/file_structure.md) — directory map
+
+### Status and limits, stated plainly
+
+This is a personal reference implementation, and is not intended for production use.
+
+- Bank-to-coordinator calls are authenticated with HMAC-SHA256 only. TLS / mTLS, authentication and authorisation, encryption at rest, and regulatory controls are out of scope here.
+- Performance figures are observations in a Cloudflare development environment; no claim is made about real workloads.
+- Several normative requirements (the igs_mode hierarchical transitions during DNS_HOLD, automatic release paths for long-held H_locked, `MisrecordCorrected`, the Bulk LSM optimiser, fully general N:M GTID fan-in / fan-out, and others) are written into the method spec but are not yet implemented. See [`specs/architecture.md`](specs/architecture.md) § 7.
+
+The intent is to offer **something to argue with**, not something to replace anything.
+
+### Who this is for
+
+- People who work on, or simply care about, payment-system planning and policy
+- Engineers in bank IT, payment service providers, and systems integrators
+- People around central banks and regulators who think about explicability and auditability
+- Students, researchers, and individual developers
+
+The concept, the method, the institutional layer, and the code are laid alongside each other at the same temperature, so that readers from different vantage points can each find their entry.
+
+### License
+
+MIT — see [LICENSE](LICENSE).
+
+### Contact
+
+- Questions and discussion: [GitHub Issues](https://github.com/pochatt/zenith-payment-system/issues)
+- Concept overview: [Zenith concept (sakuolia.jp)](https://www.sakuolia.jp/zenith.md)
+
+> This repository and its accompanying documents are a work of fiction; they do not represent any real organisation, system, or way of working.
