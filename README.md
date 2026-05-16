@@ -205,6 +205,7 @@ npx vitest test/zc/express.test.ts    # 単一ファイル
 
 - **構想（読み物）**
   - [Zenith 構想・基本コンセプト](https://www.sakuolia.jp/zenith.md)
+  - [`specs/walkthrough.md`](specs/walkthrough.md) — 口座振替を題材にした、5 分で雰囲気をつかむための短い案内
 - **方式設計**
   - [`specs/zenith_public.md`](specs/zenith_public.md) — 設計思想、状態機械、レーン別フロー、補遺 A〜F（全 15 章）
   - [`specs/architecture.md`](specs/architecture.md) — 横断的な実装規約と、コード品質を引き上げるためのロードマップ
@@ -233,6 +234,10 @@ npx vitest test/zc/express.test.ts    # 単一ファイル
 - 学生、研究者、個人開発者のかた
 
 異なる立場のかたに、それぞれの視点で読んでいただけるよう、構想・方式・制度・コードを同じ温度で並べました。
+
+### ご自由にお使いください
+
+この資料は、どのような形でお使いいただいても構いません。中身をまるごと持ち帰っていただいても、考え方の一部だけを汲み取っていただいても、どちらも嬉しく思います。いつかそのプロジェクトが形になったとき、「Zenith を叩き台にした」と一言添えてくださるなら、それで十分です。
 
 ### ライセンス
 
@@ -450,11 +455,13 @@ The repository is layered as **concept → method → institution → interface 
 
 - **Concept (essay)**
   - [Zenith concept (Japanese)](https://www.sakuolia.jp/zenith.md)
+  - [`specs/walkthrough.md`](specs/walkthrough.md) — a five-minute walkthrough built around a household direct-debit scene (bilingual)
 - **Method design**
   - [`specs/zenith_public.md`](specs/zenith_public.md) — design principles, state machines, lane-by-lane flows, appendices A–F (15 chapters)
   - [`specs/architecture.md`](specs/architecture.md) — cross-cutting implementation conventions and roadmap
 - **Institutional and governance**
-  - [`specs/zenith_policy.md`](specs/zenith_policy.md) — rules, data governance, the DNS_HOLD protocol
+  - [`specs/zenith_policy.md`](specs/zenith_policy.md) — rules, data governance, the DNS_HOLD protocol *(Japanese, source of truth)*
+  - [`specs/zenith_policy.en.md`](specs/zenith_policy.en.md) — English digest, premised on the legal and supervisory context of Japan
 - **Interface and data**
   - [`specs/api-contracts.md`](specs/api-contracts.md) — endpoints and the error catalog
   - [`specs/schema.md`](specs/schema.md) — tables, migration policy, index catalog
@@ -478,6 +485,10 @@ The intent is to offer **something to argue with**, not something to replace any
 - Students, researchers, and individual developers
 
 The concept, the method, the institutional layer, and the code are laid alongside each other at the same temperature, so that readers from different vantage points can each find their entry.
+
+### Yours to use
+
+You are welcome to use this material in whatever form suits you. Adopt it wholesale, or take only a fragment of the thinking — either is welcome. When your project takes shape one day, if you mention that Zenith was the draft you started from, that will be more than enough.
 
 ### License
 
