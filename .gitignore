@@ -12,3 +12,4 @@ yarn-error.log*
 *.swp
 .DS_Store
 Thumbs.db
+CLAUDE.md
