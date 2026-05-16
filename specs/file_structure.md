@@ -146,12 +146,34 @@
 │       ├── suspense.ts                     # リザーブおよび別段預金等の中間口座処理
 │       └── filter.ts                       # AML/制裁リスト等の仮フィルタリング実装
 │
-├── test/               # vitest テスト群（in-memory SQLite で src/ と並走する統合テスト）
+├── test/               # vitest テスト群（in-memory SQLite で src/ と並走する統合テスト、約 30 ファイル / 400 ケース）
 │   ├── helpers/
-│   │   └── d1-mock.ts                      # MockD1Database ファクトリ（better-sqlite3）
-│   ├── shared/                             # shared/ 層の単体テスト（hmac, validator）
-│   ├── bank/                               # 銀行側ロジックのテスト（ledger）
-│   └── zc/                                 # ZC レーン・h_model・DNS・circuit_breaker 等のテスト
+│   │   └── d1-mock.ts                      # MockD1Database ファクトリ（better-sqlite3 + SCHEMA_MIGRATIONS）
+│   ├── shared/                             # shared/ 層の単体テスト
+│   │   ├── errors.test.ts                  # DomainError / errorResponse / カテゴリ写像
+│   │   ├── logger.test.ts                  # 構造化ログ shape / PII redaction / child baggage
+│   │   ├── hmac.test.ts                    # HMAC-SHA256 検証
+│   │   ├── validator.test.ts               # ZC ingress payload バリデータ
+│   │   └── fatf_validator.test.ts          # FATF R.16 検証
+│   ├── bank/
+│   │   └── ledger.test.ts                  # 複式仕訳ゼロサム不変条件
+│   ├── integration/                        # レーン横断統合テスト
+│   │   ├── balance_invariants.test.ts      # 各レーン仕訳ゼロサム + 顧客口座 Δ 確認（GTID 2×2 逆順含む）
+│   │   ├── idempotency_replay.test.ts      # 同一 idempotency_key 再送で 1 行のみ
+│   │   ├── queue_retry_policy.test.ts      # DomainError category × msg.retry()/ack() 写像
+│   │   └── htlc_cancel_balance.test.ts     # TIMELOCK_EXPIRED / 直接 cancel で payer suspense が戻ること
+│   └── zc/                                 # ZC レーン・横断プリミティブ
+│       ├── lane_invariants.test.ts         # 静的解析：helper 回避の生 SQL / FinalityEventType 未登録 / テスト漏れを検出
+│       ├── lane_helpers.test.ts            # transitionWithLog / cancelInFlightTx / insertTxWithLog の並列・TOCTOU
+│       ├── atomic_finality.test.ts         # CAS + FinalityLog の atomic batch / event_seq 単調性
+│       ├── finality_chain.test.ts          # SHA-256 ハッシュチェーン検証
+│       ├── state_machine の各レーン        # express / standard / highvalue / htlc / htlc_auth_canonical / htlc_auth_regression / bulk / rtp / gtid
+│       ├── h_model.test.ts / dns.test.ts   # H 予約・DNS サイクル
+│       ├── circuit_breaker.test.ts         # CLOSED/OPEN/HALF_OPEN 遷移 + metrics
+│       ├── reversal.test.ts                # Reversal 起票・APPROVAL_REQUIRED ガード
+│       ├── daily_limit.test.ts             # 参加行 daily_amount_limit のリセット
+│       ├── orchestrator.test.ts            # キューハンドラディスパッチ
+│       └── story.test.ts                   # /story narrative + health verdict
 │
 ├── remote_participants.json                # リモート環境での参加行シードデータ
 ├── test.json                               # ローカル動作確認用の試験ペイロード

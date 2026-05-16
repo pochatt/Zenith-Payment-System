@@ -22,6 +22,12 @@
 - `0020_hv_threshold.sql` — `Participants.hv_threshold`（HIGH_VALUE 自動エスカレーション閾値）
 - `0021_finality_seq_counter.sql` — B10 `FinalitySeq` カウンタ表（event_seq 単調割当）
 
+> **`schema/baseline.sql` の位置付け**: `baseline.sql` は全マイグレーション
+> 適用後のスキーマ断面を**人間レビュー用**にまとめた参照資料であり、再生成は
+> 手動。新マイグレーション追加後に `baseline.sql` が追いついていない場合が
+> あるため、**スキーマの正は本ファイル (`schema.md`) と `migrations/` の連番
+> SQL**。ローカルで baseline と齟齬が出たら `migrations/` 側を信じること。
+
 ---
 
 ## マイグレーション運用

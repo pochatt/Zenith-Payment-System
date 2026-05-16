@@ -194,15 +194,26 @@ All transactions follow a deterministic state machine with explicit allowed tran
 ```typescript
 // From src/zc/orchestrator/state_machine.ts
 const ALLOWED_TRANSITIONS = {
-  'RECEIVED': ['PRECHECKED', 'REJECTED'],
-  'PRECHECKED': ['H_RESERVED', 'REJECTED'],
-  'H_RESERVED': ['DECIDED_TO_SETTLE', 'H_RELEASED'],
-  'DECIDED_TO_SETTLE': ['PAYER_EXEC_CONFIRMED', 'DECIDED_CANCEL'],
-  'PAYER_EXEC_CONFIRMED': ['PAYEE_EXEC_CONFIRMED'],
-  'PAYEE_EXEC_CONFIRMED': ['SETTLED'],
-  // ... more transitions
+  RECEIVED:              ['PRECHECKED', 'HTLC_LOCKED', 'DECIDED_CANCEL'],
+  PRECHECKED:            ['PRECHECKED_SUSPENDED', 'H_RESERVED', 'DECIDED_CANCEL', 'DECIDED_TO_SETTLE'], // HIGH_VALUE only
+  PRECHECKED_SUSPENDED:  ['PRECHECKED', 'DECIDED_CANCEL'],
+  H_RESERVED:            ['DECIDED_TO_SETTLE', 'DECIDED_CANCEL'],
+  DECIDED_TO_SETTLE:     ['PAYER_EXEC_CONFIRMED', 'PAYEE_EXEC_CONFIRMED', 'SUSPENDED'], // PAYEE_EXEC_CONFIRMED: GTID PAYEE leg
+  DECIDED_CANCEL:        ['CANCELLED'],
+  PAYER_EXEC_CONFIRMED:  ['PAYEE_EXEC_CONFIRMED', 'SUSPENDED'],
+  PAYEE_EXEC_CONFIRMED:  ['SETTLED'],
+  SUSPENDED:             ['PAYER_EXEC_CONFIRMED', 'PAYEE_EXEC_CONFIRMED', 'FAILED_EXECUTION'],
+  HTLC_LOCKED:           ['HTLC_FULFILL_REQUESTED', 'DECIDED_CANCEL'],
+  HTLC_FULFILL_REQUESTED:['DECIDED_TO_SETTLE', 'FAILED_EXECUTION'],
+  // Terminal: SETTLED, FAILED_EXECUTION, CANCELLED
 };
 ```
+
+Lane-specific edges:
+- `RECEIVED → HTLC_LOCKED` (HTLC / HTLC_AUTH canonical entry)
+- `PRECHECKED → DECIDED_TO_SETTLE` (HIGH_VALUE only — H-reserve skipped because BOJ RTGS path carries the liquidity guarantee)
+- `DECIDED_TO_SETTLE → PAYEE_EXEC_CONFIRMED` (GTID PAYEE leg only — no payer-side debit)
+- `SUSPENDED → PAYEE_EXEC_CONFIRMED` (HIGH_VALUE only, on `EVT_CB_SETTLED`)
 
 ### Request Flow
 
@@ -432,7 +443,7 @@ npm run db:migrate:remote # Apply migrations to remote D1
 
 ```
 zenith-mock/
-├── migrations/           # D1 SQL migrations (0001–0014)
+├── migrations/           # D1 SQL migrations (0001–0021)
 ├── schema/
 │   └── baseline.sql      # Schema snapshot (reference)
 ├── specs/                # Documentation
