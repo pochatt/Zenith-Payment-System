@@ -7,10 +7,9 @@ import type { Env, GtidRegisterRequest, GtidTransactionRow, GtidLegRow } from '.
 import { nowISO } from '../../types'
 import { writeFinalityLog, callBankLegReadyCheck, callBankReleaseReserve } from '../orchestrator'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
-import { newUUID } from '../../shared/idempotency'
 import { reserveH, lockH, releaseH } from '../h_model'
-import type { ReserveHResult } from '../h_model'
 import { getOrCreateDnsCycle } from '../dns'
+import { insertTxWithLog } from './_helpers'
 
 /**
  * GTID 登録: GT_RECEIVED + legs = LEG_REGISTERED
@@ -261,28 +260,32 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     const counterpartyPayeeLeg = payeeLegs[payerIdx] ?? payeeLeg
     const hReservationId = hReservations.get(leg.leg_id) ?? null
 
-    // Transactions レコードを作成（execute-debit/credit が参照する）
-    // payer_bank_id / payee_bank_id に PAYER と対応 PAYEE の情報を格納し、
-    // onPayerExecConfirmed がそのまま ZC_BANK_CREDIT に使えるようにする。
-    await db.prepare(
-      `INSERT OR IGNORE INTO Transactions
-       (txid, lane, state, amount_value, amount_currency, payer_bank_id, payer_account_hash,
-        payee_bank_id, payee_account_hash, idempotency_key, schema_version, decision_proof_ref,
-        h_reservation_id, dns_cycle_id, version, created_at, updated_at)
-       VALUES (?, 'DEFERRED', 'DECIDED_TO_SETTLE', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', ?, ?, ?, 0, ?, ?)`
-    ).bind(
-      txid, leg.amount_value,
-      leg.bank_id,                    // payer_bank_id
-      leg.account_hash,               // payer_account_hash
-      counterpartyPayeeLeg.bank_id,   // payee_bank_id
-      counterpartyPayeeLeg.account_hash, // payee_account_hash
-      `GTID-${gtid}-${leg.leg_id}`, decisionProofRef, hReservationId, dnsCycleId, now, now,
-    ).run()
-
-    // PAYERレグの GtidLegs に txid を紐付け
-    await db.prepare(
-      `UPDATE GtidLegs SET txid=?, updated_at=?, version=version+1 WHERE leg_id=?`
-    ).bind(txid, now, leg.leg_id).run()
+    // Atomic INSERT + paired FinalityLog + GtidLegs.txid backref via insertTxWithLog.
+    // GTID is the one lane where leg-level Transactions rows enter at
+    // DECIDED_TO_SETTLE directly — there is no per-leg pre-decision state because
+    // the GT-level GtidDecided event already committed atomicity for all legs.
+    // The helper enforces an entry-state whitelist so this remains an explicit,
+    // auditable exception rather than a free-for-all.
+    await insertTxWithLog(db, {
+      txid,
+      lane: 'DEFERRED',
+      initialState: 'DECIDED_TO_SETTLE',
+      amount: { value: leg.amount_value, currency: 'JPY' },
+      payerBankId: leg.bank_id,
+      payerAccountHash: leg.account_hash,
+      payeeBankId: counterpartyPayeeLeg.bank_id,
+      payeeAccountHash: counterpartyPayeeLeg.account_hash,
+      idempotencyKey: `GTID-${gtid}-${leg.leg_id}`,
+      decisionProofRef,
+      hReservationId,
+      dnsCycleId,
+      eventType: 'GtidLegDecidedToSettle',
+      payload: { gtid, leg_id: leg.leg_id, decision_proof_ref: decisionProofRef },
+      sideUpdates: [{
+        sql: `UPDATE GtidLegs SET txid=?, updated_at=?, version=version+1 WHERE leg_id=?`,
+        binds: [txid, now, leg.leg_id],
+      }],
+    })
 
     await env.QUEUE.send({
       type: 'ZC_BANK_DEBIT',

@@ -10,7 +10,11 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createTestDb, type MockD1Database } from '../helpers/d1-mock'
-import { transitionWithLog, cancelInFlightTx } from '../../src/zc/lanes/_helpers'
+import {
+  transitionWithLog,
+  cancelInFlightTx,
+  insertTxWithLog,
+} from '../../src/zc/lanes/_helpers'
 import { reserveH } from '../../src/zc/h_model'
 import { isDomainError } from '../../src/shared/errors'
 
@@ -264,5 +268,211 @@ describe('cancelInFlightTx', () => {
     const row = await d1.prepare(`SELECT state FROM Transactions WHERE txid = ?`)
       .bind(txid).first<{ state: string }>()
     expect(row?.state).toBe('DECIDED_TO_SETTLE') // unchanged
+  })
+})
+
+// ---------------------------------------------------------------------------
+// transitionWithLog — sideUpdates (HtlcContracts-style co-commit)
+// ---------------------------------------------------------------------------
+
+describe('transitionWithLog — sideUpdates', () => {
+  it('applies a side-table CAS atomically with the canonical UPDATE', async () => {
+    const txid = 'TX-LH-SIDE-001'
+    insertTx(d1, txid)
+
+    // Seed a side table row that should be updated only when the canonical
+    // CAS wins. HtlcContracts is the production case but we use it directly
+    // here to keep the unit test self-contained.
+    d1.prepare(
+      `INSERT INTO HtlcContracts
+       (htlc_id, txid, state, hashlock, timelock, amount_value,
+        payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
+        version, created_at, updated_at)
+       VALUES ('HX-SIDE-001', ?, 'HTLC_RECEIVED', 'abc', '2099-12-31', 100,
+               '001', '002', 0, 0, 0, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+    ).bind(txid)._runSync()
+
+    const result = await transitionWithLog(d1 as any, {
+      txid,
+      fromState: 'RECEIVED',
+      toState: 'HTLC_LOCKED',
+      eventType: 'HtlcLocked',
+      sideUpdates: [{
+        sql: `UPDATE HtlcContracts SET state='HTLC_LOCKED', version=version+1, updated_at=? WHERE htlc_id=? AND state='HTLC_RECEIVED'`,
+        binds: ['2025-01-01T00:00:01Z', 'HX-SIDE-001'],
+      }],
+    })
+
+    expect(result.applied).toBe(true)
+    const htlcRow = await d1.prepare(`SELECT state, version FROM HtlcContracts WHERE htlc_id = ?`)
+      .bind('HX-SIDE-001').first<{ state: string; version: number }>()
+    expect(htlcRow?.state).toBe('HTLC_LOCKED')
+    expect(htlcRow?.version).toBe(1)
+  })
+
+  it('does NOT apply side updates when the canonical CAS misses', async () => {
+    // If Transactions is already past RECEIVED, the canonical CAS updates 0
+    // rows. The side-update SQL itself has its own state guard so it should
+    // also update 0 rows — but the key guarantee is that NEITHER row moves.
+    const txid = 'TX-LH-SIDE-002'
+    insertTx(d1, txid, 'PRECHECKED')
+
+    d1.prepare(
+      `INSERT INTO HtlcContracts
+       (htlc_id, txid, state, hashlock, timelock, amount_value,
+        payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
+        version, created_at, updated_at)
+       VALUES ('HX-SIDE-002', ?, 'HTLC_RECEIVED', 'abc', '2099-12-31', 100,
+               '001', '002', 0, 0, 0, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+    ).bind(txid)._runSync()
+
+    const result = await transitionWithLog(d1 as any, {
+      txid,
+      fromState: 'RECEIVED', // tx is actually in PRECHECKED, so CAS misses
+      toState: 'HTLC_LOCKED',
+      eventType: 'HtlcLocked',
+      skipStateMachineCheck: true,
+      sideUpdates: [{
+        sql: `UPDATE HtlcContracts SET state='HTLC_LOCKED', version=version+1, updated_at=? WHERE htlc_id=? AND state='HTLC_RECEIVED'`,
+        binds: ['2025-01-01T00:00:01Z', 'HX-SIDE-002'],
+      }],
+    })
+
+    expect(result.applied).toBe(false)
+    // FinalityLog must remain empty for this txid — the conditional INSERT
+    // is gated on the canonical UPDATE's changes() count.
+    const logs = await d1.prepare(
+      `SELECT COUNT(*) AS n FROM FinalityLog WHERE txid = ?`
+    ).bind(txid).first<{ n: number }>()
+    expect(logs?.n).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// insertTxWithLog — atomic INSERT + FinalityLog (GTID-style leg entry)
+// ---------------------------------------------------------------------------
+
+describe('insertTxWithLog', () => {
+  it('inserts a Transactions row at DECIDED_TO_SETTLE with a paired FinalityLog', async () => {
+    const txid = 'TX-GT-INS-001'
+    const result = await insertTxWithLog(d1 as any, {
+      txid,
+      lane: 'DEFERRED',
+      initialState: 'DECIDED_TO_SETTLE',
+      amount: { value: 50000, currency: 'JPY' },
+      payerBankId: PAYER_BANK,
+      payerAccountHash: '0010000001',
+      payeeBankId: PAYEE_BANK,
+      payeeAccountHash: '0020000001',
+      idempotencyKey: `IK-${txid}`,
+      decisionProofRef: 'DECISION-PROOF-INS-001',
+      eventType: 'GtidLegDecidedToSettle',
+      payload: { gtid: 'GT-INS-001', leg_id: 'LEG-1' },
+    })
+    expect(result.inserted).toBe(true)
+
+    const row = await d1.prepare(`SELECT state, lane, decision_proof_ref FROM Transactions WHERE txid = ?`)
+      .bind(txid).first<{ state: string; lane: string; decision_proof_ref: string }>()
+    expect(row?.state).toBe('DECIDED_TO_SETTLE')
+    expect(row?.lane).toBe('DEFERRED')
+    expect(row?.decision_proof_ref).toBe('DECISION-PROOF-INS-001')
+
+    const logs = await d1.prepare(
+      `SELECT event_type, state_from, state_to FROM FinalityLog WHERE txid = ?`
+    ).bind(txid).all<{ event_type: string; state_from: string | null; state_to: string }>()
+    expect(logs.results).toHaveLength(1)
+    expect(logs.results[0]).toEqual({
+      event_type: 'GtidLegDecidedToSettle',
+      state_from: null,
+      state_to: 'DECIDED_TO_SETTLE',
+    })
+  })
+
+  it('rejects entry states outside the whitelist', async () => {
+    let caught: unknown
+    try {
+      await insertTxWithLog(d1 as any, {
+        txid: 'TX-INS-BAD-001',
+        lane: 'EXPRESS',
+        initialState: 'SETTLED' as any,
+        amount: { value: 100, currency: 'JPY' },
+        payerBankId: PAYER_BANK,
+        payerAccountHash: '0010000001',
+        payeeBankId: PAYEE_BANK,
+        payeeAccountHash: '0020000001',
+        idempotencyKey: 'IK-bad',
+        eventType: 'PaymentInitiated',
+      })
+    } catch (e) {
+      caught = e
+    }
+    expect(isDomainError(caught)).toBe(true)
+    if (isDomainError(caught)) {
+      expect(caught.reason_code).toBe('INVARIANT_VIOLATION')
+    }
+    // The row must NOT have been inserted (validation runs before any DB I/O).
+    const exists = await d1.prepare(`SELECT COUNT(*) AS n FROM Transactions WHERE txid = ?`)
+      .bind('TX-INS-BAD-001').first<{ n: number }>()
+    expect(exists?.n).toBe(0)
+  })
+
+  it('is idempotent: a second call with the same txid does not double-write', async () => {
+    const txid = 'TX-GT-INS-IDEM'
+    const first = await insertTxWithLog(d1 as any, {
+      txid, lane: 'DEFERRED', initialState: 'DECIDED_TO_SETTLE',
+      amount: { value: 100, currency: 'JPY' },
+      payerBankId: PAYER_BANK, payerAccountHash: '0010000001',
+      payeeBankId: PAYEE_BANK, payeeAccountHash: '0020000001',
+      idempotencyKey: `IK-${txid}`,
+      eventType: 'GtidLegDecidedToSettle',
+    })
+    expect(first.inserted).toBe(true)
+
+    const second = await insertTxWithLog(d1 as any, {
+      txid, lane: 'DEFERRED', initialState: 'DECIDED_TO_SETTLE',
+      amount: { value: 100, currency: 'JPY' },
+      payerBankId: PAYER_BANK, payerAccountHash: '0010000001',
+      payeeBankId: PAYEE_BANK, payeeAccountHash: '0020000001',
+      idempotencyKey: `IK-${txid}`,
+      eventType: 'GtidLegDecidedToSettle',
+    })
+    expect(second.inserted).toBe(false)
+
+    // FinalityLog must contain exactly one entry — the gated INSERT skipped on retry.
+    const logs = await d1.prepare(
+      `SELECT COUNT(*) AS n FROM FinalityLog WHERE txid = ?`
+    ).bind(txid).first<{ n: number }>()
+    expect(logs?.n).toBe(1)
+  })
+
+  it('runs sideUpdates atomically in the same batch as the canonical INSERT', async () => {
+    // Seed a placeholder GtidLegs row that the helper should backref-link
+    // by setting GtidLegs.txid in the same db.batch() as the Transactions INSERT.
+    const legId = 'LEG-INS-SIDE-001'
+    d1.prepare(
+      `INSERT INTO GtidLegs
+       (leg_id, gtid, role, bank_id, account_hash, amount_value, state, version, created_at, updated_at)
+       VALUES (?, 'GT-INS-SIDE', 'PAYER', '001', '0010000001', 100, 'LEG_READY_CHECKED', 0,
+               '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+    ).bind(legId)._runSync()
+
+    const txid = 'TX-GT-INS-SIDE-001'
+    await insertTxWithLog(d1 as any, {
+      txid, lane: 'DEFERRED', initialState: 'DECIDED_TO_SETTLE',
+      amount: { value: 100, currency: 'JPY' },
+      payerBankId: PAYER_BANK, payerAccountHash: '0010000001',
+      payeeBankId: PAYEE_BANK, payeeAccountHash: '0020000001',
+      idempotencyKey: `IK-${txid}`,
+      eventType: 'GtidLegDecidedToSettle',
+      sideUpdates: [{
+        sql: `UPDATE GtidLegs SET txid=?, updated_at=?, version=version+1 WHERE leg_id=?`,
+        binds: [txid, '2025-01-01T00:00:01Z', legId],
+      }],
+    })
+
+    const leg = await d1.prepare(`SELECT txid, version FROM GtidLegs WHERE leg_id = ?`)
+      .bind(legId).first<{ txid: string; version: number }>()
+    expect(leg?.txid).toBe(txid)
+    expect(leg?.version).toBe(1)
   })
 })

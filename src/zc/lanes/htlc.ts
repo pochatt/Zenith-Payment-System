@@ -129,22 +129,21 @@ export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
   }
 
   // Transactions: RECEIVED → HTLC_LOCKED via transitionWithLog (validates + atomic log).
-  // HtlcContracts UPDATE is appended as a non-essential side effect; the
-  // helper currently exposes setColumns for the canonical row only, so
-  // HtlcContracts is updated immediately after when the transition succeeds.
-  const transition = await transitionWithLog(db, {
+  // HtlcContracts UPDATE rides in the same db.batch() via sideUpdates so the
+  // two state rows commit-or-rollback together — eliminating the window where
+  // Transactions = HTLC_LOCKED but HtlcContracts is still HTLC_RECEIVED.
+  await transitionWithLog(db, {
     txid: htlc.txid,
     fromState: 'RECEIVED',
     toState: 'HTLC_LOCKED',
     eventType: 'HtlcLocked',
     payload: { htlc_id: htlcId, reservation_id: reservationId },
     setColumns: { h_reservation_id: reservationId },
+    sideUpdates: [{
+      sql: `UPDATE HtlcContracts SET state='HTLC_LOCKED', version=version+1, updated_at=? WHERE htlc_id=? AND state='HTLC_RECEIVED'`,
+      binds: [now, htlcId],
+    }],
   })
-  if (transition.applied) {
-    await db.prepare(
-      `UPDATE HtlcContracts SET state='HTLC_LOCKED', version=version+1, updated_at=? WHERE htlc_id=?`
-    ).bind(now, htlcId).run()
-  }
 }
 
 /**
@@ -200,27 +199,31 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
     }
   }
 
-  // HTLC_LOCKED → HTLC_FULFILL_REQUESTED via transitionWithLog
+  // HTLC_LOCKED → HTLC_FULFILL_REQUESTED via transitionWithLog. HtlcContracts
+  // CAS rides in the same batch so the two state rows stay in lockstep.
   const fulfillReq = await transitionWithLog(db, {
     txid: htlc.txid,
     fromState: 'HTLC_LOCKED',
     toState: 'HTLC_FULFILL_REQUESTED',
     eventType: 'HtlcFulfillRequested',
     payload: { htlc_id: req.htlc_id },
+    sideUpdates: [{
+      sql: `UPDATE HtlcContracts SET state='HTLC_FULFILL_REQUESTED', version=version+1, updated_at=? WHERE htlc_id=? AND state='HTLC_LOCKED'`,
+      binds: [now, req.htlc_id],
+    }],
   })
   if (!fulfillReq.applied) {
     return { result: 'REJECTED', htlc_id: req.htlc_id, state: fulfillReq.previousState ?? 'NOT_FOUND', reason_code: 'INVALID_STATE' }
   }
-  await db.prepare(
-    `UPDATE HtlcContracts SET state='HTLC_FULFILL_REQUESTED', version=version+1, updated_at=? WHERE htlc_id=?`
-  ).bind(now, req.htlc_id).run()
 
   // dns_cycle_id 設定
   const decisionProofRef = newDecisionProofRef()
   const finalityLogRef = newFinalityLogRef()
   const dnsCycleId = await getOrCreateDnsCycle(db, now)
 
-  // HTLC_FULFILL_REQUESTED → DECIDED_TO_SETTLE
+  // HTLC_FULFILL_REQUESTED → DECIDED_TO_SETTLE. HtlcContracts CAS (and the
+  // secret_verified flip) is appended as a side update so it commits atomically
+  // with the canonical state advance.
   const decided = await transitionWithLog(db, {
     txid: htlc.txid,
     fromState: 'HTLC_FULFILL_REQUESTED',
@@ -232,12 +235,12 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
       finality_log_ref: finalityLogRef,
       dns_cycle_id: dnsCycleId,
     },
+    sideUpdates: [{
+      sql: `UPDATE HtlcContracts SET state='DECIDED_TO_SETTLE', secret_verified=1, version=version+1, updated_at=? WHERE htlc_id=? AND state='HTLC_FULFILL_REQUESTED'`,
+      binds: [now, req.htlc_id],
+    }],
   })
   if (decided.applied) {
-    await db.prepare(
-      `UPDATE HtlcContracts SET state='DECIDED_TO_SETTLE', secret_verified=1, version=version+1, updated_at=? WHERE htlc_id=?`
-    ).bind(now, req.htlc_id).run()
-
     // lockH は DECIDED_TO_SETTLE 遷移成功後に実行
     const txForH = await db
       .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)

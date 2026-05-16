@@ -165,9 +165,11 @@ cancelInFlightTx(db, {
 
 ### Lane Refactor Roadmap
 
-レーン 8 本の移行は完了している（2026-05）。すべてのレーンで `transitionWithLog` /
-`cancelInFlightTx` を使用しており、生 `UPDATE Transactions SET state=...` は
-レーンコードから排除した。`isValidTransition` がアプリ層全域で強制される。
+レーン 8 本の移行と残課題はすべて完了した（2026-05）。すべてのレーンで
+`transitionWithLog` / `cancelInFlightTx` / `insertTxWithLog` を使用しており、
+生 `UPDATE Transactions SET state=...` も生 `INSERT INTO Transactions` も
+レーンコードから排除した。`isValidTransition` がアプリ層全域で強制され、
+INSERT 入口は `ALLOWED_ENTRY_STATES` で明示的にホワイトリスト化される。
 
 | Phase | Target              | 状態  | 備考                                                        |
 |-------|---------------------|-------|-------------------------------------------------------------|
@@ -176,21 +178,23 @@ cancelInFlightTx(db, {
 | 2     | `highvalue.ts`      | 完了  | `PRECHECKED → DECIDED_TO_SETTLE` 直行を `ALLOWED_TRANSITIONS` に明示 |
 | 3     | `express.ts`        | 完了  | 旧 `transitionTx` ヘルパー削除                              |
 | 4     | `standard.ts`       | 完了  | `PRECHECKED_SUSPENDED` / `resume-namecheck` 経路もヘルパー化 |
-| 5     | `htlc.ts`           | 完了  | Transactions と HtlcContracts は並走（HtlcContracts は別 UPDATE） |
+| 5     | `htlc.ts`           | 完了  | Transactions と HtlcContracts を `transitionWithLog.sideUpdates` で同一バッチに統合（lock / fulfillReq / decide の 3 遷移） |
 | 6     | `htlc_auth/approve.ts` | 完了 | canonical RECEIVED 入口を経由（旧: HTLC_LOCKED 直挿入はバグ源） |
 | 7     | `ingress.ts/handlePostCancel` | 完了 | `cancelInFlightTx` に統合 |
-| 8     | `gtid.ts`           | 未着手 | `GtidTransactions` は独自状態空間。`Transactions` は leg 単位で `DECIDED_TO_SETTLE` 直挿入する設計（GT-level 決定後に leg 行を最初から確定状態で生む）— 将来 canonical 化する場合は専用 helper を切る必要あり（**→ 別 issue 化推奨**） |
+| 8     | `gtid.ts`           | 完了  | `insertTxWithLog` で leg 行の `DECIDED_TO_SETTLE` 直挿入を canonical 化。Transactions INSERT + `GtidLegDecidedToSettle` FinalityLog + GtidLegs.txid backref を 1 バッチでアトミック。`ALLOWED_ENTRY_STATES` ホワイトリストで入口を制限 |
 
-**残課題**:
+### 新規 lane 追加時のチェックリスト
 
-- **`gtid.ts` の Transactions 直挿入**（`lane code line 272` 周辺）は設計上の逸脱として残置。
-  「GT-level 決定後に leg 行を `DECIDED_TO_SETTLE` で直挿入」の canonical 化には
-  GTID 専用 helper が必要（`cancelInFlightTx` と同等の GTID 版）。別 issue として追跡する。
-
-- **`HtlcContracts` の状態更新統合**: `transitionWithLog` に `sideUpdates` パラメータを追加
-  することで `cancelInFlightTx` と対称化できる（cancel 経路は既にアトミック — `_helpers.ts:204-212`）。
-  lock / fulfillReq / decide の 3 遷移が現状バッチ外 UPDATE（`htlc.ts:144, 214, 238`）。
-  helper シグネチャ拡張は breaking change のため別 issue として追跡する。
+1. 既存状態を進めるなら **`transitionWithLog`**。CAS が他レーン側状態と
+   並走するなら `sideUpdates` で同一バッチに入れる（HtlcContracts が参照実装）。
+2. キャンセル経路は **`cancelInFlightTx`** を使う。`sideUpdates` で別表の
+   キャンセル CAS も同時にロールバック可能にする（HtlcContracts の cancel が参照実装）。
+3. 新規行をレーン特有の入口 state で作る場合は **`insertTxWithLog`** を使い、
+   `ALLOWED_ENTRY_STATES` に入口 state を追加する。FinalityLog は INSERT と
+   同じバッチで書かれるので「行はあるが audit が無い」窓は構造的に閉じる。
+4. 新規イベント名は `src/types/api.ts#FinalityEventType` の union に追加する。
+5. `test/zc/<lane>.test.ts` に lane 単体テストを足し、
+   `test/integration/balance_invariants.test.ts` に 1 ケース追加する。
 
 ---
 
