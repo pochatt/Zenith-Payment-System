@@ -237,7 +237,7 @@ npx vitest test/zc/express.test.ts    # 単一ファイル
 
 ### ご自由にお使いください
 
-この資料は煮るなり焼くなり、ご自由にお使いください。あなたのプロジェクトに役立ててもらえれば、それが何より嬉しいです。いつかそのプロジェクトが形になったとき、「Zenith を叩き台にした」と一言添えてくださるなら、それで十分です。
+この資料は、どのような形でお使いいただいても構いません。中身をまるごと持ち帰っていただいても、考え方の一部だけを汲み取っていただいても、どちらも嬉しく思います。いつかそのプロジェクトが形になったとき、「Zenith を叩き台にした」と一言添えてくださるなら、それで十分です。
 
 ### ライセンス
 
@@ -488,7 +488,7 @@ The concept, the method, the institutional layer, and the code are laid alongsid
 
 ### Yours to use
 
-This is yours to take apart, reshape, or build on, however suits you. If it helps your own project come together, that alone would make me glad. And when that project takes shape one day, if you mention that Zenith was the draft you started from, that will be more than enough.
+You are welcome to use this material in whatever form suits you. Adopt it wholesale, or take only a fragment of the thinking — either is welcome. When your project takes shape one day, if you mention that Zenith was the draft you started from, that will be more than enough.
 
 ### License
 
