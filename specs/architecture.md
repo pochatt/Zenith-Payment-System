@@ -134,12 +134,17 @@ child.info('lane.dispatch')
 ```ts
 transitionWithLog(db, {
   txid, fromState, toState, eventType,
-  payload?, setColumns?, strict?, skipStateMachineCheck?,
+  payload?, setColumns?, sideUpdates?, strict?, skipStateMachineCheck?,
 }): Promise<{ applied: boolean; previousState: string | null }>
 
 cancelInFlightTx(db, {
   txid, reasonCode, fromStates?, skipReleaseH?, sideUpdates?, eventType?, payloadExtra?,
 }): Promise<boolean>
+
+insertTxWithLog(db, {
+  txid, lane, initialState, amount, payer*, payee*,
+  idempotencyKey, eventType, payload?, extraColumns?, sideUpdates?,
+}): Promise<{ inserted: boolean }>
 ```
 
 ### 不変条件（実装で担保）
@@ -163,34 +168,37 @@ cancelInFlightTx(db, {
   `UPDATE ... RETURNING` でアトミック増分し event_seq を割り当てる
   （migration 0021）。Date.now() + 乱数 + UNIQUE リトライ方式は廃止。
 
-### Lane Refactor Roadmap
+### 新規 lane 追加時のチェックリスト
 
-レーン 8 本の移行は完了している（2026-05）。すべてのレーンで `transitionWithLog` /
-`cancelInFlightTx` を使用しており、生 `UPDATE Transactions SET state=...` は
-レーンコードから排除した。`isValidTransition` がアプリ層全域で強制される。
+CI で `test/zc/lane_invariants.test.ts` が以下を静的にチェックする
+（regex によるソース走査）。チェックリストはそのまま自動 enforce される。
 
-| Phase | Target              | 状態  | 備考                                                        |
-|-------|---------------------|-------|-------------------------------------------------------------|
-| 0     | `_helpers.ts`       | 完了  | アトミックバッチ + 状態機械検証 + 単調 event_seq            |
-| 1     | `bulk.ts`           | 完了  | 最初の参照実装                                              |
-| 2     | `highvalue.ts`      | 完了  | `PRECHECKED → DECIDED_TO_SETTLE` 直行を `ALLOWED_TRANSITIONS` に明示 |
-| 3     | `express.ts`        | 完了  | 旧 `transitionTx` ヘルパー削除                              |
-| 4     | `standard.ts`       | 完了  | `PRECHECKED_SUSPENDED` / `resume-namecheck` 経路もヘルパー化 |
-| 5     | `htlc.ts`           | 完了  | Transactions と HtlcContracts は並走（HtlcContracts は別 UPDATE） |
-| 6     | `htlc_auth/approve.ts` | 完了 | canonical RECEIVED 入口を経由（旧: HTLC_LOCKED 直挿入はバグ源） |
-| 7     | `ingress.ts/handlePostCancel` | 完了 | `cancelInFlightTx` に統合 |
-| 8     | `gtid.ts`           | 未着手 | `GtidTransactions` は独自状態空間。`Transactions` は leg 単位で `DECIDED_TO_SETTLE` 直挿入する設計（GT-level 決定後に leg 行を最初から確定状態で生む）— 将来 canonical 化する場合は専用 helper を切る必要あり（**→ 別 issue 化推奨**） |
+1. 既存状態を進めるなら **`transitionWithLog`**。CAS が他レーン側状態と
+   並走するなら `sideUpdates` で同一バッチに入れる（HtlcContracts が参照実装）。
+2. キャンセル経路は **`cancelInFlightTx`** を使う。`sideUpdates` で別表の
+   キャンセル CAS も同時にロールバック可能にする（HtlcContracts の cancel が参照実装）。
+3. 新規行をレーン特有の入口 state で作る場合は **`insertTxWithLog`** を使い、
+   必要であれば `ALLOWED_ENTRY_STATES` に入口 state を追加する。FinalityLog は
+   INSERT と同じバッチで書かれるので「行はあるが audit が無い」窓は構造的に閉じる。
+   `purpose` のような一回限りのカラムは `extraColumns` で渡す。
+4. 新規イベント名は `src/types/api.ts#FinalityEventType` の union に追加する
+   （未登録のイベント名は lane_invariants が落ちる）。
+5. `test/zc/<lane>.test.ts` に lane 単体テストを足し、
+   `test/integration/balance_invariants.test.ts` に 1 ケース追加する。
+6. 新規 lane file は `test/zc/lane_invariants.test.ts#LANE_FILES` に登録する
+   （ファイル名 → 論理 lane 名 + Transactions.lane カラム値）。
 
-**残課題**:
+### `lane_invariants.test.ts` が落ちたとき
 
-- **`gtid.ts` の Transactions 直挿入**（`lane code line 272` 周辺）は設計上の逸脱として残置。
-  「GT-level 決定後に leg 行を `DECIDED_TO_SETTLE` で直挿入」の canonical 化には
-  GTID 専用 helper が必要（`cancelInFlightTx` と同等の GTID 版）。別 issue として追跡する。
-
-- **`HtlcContracts` の状態更新統合**: `transitionWithLog` に `sideUpdates` パラメータを追加
-  することで `cancelInFlightTx` と対称化できる（cancel 経路は既にアトミック — `_helpers.ts:204-212`）。
-  lock / fulfillReq / decide の 3 遷移が現状バッチ外 UPDATE（`htlc.ts:144, 214, 238`）。
-  helper シグネチャ拡張は breaking change のため別 issue として追跡する。
+| エラー | 直し方 |
+|---|---|
+| `UPDATE Transactions SET state` が検出された | `transitionWithLog` か `cancelInFlightTx` に置き換える |
+| `INSERT INTO Transactions` が検出された | `insertTxWithLog` に置き換える。フィールドが足りなければ `extraColumns` を使う |
+| lane file に `_helpers` の import が無い | 上記いずれかの helper を呼ぶ実装に直す |
+| `LANE_FILES` と src ディレクトリが乖離 | テスト側の `LANE_FILES` 表を実態に合わせて更新 |
+| lane の unit test が無い | `test/zc/<stem>*.test.ts` を作る |
+| balance-invariant ケースが無い | `test/integration/balance_invariants.test.ts` に 1 ケース足す（または KNOWN_GAPS に登録） |
+| event 名が `FinalityEventType` 未登録 | `src/types/api.ts` の union に追加 |
 
 ---
 
@@ -211,12 +219,19 @@ cancelInFlightTx(db, {
 ## 6. テスト戦略
 
 ### 既存
-- 303 テスト / 19 ファイル。Vitest + better-sqlite3 in-memory D1 mock。
+- 約 400 テスト / 30 ファイル。Vitest + better-sqlite3 in-memory D1 mock。
 
 ### 横断プリミティブ
 - `test/shared/errors.test.ts` — DomainError/errorResponse/カテゴリ写像
 - `test/shared/logger.test.ts` — JSON shape, redaction, child baggage
-- `test/zc/lane_helpers.test.ts` — CAS / 並列 N 本 / TOCTOU 取消順序
+- `test/zc/lane_helpers.test.ts` — CAS / 並列 N 本 / TOCTOU 取消順序 / sideUpdates / insertTxWithLog
+
+### 静的解析インバリアント（`test/zc/lane_invariants.test.ts`）
+**目的**: 「新規 lane 追加時のチェックリスト」§4 を機械化する。`src/zc/lanes/`
+配下のソースを regex で走査し、helper を回避する直書き SQL（`UPDATE
+Transactions SET state` / `INSERT INTO Transactions`）、`FinalityEventType`
+union 未登録のイベント名、test 漏れを検出する。runtime suite が「動く」を
+確認するのに対し、こちらは「規約を守って動く」を確認する。
 
 ### 残高インバリアントの統合テスト（`test/integration/balance_invariants.test.ts`）
 **目的**: 「状態機械が正しい」だけでなく「最終的に顧客口座の数字が合う」までを

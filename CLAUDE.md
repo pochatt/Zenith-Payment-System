@@ -82,7 +82,7 @@ Transactions use a `version` column for optimistic locking to prevent race condi
 - **Cross-cutting primitives** (use these instead of ad-hoc patterns):
   - `src/shared/errors.ts` — `DomainError`, `errorResponse`, reason_code → category mapping. Single source of truth for HTTP status + queue retry policy. See `specs/api-contracts.md` § Error Catalog.
   - `src/shared/logger.ts` — `newRequestLogger()` emits 1 JSON line per event with X-Request-Id propagation; PII keys auto-redacted.
-  - `src/zc/lanes/_helpers.ts` — `transitionWithLog()` (CAS state change + paired FinalityLog write) and `cancelInFlightTx()` (TOCTOU-safe order: state guard → release H → log → finalize). Prefer these over copy-pasting CAS/UPDATE patterns into new lane code. Migration plan: `specs/architecture.md` § Lane Refactor Roadmap.
+  - `src/zc/lanes/_helpers.ts` — `transitionWithLog()` (CAS state change + paired FinalityLog write, with optional `sideUpdates` for parallel state rows like HtlcContracts), `cancelInFlightTx()` (TOCTOU-safe order: state guard → release H → log → finalize, with `sideUpdates`), and `insertTxWithLog()` (atomic INSERT + paired FinalityLog at a whitelisted entry state, used by GTID leg creation). Prefer these over copy-pasting CAS/UPDATE/INSERT patterns into new lane code. Migration plan: `specs/architecture.md` § Lane Refactor Roadmap.
 
 ### Naming Conventions
 

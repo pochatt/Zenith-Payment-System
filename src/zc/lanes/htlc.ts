@@ -15,7 +15,7 @@ import type { Env, HtlcCreateRequest, HtlcClaimRequest, HtlcContractRow, Release
 import { nowISO } from '../../types'
 import { reserveH, lockH } from '../h_model'
 import { writeFinalityLog, callBankAuthorityCheck, callBankExecuteDebit, callBankReleaseReserve, onPayerExecConfirmed, suspendTx } from '../orchestrator'
-import { transitionWithLog, cancelInFlightTx } from './_helpers'
+import { transitionWithLog, cancelInFlightTx, insertTxWithLog } from './_helpers'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { sha256hex } from '../../shared/hmac'
 import { getOrCreateDnsCycle } from '../dns'
@@ -48,30 +48,29 @@ export async function createHtlc(req: HtlcCreateRequest, env: Env): Promise<{
     hashlock = await sha256hex(preimage)
   }
 
-  // Transactions レコード作成（canonical RECEIVED 入口）
-  await db.prepare(
-    `INSERT OR IGNORE INTO Transactions
-     (txid, lane, state, amount_value, amount_currency, payer_bank_id, payer_account_hash,
-      payee_bank_id, payee_account_hash, idempotency_key, schema_version, created_at, updated_at, version)
-     VALUES (?, 'HTLC', 'RECEIVED', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', ?, ?, 0)`
-  ).bind(txid, req.amount.value, req.payer_bank_id, req.payer_account_hash,
-    req.payee_bank_id, req.payee_account_hash,
-    req.idempotency_key, now, now).run()
-
-  // HtlcContracts レコード
-  await db.prepare(
-    `INSERT OR IGNORE INTO HtlcContracts
-     (htlc_id, txid, state, hashlock, timelock, amount_value,
-      payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
-      version, created_at, updated_at)
-     VALUES (?, ?, 'HTLC_RECEIVED', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`
-  ).bind(req.htlc_id, txid, hashlock, req.timelock,
-    req.amount.value, req.payer_bank_id, req.payee_bank_id, now, now).run()
-
-  await writeFinalityLog(db, {
-    txid, event_type: 'HtlcCreated', state_from: null, state_to: 'RECEIVED',
-    payload_json: JSON.stringify({ htlc_id: req.htlc_id, hashlock, timelock: req.timelock }),
-    txid_or_gtid: txid,
+  // canonical RECEIVED 入口で Transactions を作成。HtlcContracts INSERT と
+  // FinalityLog INSERT を同一 db.batch() に統合し、「行はあるが audit が無い」窓を消す。
+  await insertTxWithLog(db, {
+    txid,
+    lane: 'HTLC',
+    initialState: 'RECEIVED',
+    amount: { value: req.amount.value, currency: 'JPY' },
+    payerBankId: req.payer_bank_id,
+    payerAccountHash: req.payer_account_hash,
+    payeeBankId: req.payee_bank_id,
+    payeeAccountHash: req.payee_account_hash,
+    idempotencyKey: req.idempotency_key,
+    eventType: 'HtlcCreated',
+    payload: { htlc_id: req.htlc_id, hashlock, timelock: req.timelock },
+    sideUpdates: [{
+      sql: `INSERT OR IGNORE INTO HtlcContracts
+            (htlc_id, txid, state, hashlock, timelock, amount_value,
+             payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
+             version, created_at, updated_at)
+            VALUES (?, ?, 'HTLC_RECEIVED', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`,
+      binds: [req.htlc_id, txid, hashlock, req.timelock,
+              req.amount.value, req.payer_bank_id, req.payee_bank_id, now, now],
+    }],
   })
 
   // 非同期で H予約 & Lock
@@ -129,22 +128,21 @@ export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
   }
 
   // Transactions: RECEIVED → HTLC_LOCKED via transitionWithLog (validates + atomic log).
-  // HtlcContracts UPDATE is appended as a non-essential side effect; the
-  // helper currently exposes setColumns for the canonical row only, so
-  // HtlcContracts is updated immediately after when the transition succeeds.
-  const transition = await transitionWithLog(db, {
+  // HtlcContracts UPDATE rides in the same db.batch() via sideUpdates so the
+  // two state rows commit-or-rollback together — eliminating the window where
+  // Transactions = HTLC_LOCKED but HtlcContracts is still HTLC_RECEIVED.
+  await transitionWithLog(db, {
     txid: htlc.txid,
     fromState: 'RECEIVED',
     toState: 'HTLC_LOCKED',
     eventType: 'HtlcLocked',
     payload: { htlc_id: htlcId, reservation_id: reservationId },
     setColumns: { h_reservation_id: reservationId },
+    sideUpdates: [{
+      sql: `UPDATE HtlcContracts SET state='HTLC_LOCKED', version=version+1, updated_at=? WHERE htlc_id=? AND state='HTLC_RECEIVED'`,
+      binds: [now, htlcId],
+    }],
   })
-  if (transition.applied) {
-    await db.prepare(
-      `UPDATE HtlcContracts SET state='HTLC_LOCKED', version=version+1, updated_at=? WHERE htlc_id=?`
-    ).bind(now, htlcId).run()
-  }
 }
 
 /**
@@ -200,27 +198,31 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
     }
   }
 
-  // HTLC_LOCKED → HTLC_FULFILL_REQUESTED via transitionWithLog
+  // HTLC_LOCKED → HTLC_FULFILL_REQUESTED via transitionWithLog. HtlcContracts
+  // CAS rides in the same batch so the two state rows stay in lockstep.
   const fulfillReq = await transitionWithLog(db, {
     txid: htlc.txid,
     fromState: 'HTLC_LOCKED',
     toState: 'HTLC_FULFILL_REQUESTED',
     eventType: 'HtlcFulfillRequested',
     payload: { htlc_id: req.htlc_id },
+    sideUpdates: [{
+      sql: `UPDATE HtlcContracts SET state='HTLC_FULFILL_REQUESTED', version=version+1, updated_at=? WHERE htlc_id=? AND state='HTLC_LOCKED'`,
+      binds: [now, req.htlc_id],
+    }],
   })
   if (!fulfillReq.applied) {
     return { result: 'REJECTED', htlc_id: req.htlc_id, state: fulfillReq.previousState ?? 'NOT_FOUND', reason_code: 'INVALID_STATE' }
   }
-  await db.prepare(
-    `UPDATE HtlcContracts SET state='HTLC_FULFILL_REQUESTED', version=version+1, updated_at=? WHERE htlc_id=?`
-  ).bind(now, req.htlc_id).run()
 
   // dns_cycle_id 設定
   const decisionProofRef = newDecisionProofRef()
   const finalityLogRef = newFinalityLogRef()
   const dnsCycleId = await getOrCreateDnsCycle(db, now)
 
-  // HTLC_FULFILL_REQUESTED → DECIDED_TO_SETTLE
+  // HTLC_FULFILL_REQUESTED → DECIDED_TO_SETTLE. HtlcContracts CAS (and the
+  // secret_verified flip) is appended as a side update so it commits atomically
+  // with the canonical state advance.
   const decided = await transitionWithLog(db, {
     txid: htlc.txid,
     fromState: 'HTLC_FULFILL_REQUESTED',
@@ -232,12 +234,12 @@ export async function claimHtlc(req: HtlcClaimRequest, env: Env): Promise<{
       finality_log_ref: finalityLogRef,
       dns_cycle_id: dnsCycleId,
     },
+    sideUpdates: [{
+      sql: `UPDATE HtlcContracts SET state='DECIDED_TO_SETTLE', secret_verified=1, version=version+1, updated_at=? WHERE htlc_id=? AND state='HTLC_FULFILL_REQUESTED'`,
+      binds: [now, req.htlc_id],
+    }],
   })
   if (decided.applied) {
-    await db.prepare(
-      `UPDATE HtlcContracts SET state='DECIDED_TO_SETTLE', secret_verified=1, version=version+1, updated_at=? WHERE htlc_id=?`
-    ).bind(now, req.htlc_id).run()
-
     // lockH は DECIDED_TO_SETTLE 遷移成功後に実行
     const txForH = await db
       .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)

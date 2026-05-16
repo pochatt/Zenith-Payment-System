@@ -4,7 +4,7 @@
  */
 import type { Env, RtpRequestRow, RtpRespondRequest } from '../../../types'
 import { nowISO } from '../../../types'
-import { writeFinalityLog } from '../../orchestrator'
+import { insertTxWithLog } from '../_helpers'
 
 /**
  * RTP応答処理（ACCEPTED / REJECTED）
@@ -77,7 +77,8 @@ export async function respondToRtp(
   // ACCEPTED: 送金取引を自動生成
   const linkedTxid = `TX-${crypto.randomUUID()}`
 
-  // RtpRequestRows が未作成の場合に備え、INSERT OR IGNORE で補完してから UPDATE する
+  // RtpRequestRows が未作成の場合に備え、INSERT OR IGNORE で補完してから UPDATE する。
+  // この行は支払銀行側通知テーブルのため、本体バッチの前に独立して投入してよい。
   await db.prepare(`
     INSERT OR IGNORE INTO RtpRequestRows
       (rtp_id, payee_bank_id, payer_bank_id, amount_value, rtp_status,
@@ -88,37 +89,40 @@ export async function respondToRtp(
     rtp.expires_at, now, now,
   ).run()
 
-  await db.batch([
-    db.prepare(`
-      UPDATE RtpRequests
-      SET rtp_status = 'TX_CREATED', state = 'ATTEMPTED', attempt_count = attempt_count + 1,
-          linked_txid = ?, linked_txid_new = ?, payer_account_id = ?, response_type = 'ACCEPTED',
-          responded_at = ?, updated_at = ?
-      WHERE rtp_id = ?
-    `).bind(linkedTxid, linkedTxid, response.payer_account_id, now, now, rtpId),
-    db.prepare(`
-      UPDATE RtpRequestRows SET rtp_status = 'TX_CREATED', responded_at = ?, updated_at = ?
-      WHERE rtp_id = ?
-    `).bind(now, now, rtpId),
-
-    db.prepare(`
-      INSERT INTO Transactions
-        (txid, state, lane, amount_value, amount_currency,
-         payer_bank_id, payer_account_hash, payee_bank_id, payee_account_hash,
-         purpose, idempotency_key, schema_version, version, created_at, updated_at)
-      VALUES (?, 'RECEIVED', 'RTP', ?, 'JPY', ?, ?, ?, ?, 'P2P', ?, '1.0', 0, ?, ?)
-    `).bind(
-      linkedTxid,
-      rtp.amount_value,
-      rtp.payer_bank_id,
-      response.payer_account_id,
-      rtp.payee_bank_id,
-      rtp.payee_account_hash ?? null,
-      response.idempotency_key,
-      now,
-      now,
-    ),
-  ])
+  // 送金 Transaction 作成 + FinalityLog + RtpRequests/RtpRequestRows の TX_CREATED 化を
+  // 1 つの db.batch() に統合する。旧実装は INSERT/UPDATE をバッチ、FinalityLog を別 await
+  // していたため「Transactions 行はあるが RtpAccepted ログが残らない」窓が存在した。
+  // insertTxWithLog は ALLOWED_ENTRY_STATES = ['RECEIVED', ...] を強制するので、
+  // RTP は canonical な RECEIVED 入口で他レーンと合流する。
+  await insertTxWithLog(db, {
+    txid: linkedTxid,
+    lane: 'RTP',
+    initialState: 'RECEIVED',
+    amount: { value: rtp.amount_value, currency: 'JPY' },
+    payerBankId: rtp.payer_bank_id,
+    payerAccountHash: response.payer_account_id,
+    payeeBankId: rtp.payee_bank_id,
+    payeeAccountHash: rtp.payee_account_hash ?? '',
+    idempotencyKey: response.idempotency_key,
+    extraColumns: { purpose: 'P2P' },
+    eventType: 'RtpAccepted',
+    payload: { rtp_id: rtpId, linked_txid: linkedTxid },
+    sideUpdates: [
+      {
+        sql: `UPDATE RtpRequests
+              SET rtp_status = 'TX_CREATED', state = 'ATTEMPTED', attempt_count = attempt_count + 1,
+                  linked_txid = ?, linked_txid_new = ?, payer_account_id = ?, response_type = 'ACCEPTED',
+                  responded_at = ?, updated_at = ?
+              WHERE rtp_id = ?`,
+        binds: [linkedTxid, linkedTxid, response.payer_account_id, now, now, rtpId],
+      },
+      {
+        sql: `UPDATE RtpRequestRows SET rtp_status = 'TX_CREATED', responded_at = ?, updated_at = ?
+              WHERE rtp_id = ?`,
+        binds: [now, now, rtpId],
+      },
+    ],
+  })
 
   // オーケストレーターへ送信（STANDARD フローで精算処理を進める）
   await env.QUEUE.send({
@@ -127,15 +131,6 @@ export async function respondToRtp(
     txid: linkedTxid,
     attempt: 0,
     enqueued_at: now,
-  })
-
-  await writeFinalityLog(db, {
-    txid: linkedTxid,
-    event_type: 'RtpAccepted',
-    state_from: 'REQUESTED',
-    state_to: 'TX_CREATED',
-    payload_json: JSON.stringify({ rtp_id: rtpId, linked_txid: linkedTxid }),
-    txid_or_gtid: rtpId,
   })
 
   return { result: 'ACCEPTED', txid: linkedTxid }

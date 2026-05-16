@@ -26,9 +26,9 @@ import type {
 import { nowISO } from '../../../types'
 import { newUUID } from '../../../shared/idempotency'
 import { sha256hex } from '../../../shared/hmac'
-import { writeFinalityLog, callBankReserveFunds } from '../../orchestrator'
+import { callBankReserveFunds } from '../../orchestrator'
 import { logTxEvent } from '../../trace'
-import { transitionWithLog } from '../_helpers'
+import { transitionWithLog, insertTxWithLog } from '../_helpers'
 
 /**
  * 送金側（顧客）がオーソリを承認する。
@@ -98,43 +98,36 @@ export async function approveAuthRequest(
     return { result: 'ERROR', reason_code: (reserveResp as { reason_code?: string }).reason_code ?? 'RESERVE_FAILED' }
   }
 
-  // Step 1: canonical entry — INSERT Transactions at RECEIVED and write the
-  // PaymentInitiated audit event. The H reservation is already held by the
-  // bank's suspense account (reserve-funds above), so ZC does not allocate
-  // an H_RESERVED row; the lane goes RECEIVED → HTLC_LOCKED directly per
-  // ALLOWED_TRANSITIONS.
-  await db.prepare(
-    `INSERT OR IGNORE INTO Transactions
-     (txid, lane, state, amount_value, amount_currency, payer_bank_id, payer_account_hash,
-      payee_bank_id, payee_account_hash, idempotency_key, schema_version,
-      version, created_at, updated_at)
-     VALUES (?, 'HTLC', 'RECEIVED', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', 0, ?, ?)`
-  ).bind(
-    txid, authReq.amount_value,
-    authReq.payer_bank_id, authReq.payer_account_hash,
-    authReq.payee_bank_id, authReq.payee_account_hash,
-    req.idempotency_key, now, now,
-  ).run()
-
-  await writeFinalityLog(db, {
-    txid, event_type: 'PaymentInitiated', state_from: null, state_to: 'RECEIVED',
-    payload_json: JSON.stringify({ txid, lane: 'HTLC', flow: 'HTLC_AUTH', auth_id: authId }),
-    txid_or_gtid: txid,
+  // Step 1: canonical entry — INSERT Transactions at RECEIVED, write the
+  // PaymentInitiated audit event, and create the HtlcContracts row in one
+  // atomic batch. The H reservation is already held by the bank's suspense
+  // account (reserve-funds above), so ZC does not allocate an H_RESERVED row;
+  // the lane goes RECEIVED → HTLC_LOCKED directly per ALLOWED_TRANSITIONS.
+  await insertTxWithLog(db, {
+    txid,
+    lane: 'HTLC',
+    initialState: 'RECEIVED',
+    amount: { value: authReq.amount_value, currency: 'JPY' },
+    payerBankId: authReq.payer_bank_id,
+    payerAccountHash: authReq.payer_account_hash,
+    payeeBankId: authReq.payee_bank_id,
+    payeeAccountHash: authReq.payee_account_hash,
+    idempotencyKey: req.idempotency_key,
+    eventType: 'PaymentInitiated',
+    payload: { txid, lane: 'HTLC', flow: 'HTLC_AUTH', auth_id: authId },
+    sideUpdates: [{
+      // HtlcContracts は HTLC_LOCKED で作成しておき、Step 2 の Transactions
+      // 遷移 (RECEIVED → HTLC_LOCKED) と整合させる。claimHtlc がリードする
+      // hashlock/timelock を確実に提供するため Transactions より先に存在させる。
+      sql: `INSERT OR IGNORE INTO HtlcContracts
+            (htlc_id, txid, state, hashlock, timelock, amount_value,
+             payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
+             version, created_at, updated_at)
+            VALUES (?, ?, 'HTLC_LOCKED', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`,
+      binds: [htlcId, txid, hashlock, authReq.capture_expires_at,
+              authReq.amount_value, authReq.payer_bank_id, authReq.payee_bank_id, now, now],
+    }],
   })
-
-  // HtlcContracts レコード作成（HTLC_LOCKED 状態: 資金確保済み）
-  // Transactions の遷移より先に作成しておくことで、claimHtlc がリードする
-  // hashlock/timelock を確実に提供する。
-  await db.prepare(
-    `INSERT OR IGNORE INTO HtlcContracts
-     (htlc_id, txid, state, hashlock, timelock, amount_value,
-      payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
-      version, created_at, updated_at)
-     VALUES (?, ?, 'HTLC_LOCKED', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`
-  ).bind(
-    htlcId, txid, hashlock, authReq.capture_expires_at,
-    authReq.amount_value, authReq.payer_bank_id, authReq.payee_bank_id, now, now,
-  ).run()
 
   // Step 2: RECEIVED → HTLC_LOCKED via the canonical helper.
   // ALLOWED_TRANSITIONS contains this edge (state_machine.ts: RECEIVED → HTLC_LOCKED),
