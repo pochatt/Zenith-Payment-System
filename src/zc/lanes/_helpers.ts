@@ -245,6 +245,12 @@ export interface InsertTxRequest {
   finalityLogRef?: string | null
   hReservationId?: string | null
   dnsCycleId?: string | null
+  /**
+   * Escape hatch for one-off Transactions columns the helper does not expose
+   * as first-class fields (e.g. `purpose`). Keep this list small — if a column
+   * is being set by more than one lane, promote it to a named field instead.
+   */
+  extraColumns?: Record<string, string | number | null>
   /** FinalityLog event_type recording the row entry (e.g. 'GtidLegDecidedToSettle'). */
   eventType: FinalityEventType | string
   /** Arbitrary fields to record in the FinalityLog payload. */
@@ -307,15 +313,30 @@ export async function insertTxWithLog(
     txid_or_gtid: req.txid,
   })
 
+  // Compose the column list and bind vector. The fixed columns come first;
+  // `extraColumns` (escape hatch for one-off fields like `purpose`) extends
+  // both arrays in lockstep so the INSERT remains parameterized.
+  const extra = req.extraColumns ?? {}
+  let extraCols = ''
+  let extraPlaceholders = ''
+  const extraValues: Array<string | number | null> = []
+  for (const k in extra) {
+    extraCols += `, ${k}`
+    extraPlaceholders += ', ?'
+    extraValues.push(extra[k]!)
+  }
+
+  const insertSql = `
+    INSERT OR IGNORE INTO Transactions
+      (txid, lane, state, amount_value, amount_currency,
+       payer_bank_id, payer_account_hash, payee_bank_id, payee_account_hash,
+       idempotency_key, schema_version, decision_proof_ref, finality_log_ref,
+       h_reservation_id, dns_cycle_id, version, created_at, updated_at${extraCols})
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1.0', ?, ?, ?, ?, 0, ?, ?${extraPlaceholders})
+  `
+
   const results = await db.batch([
-    db.prepare(
-      `INSERT OR IGNORE INTO Transactions
-         (txid, lane, state, amount_value, amount_currency,
-          payer_bank_id, payer_account_hash, payee_bank_id, payee_account_hash,
-          idempotency_key, schema_version, decision_proof_ref, finality_log_ref,
-          h_reservation_id, dns_cycle_id, version, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1.0', ?, ?, ?, ?, 0, ?, ?)`
-    ).bind(
+    db.prepare(insertSql).bind(
       req.txid, req.lane, req.initialState,
       req.amount.value, req.amount.currency,
       req.payerBankId, req.payerAccountHash,
@@ -326,6 +347,7 @@ export async function insertTxWithLog(
       req.hReservationId ?? null,
       req.dnsCycleId ?? null,
       now, now,
+      ...extraValues,
     ),
     buildFinalityLogConditionalInsert(db, logRow),
     ...(req.sideUpdates ?? []).map(u => db.prepare(u.sql).bind(...u.binds)),

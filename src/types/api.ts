@@ -293,6 +293,8 @@ export type FinalityEventType =
   | 'GtidLegDecidedToSettle'
   | 'GtidSettled'
   | 'RtpRequested'
+  | 'RtpAccepted'
+  | 'RtpDeclined'
   | 'DnsKicked'
   | 'DnsSettled'
   | 'DnsHoldActivated'

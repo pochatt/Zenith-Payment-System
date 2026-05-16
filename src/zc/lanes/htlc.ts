@@ -15,7 +15,7 @@ import type { Env, HtlcCreateRequest, HtlcClaimRequest, HtlcContractRow, Release
 import { nowISO } from '../../types'
 import { reserveH, lockH } from '../h_model'
 import { writeFinalityLog, callBankAuthorityCheck, callBankExecuteDebit, callBankReleaseReserve, onPayerExecConfirmed, suspendTx } from '../orchestrator'
-import { transitionWithLog, cancelInFlightTx } from './_helpers'
+import { transitionWithLog, cancelInFlightTx, insertTxWithLog } from './_helpers'
 import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
 import { sha256hex } from '../../shared/hmac'
 import { getOrCreateDnsCycle } from '../dns'
@@ -48,30 +48,29 @@ export async function createHtlc(req: HtlcCreateRequest, env: Env): Promise<{
     hashlock = await sha256hex(preimage)
   }
 
-  // Transactions レコード作成（canonical RECEIVED 入口）
-  await db.prepare(
-    `INSERT OR IGNORE INTO Transactions
-     (txid, lane, state, amount_value, amount_currency, payer_bank_id, payer_account_hash,
-      payee_bank_id, payee_account_hash, idempotency_key, schema_version, created_at, updated_at, version)
-     VALUES (?, 'HTLC', 'RECEIVED', ?, 'JPY', ?, ?, ?, ?, ?, '1.0', ?, ?, 0)`
-  ).bind(txid, req.amount.value, req.payer_bank_id, req.payer_account_hash,
-    req.payee_bank_id, req.payee_account_hash,
-    req.idempotency_key, now, now).run()
-
-  // HtlcContracts レコード
-  await db.prepare(
-    `INSERT OR IGNORE INTO HtlcContracts
-     (htlc_id, txid, state, hashlock, timelock, amount_value,
-      payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
-      version, created_at, updated_at)
-     VALUES (?, ?, 'HTLC_RECEIVED', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`
-  ).bind(req.htlc_id, txid, hashlock, req.timelock,
-    req.amount.value, req.payer_bank_id, req.payee_bank_id, now, now).run()
-
-  await writeFinalityLog(db, {
-    txid, event_type: 'HtlcCreated', state_from: null, state_to: 'RECEIVED',
-    payload_json: JSON.stringify({ htlc_id: req.htlc_id, hashlock, timelock: req.timelock }),
-    txid_or_gtid: txid,
+  // canonical RECEIVED 入口で Transactions を作成。HtlcContracts INSERT と
+  // FinalityLog INSERT を同一 db.batch() に統合し、「行はあるが audit が無い」窓を消す。
+  await insertTxWithLog(db, {
+    txid,
+    lane: 'HTLC',
+    initialState: 'RECEIVED',
+    amount: { value: req.amount.value, currency: 'JPY' },
+    payerBankId: req.payer_bank_id,
+    payerAccountHash: req.payer_account_hash,
+    payeeBankId: req.payee_bank_id,
+    payeeAccountHash: req.payee_account_hash,
+    idempotencyKey: req.idempotency_key,
+    eventType: 'HtlcCreated',
+    payload: { htlc_id: req.htlc_id, hashlock, timelock: req.timelock },
+    sideUpdates: [{
+      sql: `INSERT OR IGNORE INTO HtlcContracts
+            (htlc_id, txid, state, hashlock, timelock, amount_value,
+             payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
+             version, created_at, updated_at)
+            VALUES (?, ?, 'HTLC_RECEIVED', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`,
+      binds: [req.htlc_id, txid, hashlock, req.timelock,
+              req.amount.value, req.payer_bank_id, req.payee_bank_id, now, now],
+    }],
   })
 
   // 非同期で H予約 & Lock
