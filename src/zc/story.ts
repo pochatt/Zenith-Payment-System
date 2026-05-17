@@ -11,7 +11,7 @@
  * timeline data still use /explain. /story is for operators staring at one
  * specific txid and trying to understand what happened to it.
  */
-import { explainTransaction, type ExplainResult } from './explain'
+import { explainTransaction, type ExplainResult, type TimelineItem } from './explain'
 
 /** What kind of arrow each FinalityLog event_type implies on the wire. */
 type ArrowKind =
@@ -159,6 +159,8 @@ export interface StoryResult {
   txid: string
   lane: string
   current_state: string
+  parties: { payer_bank_id: string; payee_bank_id: string }
+  timeline: TimelineItem[]
   headline: string
   narrative: string
   mermaid_sequence: string
@@ -199,6 +201,8 @@ export async function narrateTransaction(
     txid: exp.txid,
     lane: exp.lane,
     current_state: exp.current_state,
+    parties: exp.parties,
+    timeline: exp.timeline,
     headline,
     narrative,
     mermaid_sequence: mermaid,
