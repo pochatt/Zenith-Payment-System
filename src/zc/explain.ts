@@ -38,7 +38,7 @@ interface FinalityRow {
   entry_hash: string | null
 }
 
-interface TimelineItem {
+export interface TimelineItem {
   seq: number
   at: string
   event: string

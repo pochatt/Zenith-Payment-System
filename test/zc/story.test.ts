@@ -68,6 +68,10 @@ describe('narrateTransaction', () => {
     expect(r.headline).toContain('022')
     expect(r.headline).toContain('¥75,000')
     expect(r.headline).toContain('EXPRESS')
+    expect(r.parties.payer_bank_id).toBe('011')
+    expect(r.parties.payee_bank_id).toBe('022')
+    expect(r.timeline).toHaveLength(1)
+    expect(r.timeline[0]!.event).toBe('PaymentInitiated')
   })
 
   it('renders a Mermaid sequenceDiagram with all four actors and per-event arrows', async () => {
