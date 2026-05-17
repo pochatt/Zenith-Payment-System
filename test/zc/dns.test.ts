@@ -6,6 +6,9 @@
  * - kickDns: OPEN → KICKED with net position calculation
  * - DNS OPEN → KICKED state transition correctness
  * - Net zero-sum invariant across payer/payee banks
+ * - Regression: DnsNetPositions FK must reference DnsCycles, not DnsCycles_old
+ *   (migration 0012 renamed DnsCycles→DnsCycles_old which caused SQLite to
+ *   rewrite the FK; 0023 fixes it — these tests guard against re-introduction)
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createTestDb, type MockD1Database } from '../helpers/d1-mock'
@@ -199,5 +202,92 @@ describe('kickDns', () => {
     ).first<{ event_type: string }>()
     expect(log).not.toBeNull()
     expect(log?.event_type).toBe('DnsKicked')
+  })
+
+  // Regression: migration 0012 renamed DnsCycles→DnsCycles_old, which caused
+  // SQLite to silently rewrite DnsNetPositions's FK to REFERENCES DnsCycles_old.
+  // After 0012 dropped DnsCycles_old the FK became dangling. D1's batch executor
+  // validates FK targets at prepare time, so kickDns failed with
+  // "D1_ERROR: no such table: main.DnsCycles_old" whenever net positions existed.
+  // Migration 0023 fixes the FK; these tests guard against re-introduction.
+  it('kickDns with BULK DECIDED_TO_SETTLE creates DnsNetPositions rows', async () => {
+    await getOrCreateDnsCycle(d1 as any, `${TODAY}T09:00:00Z`)
+    insertDecidedTx(d1, 'TX-BULK-DNS-1', '001', '002', 100_000, 'BULK')
+    insertDecidedTx(d1, 'TX-BULK-DNS-2', '002', '003',  50_000, 'BULK')
+
+    const env = makeEnv(d1)
+    const result = await kickDns(TODAY, env)
+
+    expect(result.state).toBe('KICKED')
+
+    const positions = await getDnsNetPositions(TODAY, d1 as any)
+    expect(positions.length).toBeGreaterThan(0)
+
+    const total = positions.reduce((s, p) => s + p.net_position, 0)
+    expect(total).toBe(0)   // zero-sum invariant must hold for BULK too
+  })
+
+  it('kickDns DnsNetPositions INSERT succeeds with foreign_keys = ON', async () => {
+    // This test replicates D1's FK validation behaviour (the test suite normally
+    // runs with foreign_keys=OFF).  If any migration corrupts the DnsNetPositions
+    // FK reference (e.g. via ALTER TABLE RENAME on a parent table), this test
+    // will fail with "FOREIGN KEY constraint failed" or "no such table: <old>".
+    const { sqlite, d1: fkDb } = createTestDb()
+    sqlite.pragma('foreign_keys = ON')
+
+    const fkEnv = makeEnv(fkDb)
+
+    // Seed participants directly via the inner sqlite handle so FK checks pass
+    // for Participants (referenced by other tables but not DnsNetPositions).
+    sqlite.prepare(
+      `INSERT OR REPLACE INTO Participants
+       (bank_id, bank_name, ingress_base_url, h_limit, h_used, is_active, registered_at)
+       VALUES ('001', 'Bank A', '/bank/001', 1000000, 0, 1, '2025-01-01T00:00:00Z')`
+    ).run()
+    sqlite.prepare(
+      `INSERT OR REPLACE INTO Participants
+       (bank_id, bank_name, ingress_base_url, h_limit, h_used, is_active, registered_at)
+       VALUES ('002', 'Bank B', '/bank/002', 1000000, 0, 1, '2025-01-01T00:00:00Z')`
+    ).run()
+    sqlite.prepare(
+      `INSERT OR IGNORE INTO Transactions
+       (txid, lane, state, amount_value, amount_currency,
+        payer_bank_id, payer_account_hash, payee_bank_id, payee_account_hash,
+        idempotency_key, schema_version, created_at, updated_at, version)
+       VALUES ('TX-FK-CHK-1', 'BULK', 'DECIDED_TO_SETTLE', 75000, 'JPY',
+               '001', 'payerAcc', '002', 'payeeAcc',
+               'IK-TX-FK-CHK-1', '1.0',
+               '2025-06-01T09:00:00Z', '2025-06-01T09:00:00Z', 0)`
+    ).run()
+
+    // Must not throw — if DnsNetPositions has a dangling FK this will fail
+    await expect(kickDns(TODAY, fkEnv)).resolves.not.toThrow()
+
+    const rows = sqlite.prepare(
+      `SELECT COUNT(*) AS cnt FROM DnsNetPositions`
+    ).get() as { cnt: number }
+    expect(rows.cnt).toBeGreaterThan(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Schema integrity: DnsNetPositions FK must reference DnsCycles
+// ---------------------------------------------------------------------------
+
+describe('DnsNetPositions schema integrity', () => {
+  // Guard against any future migration that renames DnsCycles (or another
+  // ancestor table) without also recreating DnsNetPositions: SQLite silently
+  // rewrites FK references on RENAME, and D1 will reject batch inserts if the
+  // referenced table no longer exists.
+  it('DnsNetPositions FK references DnsCycles, not a stale table name', async () => {
+    const row = await d1.prepare(
+      `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'DnsNetPositions'`
+    ).first<{ sql: string }>()
+
+    expect(row).not.toBeNull()
+    // FK must point to the live DnsCycles table
+    expect(row!.sql).toMatch(/REFERENCES\s+DnsCycles\b/)
+    // Must not reference any _old or _backup variant left by a partial migration
+    expect(row!.sql).not.toMatch(/REFERENCES\s+DnsCycles_\w+/)
   })
 })
