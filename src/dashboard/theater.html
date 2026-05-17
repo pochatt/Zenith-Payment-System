@@ -287,6 +287,7 @@ const state = {
   loop: false,
   condense: true,
   timer: null,
+  bankByCode: new Map(), // bank_id → bank_name
 };
 
 // EVENT_RENDER (mirrors src/zc/story.ts).
@@ -343,6 +344,21 @@ async function api(path) {
   const r = await fetch(path, { headers: { 'Accept':'application/json' }});
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
+}
+
+// =============================================================================
+// Bank name lookup
+// =============================================================================
+async function loadBanks() {
+  try {
+    const r = await api('/api/banks');
+    (r.banks || []).forEach(b => state.bankByCode.set(String(b.bank_id), b.bank_name || b.bank_id));
+  } catch (_) {}
+}
+
+function bankName(id) {
+  if (!id) return '?';
+  return state.bankByCode.get(String(id)) || `銀行 ${id}`;
 }
 
 // =============================================================================
@@ -466,9 +482,9 @@ function renderHeader(story) {
   // for display.
   document.getElementById('txAmount').textContent = '—';
   document.getElementById('txParties').textContent =
-    `${p.payer_bank_id || '?'} → ${p.payee_bank_id || '?'}`;
-  document.getElementById('payerBankName').textContent = `銀行 ${p.payer_bank_id || '?'}`;
-  document.getElementById('payeeBankName').textContent = `銀行 ${p.payee_bank_id || '?'}`;
+    `${bankName(p.payer_bank_id)} → ${bankName(p.payee_bank_id)}`;
+  document.getElementById('payerBankName').textContent = bankName(p.payer_bank_id);
+  document.getElementById('payeeBankName').textContent = bankName(p.payee_bank_id);
 
   // Health badge
   const h = story.health || {};
@@ -838,6 +854,7 @@ document.addEventListener('keydown', e => {
 
 // init: deep-link via ?txid=... (e.g. from the dashboard's trace modal)
 const initialTxid = new URLSearchParams(location.search).get('txid');
+loadBanks();
 loadTxList().then(() => {
   if (initialTxid) {
     const sel = document.getElementById('txPicker');
