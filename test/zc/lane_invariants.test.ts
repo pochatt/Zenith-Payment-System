@@ -207,7 +207,8 @@ describe("lane invariants — test-file and balance-invariant coverage", () => {
           src.includes(`'${t}'`) ||
           src.includes(`"${t}"`) ||
           src.includes(`— ${t}`) ||
-          src.includes(`describe('${t}`)
+          src.includes(`describe('${t}`) ||
+          src.includes(`describe("${t}`)
       );
       if (!found) offenders.push(`${file} (looked for: ${tokens.join(", ")})`);
     }
