@@ -13,13 +13,13 @@
  * @module shared/fatf_validator
  */
 
-import type { FatfR16Data, FatfParty, FatfInstitution } from '../types'
+import type { FatfR16Data, FatfParty, FatfInstitution } from "../types";
 
 // ---------------------------------------------------------------------------
 // 定数
 // ---------------------------------------------------------------------------
 
-import { FATF_THRESHOLD_JPY, EXCHANGE_RATE_TO_JPY } from './constants'
+import { FATF_THRESHOLD_JPY, EXCHANGE_RATE_TO_JPY } from "./constants";
 
 // ---------------------------------------------------------------------------
 // FATF R16 適用判定
@@ -37,13 +37,17 @@ import { FATF_THRESHOLD_JPY, EXCHANGE_RATE_TO_JPY } from './constants'
  * @param isCrossBorder - Whether this is a cross-border transfer
  * @returns `true` if FATF R16 compliance is required
  */
-export function isFatfApplicable(amount: number, currency: string, isCrossBorder: boolean): boolean {
-  if (!isCrossBorder) return false
+export function isFatfApplicable(
+  amount: number,
+  currency: string,
+  isCrossBorder: boolean
+): boolean {
+  if (!isCrossBorder) return false;
 
-  const rate = EXCHANGE_RATE_TO_JPY[currency.toUpperCase()] ?? 150
-  const amountInJpy = amount * rate
+  const rate = EXCHANGE_RATE_TO_JPY[currency.toUpperCase()] ?? 150;
+  const amountInJpy = amount * rate;
 
-  return amountInJpy >= FATF_THRESHOLD_JPY
+  return amountInJpy >= FATF_THRESHOLD_JPY;
 }
 
 // ---------------------------------------------------------------------------
@@ -65,23 +69,23 @@ export function isFatfApplicable(amount: number, currency: string, isCrossBorder
  * @returns `{ valid, errors }` -- errors array is empty on success
  */
 export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: string[] } {
-  const errors: string[] = []
+  const errors: string[] = [];
 
   // originator 検証
-  const originatorErrors = validateOriginator(data.originator)
-  errors.push(...originatorErrors)
+  const originatorErrors = validateOriginator(data.originator);
+  errors.push(...originatorErrors);
 
   // beneficiary 検証
-  const beneficiaryErrors = validateBeneficiary(data.beneficiary)
-  errors.push(...beneficiaryErrors)
+  const beneficiaryErrors = validateBeneficiary(data.beneficiary);
+  errors.push(...beneficiaryErrors);
 
   // ordering_institution 検証
-  const orderingErrors = validateInstitution(data.ordering_institution)
-  orderingErrors.forEach(e => errors.push(`ordering_institution: ${e}`))
+  const orderingErrors = validateInstitution(data.ordering_institution);
+  orderingErrors.forEach((e) => errors.push(`ordering_institution: ${e}`));
 
   // beneficiary_institution 検証
-  const beneficiaryInstErrors = validateInstitution(data.beneficiary_institution)
-  beneficiaryInstErrors.forEach(e => errors.push(`beneficiary_institution: ${e}`))
+  const beneficiaryInstErrors = validateInstitution(data.beneficiary_institution);
+  beneficiaryInstErrors.forEach((e) => errors.push(`beneficiary_institution: ${e}`));
 
   // 国をまたぐ取引であることの整合性確認
   // NOTE: This validator checks consistency between fatf16_applicable and is_cross_border flags.
@@ -89,22 +93,24 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
   // Amount threshold checking (JPY 150,000) occurs in ingress.ts, not here, so this validator
   // only ensures structural consistency, not amount-based applicability.
   if (data.fatf16_applicable && !data.is_cross_border) {
-    errors.push('fatf16_applicable=true だが is_cross_border=false: 矛盾した設定です')
+    errors.push("fatf16_applicable=true だが is_cross_border=false: 矛盾した設定です");
   }
 
   // intermediary が存在する場合の検証
   if (data.intermediary) {
     if (!data.intermediary.name || data.intermediary.name.trim().length === 0) {
-      errors.push('intermediary.name: 仲介機関名は必須です')
+      errors.push("intermediary.name: 仲介機関名は必須です");
     }
     if (!data.intermediary.country || data.intermediary.country.trim().length === 0) {
-      errors.push('intermediary.country: 仲介機関の国コードは必須です')
+      errors.push("intermediary.country: 仲介機関の国コードは必須です");
     } else if (!isValidCountryCode(data.intermediary.country)) {
-      errors.push(`intermediary.country: 無効な国コード '${data.intermediary.country}' (ISO 3166-1 alpha-2 が必要)`)
+      errors.push(
+        `intermediary.country: 無効な国コード '${data.intermediary.country}' (ISO 3166-1 alpha-2 が必要)`
+      );
     }
   }
 
-  return { valid: errors.length === 0, errors }
+  return { valid: errors.length === 0, errors };
 }
 
 // ---------------------------------------------------------------------------
@@ -121,43 +127,43 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
  * @returns Array of error messages (empty if valid)
  */
 function validateOriginator(party: FatfParty): string[] {
-  const errors: string[] = []
-  const prefix = 'originator'
+  const errors: string[] = [];
+  const prefix = "originator";
 
   // 必須フィールド
   if (!party.name || party.name.trim().length === 0) {
-    errors.push(`${prefix}.name: 送金人氏名は必須です`)
+    errors.push(`${prefix}.name: 送金人氏名は必須です`);
   } else if (party.name.trim().length > 140) {
-    errors.push(`${prefix}.name: 送金人氏名は140文字以内にしてください`)
+    errors.push(`${prefix}.name: 送金人氏名は140文字以内にしてください`);
   }
 
   if (!party.account_id || party.account_id.trim().length === 0) {
-    errors.push(`${prefix}.account_id: 送金人口座番号は必須です`)
+    errors.push(`${prefix}.account_id: 送金人口座番号は必須です`);
   }
 
   // 追加識別情報（住所 OR 国民識別番号 OR 生年月日+出生地）のいずれか必須
-  const hasAddress     = Boolean(party.address?.trim())
-  const hasNationalId  = Boolean(party.national_id?.trim())
-  const hasDob         = Boolean(party.date_of_birth?.trim())
-  const hasPob         = Boolean(party.place_of_birth?.trim())
-  const hasDobAndPob   = hasDob && hasPob
+  const hasAddress = Boolean(party.address?.trim());
+  const hasNationalId = Boolean(party.national_id?.trim());
+  const hasDob = Boolean(party.date_of_birth?.trim());
+  const hasPob = Boolean(party.place_of_birth?.trim());
+  const hasDobAndPob = hasDob && hasPob;
 
   if (!hasAddress && !hasNationalId && !hasDobAndPob) {
     errors.push(
       `${prefix}: 送金人の追加識別情報が不足しています。` +
-      `住所(address)、国民識別番号(national_id)、` +
-      `生年月日+出生地(date_of_birth + place_of_birth) のいずれか1つが必須です`
-    )
+        `住所(address)、国民識別番号(national_id)、` +
+        `生年月日+出生地(date_of_birth + place_of_birth) のいずれか1つが必須です`
+    );
   }
 
   // 生年月日フォーマット検証（YYYY-MM-DD）
   if (hasDob && party.date_of_birth) {
     if (!isValidDateFormat(party.date_of_birth)) {
-      errors.push(`${prefix}.date_of_birth: YYYY-MM-DD 形式で入力してください (例: 1985-04-15)`)
+      errors.push(`${prefix}.date_of_birth: YYYY-MM-DD 形式で入力してください (例: 1985-04-15)`);
     }
   }
 
-  return errors
+  return errors;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,20 +180,20 @@ function validateOriginator(party: FatfParty): string[] {
  * @returns Array of error messages (empty if valid)
  */
 function validateBeneficiary(party: FatfParty): string[] {
-  const errors: string[] = []
-  const prefix = 'beneficiary'
+  const errors: string[] = [];
+  const prefix = "beneficiary";
 
   if (!party.name || party.name.trim().length === 0) {
-    errors.push(`${prefix}.name: 受取人氏名は必須です`)
+    errors.push(`${prefix}.name: 受取人氏名は必須です`);
   } else if (party.name.trim().length > 140) {
-    errors.push(`${prefix}.name: 受取人氏名は140文字以内にしてください`)
+    errors.push(`${prefix}.name: 受取人氏名は140文字以内にしてください`);
   }
 
   if (!party.account_id || party.account_id.trim().length === 0) {
-    errors.push(`${prefix}.account_id: 受取人口座番号は必須です`)
+    errors.push(`${prefix}.account_id: 受取人口座番号は必須です`);
   }
 
-  return errors
+  return errors;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,30 +210,32 @@ function validateBeneficiary(party: FatfParty): string[] {
  * @returns Array of error messages (empty if valid)
  */
 function validateInstitution(inst: FatfInstitution): string[] {
-  const errors: string[] = []
+  const errors: string[] = [];
 
   if (!inst.bank_id || inst.bank_id.trim().length === 0) {
-    errors.push('bank_id: 金融機関IDは必須です')
+    errors.push("bank_id: 金融機関IDは必須です");
   }
 
   if (!inst.bank_name || inst.bank_name.trim().length === 0) {
-    errors.push('bank_name: 金融機関名は必須です')
+    errors.push("bank_name: 金融機関名は必須です");
   }
 
   if (!inst.country || inst.country.trim().length === 0) {
-    errors.push('country: 国コードは必須です')
+    errors.push("country: 国コードは必須です");
   } else if (!isValidCountryCode(inst.country)) {
-    errors.push(`country: 無効な国コード '${inst.country}' (ISO 3166-1 alpha-2 が必要, 例: JP, US, DE)`)
+    errors.push(
+      `country: 無効な国コード '${inst.country}' (ISO 3166-1 alpha-2 が必要, 例: JP, US, DE)`
+    );
   }
 
   // BIC が存在する場合のフォーマット検証
   if (inst.bic) {
     if (!isValidBicFormat(inst.bic)) {
-      errors.push(`bic: 無効な BIC フォーマット '${inst.bic}' (8文字または11文字が必要)`)
+      errors.push(`bic: 無効な BIC フォーマット '${inst.bic}' (8文字または11文字が必要)`);
     }
   }
 
-  return errors
+  return errors;
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +249,7 @@ function validateInstitution(inst: FatfInstitution): string[] {
  * @returns JSON string
  */
 export function serializeFatfData(data: FatfR16Data): string {
-  return JSON.stringify(data)
+  return JSON.stringify(data);
 }
 
 /**
@@ -254,13 +262,13 @@ export function serializeFatfData(data: FatfR16Data): string {
  */
 export function deserializeFatfData(json: string): FatfR16Data | null {
   try {
-    const parsed = JSON.parse(json) as unknown
+    const parsed = JSON.parse(json) as unknown;
     if (!isValidFatfR16Shape(parsed)) {
-      return null
+      return null;
     }
-    return parsed as FatfR16Data
+    return parsed as FatfR16Data;
   } catch {
-    return null
+    return null;
   }
 }
 
@@ -278,8 +286,8 @@ export function deserializeFatfData(json: string): FatfR16Data | null {
  * @returns Approximate JPY equivalent (rounded to nearest integer)
  */
 export function toJpyEquivalent(amount: number, currency: string): number {
-  const rate = EXCHANGE_RATE_TO_JPY[currency.toUpperCase()] ?? 150
-  return Math.round(amount * rate)
+  const rate = EXCHANGE_RATE_TO_JPY[currency.toUpperCase()] ?? 150;
+  return Math.round(amount * rate);
 }
 
 /**
@@ -293,19 +301,19 @@ export function toJpyEquivalent(amount: number, currency: string): number {
  * @returns FatfR16Data with mandatory fields populated
  */
 export function createFatfDataSkeleton(params: {
-  originatorName: string
-  originatorAccountId: string
-  beneficiaryName: string
-  beneficiaryAccountId: string
-  orderingBankId: string
-  orderingBankName: string
-  orderingCountry: string
-  beneficiaryBankId: string
-  beneficiaryBankName: string
-  beneficiaryCountry: string
-  isCrossBorder: boolean
-  amount: number
-  currency: string
+  originatorName: string;
+  originatorAccountId: string;
+  beneficiaryName: string;
+  beneficiaryAccountId: string;
+  orderingBankId: string;
+  orderingBankName: string;
+  orderingCountry: string;
+  beneficiaryBankId: string;
+  beneficiaryBankName: string;
+  beneficiaryCountry: string;
+  isCrossBorder: boolean;
+  amount: number;
+  currency: string;
 }): FatfR16Data {
   return {
     originator: {
@@ -328,7 +336,7 @@ export function createFatfDataSkeleton(params: {
     },
     is_cross_border: params.isCrossBorder,
     fatf16_applicable: isFatfApplicable(params.amount, params.currency, params.isCrossBorder),
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -338,62 +346,62 @@ export function createFatfDataSkeleton(params: {
 /** Validate ISO 3166-1 alpha-2 country code format (regex only in mock). */
 function isValidCountryCode(country: string): boolean {
   // 大文字に正規化してから検証（小文字入力も受け入れるが正規化済みを前提とする）
-  return /^[A-Z]{2}$/.test(country.toUpperCase())
+  return /^[A-Z]{2}$/.test(country.toUpperCase());
 }
 
 /** Normalize a country code to uppercase ISO 3166-1 alpha-2 format. */
 export function normalizeCountryCode(country: string): string {
-  return country.toUpperCase()
+  return country.toUpperCase();
 }
 
 /** Validate SWIFT BIC format: 4-char institution + 2-char country + 2-char location [+ 3-char branch]. */
 function isValidBicFormat(bic: string): boolean {
-  return /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(bic.toUpperCase())
+  return /^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(bic.toUpperCase());
 }
 
 /** Validate that a date string is in YYYY-MM-DD format and represents a real date. */
 function isValidDateFormat(dateStr: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false
-  const date = new Date(dateStr)
-  return !isNaN(date.getTime())
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+  const date = new Date(dateStr);
+  return !isNaN(date.getTime());
 }
 
 /** TypeScript type guard: checks that a parsed object has the minimum FatfR16Data shape. */
 function isValidFatfR16Shape(obj: unknown): obj is FatfR16Data {
-  if (typeof obj !== 'object' || obj === null) return false
-  const o = obj as Record<string, unknown>
+  if (typeof obj !== "object" || obj === null) return false;
+  const o = obj as Record<string, unknown>;
 
   // 必須トップレベルキー
   const requiredKeys: (keyof FatfR16Data)[] = [
-    'originator',
-    'beneficiary',
-    'ordering_institution',
-    'beneficiary_institution',
-    'is_cross_border',
-    'fatf16_applicable',
-  ]
+    "originator",
+    "beneficiary",
+    "ordering_institution",
+    "beneficiary_institution",
+    "is_cross_border",
+    "fatf16_applicable",
+  ];
   for (const key of requiredKeys) {
-    if (!(key in o)) return false
+    if (!(key in o)) return false;
   }
 
   // originator / beneficiary は name と account_id を持つオブジェクト
-  for (const partyKey of ['originator', 'beneficiary'] as const) {
-    const party = o[partyKey]
-    if (typeof party !== 'object' || party === null) return false
-    const p = party as Record<string, unknown>
-    if (typeof p['name'] !== 'string') return false
-    if (typeof p['account_id'] !== 'string') return false
+  for (const partyKey of ["originator", "beneficiary"] as const) {
+    const party = o[partyKey];
+    if (typeof party !== "object" || party === null) return false;
+    const p = party as Record<string, unknown>;
+    if (typeof p["name"] !== "string") return false;
+    if (typeof p["account_id"] !== "string") return false;
   }
 
   // ordering_institution / beneficiary_institution は bank_id, bank_name, country を持つ
-  for (const instKey of ['ordering_institution', 'beneficiary_institution'] as const) {
-    const inst = o[instKey]
-    if (typeof inst !== 'object' || inst === null) return false
-    const i = inst as Record<string, unknown>
-    if (typeof i['bank_id'] !== 'string') return false
-    if (typeof i['bank_name'] !== 'string') return false
-    if (typeof i['country'] !== 'string') return false
+  for (const instKey of ["ordering_institution", "beneficiary_institution"] as const) {
+    const inst = o[instKey];
+    if (typeof inst !== "object" || inst === null) return false;
+    const i = inst as Record<string, unknown>;
+    if (typeof i["bank_id"] !== "string") return false;
+    if (typeof i["bank_name"] !== "string") return false;
+    if (typeof i["country"] !== "string") return false;
   }
 
-  return true
+  return true;
 }

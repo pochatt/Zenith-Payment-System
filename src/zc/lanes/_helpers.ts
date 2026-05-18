@@ -35,40 +35,40 @@
  * single chokepoint that makes the state machine table enforceable rather
  * than merely documentary.
  */
-import { nowISO } from '../../types'
-import type { FinalityEventType, TxState } from '../../types'
+import { nowISO } from "../../types";
+import type { FinalityEventType, TxState } from "../../types";
 import {
   finalizeCancelledTx,
   prepareFinalityLogRow,
   buildFinalityLogConditionalInsert,
-} from '../orchestrator/finality'
-import { isValidTransition, ALLOWED_TRANSITIONS } from '../orchestrator/state_machine'
-import { releaseH } from '../h_model'
-import { DomainError } from '../../shared/errors'
+} from "../orchestrator/finality";
+import { isValidTransition, ALLOWED_TRANSITIONS } from "../orchestrator/state_machine";
+import { releaseH } from "../h_model";
+import { DomainError } from "../../shared/errors";
 
 // ---------------------------------------------------------------------------
 // transitionWithLog
 // ---------------------------------------------------------------------------
 
 export interface TransitionRequest {
-  txid: string
+  txid: string;
   /** Allowed source state(s). The CAS UPDATE only fires if the current row matches. */
-  fromState: string | string[]
-  toState: string
-  eventType: FinalityEventType | string
+  fromState: string | string[];
+  toState: string;
+  eventType: FinalityEventType | string;
   /** Arbitrary fields to record in the FinalityLog payload. */
-  payload?: Record<string, unknown>
+  payload?: Record<string, unknown>;
   /** Optional column updates applied alongside `state` (state, updated_at, version are managed). */
-  setColumns?: Record<string, string | number | null>
+  setColumns?: Record<string, string | number | null>;
   /** When true, raises DomainError('CONCURRENCY_CONFLICT') instead of returning {applied:false}. */
-  strict?: boolean
+  strict?: boolean;
   /**
    * Skip the `ALLOWED_TRANSITIONS` static check. Use sparingly — currently
    * only for FinalityLog event names like 'PreCheckSuspended' or 'NameCheckOverridden'
    * that record bookkeeping transitions whose target state is internal to the
    * state machine but not directly user-facing. The default is to enforce.
    */
-  skipStateMachineCheck?: boolean
+  skipStateMachineCheck?: boolean;
   /**
    * Optional secondary-table UPDATEs run atomically in the same D1 batch
    * as the canonical Transactions CAS UPDATE. Symmetric to
@@ -79,13 +79,13 @@ export interface TransitionRequest {
    * a parallel state row (e.g. HtlcContracts) which must commit-or-rollback
    * together with the Transactions advance.
    */
-  sideUpdates?: Array<{ sql: string; binds: Array<string | number | null> }>
+  sideUpdates?: Array<{ sql: string; binds: Array<string | number | null> }>;
 }
 
 export interface TransitionResult {
-  applied: boolean
+  applied: boolean;
   /** Snapshot of the row's state before the UPDATE; null if the row did not exist. */
-  previousState: string | null
+  previousState: string | null;
 }
 
 /**
@@ -110,30 +110,32 @@ export interface TransitionResult {
  */
 export async function transitionWithLog(
   db: D1Database,
-  req: TransitionRequest,
+  req: TransitionRequest
 ): Promise<TransitionResult> {
-  const fromStates = Array.isArray(req.fromState) ? req.fromState : [req.fromState]
-  const placeholders = fromStates.map(() => '?').join(',')
+  const fromStates = Array.isArray(req.fromState) ? req.fromState : [req.fromState];
+  const placeholders = fromStates.map(() => "?").join(",");
 
   const cur = await db
     .prepare(`SELECT state, version FROM Transactions WHERE txid = ?`)
     .bind(req.txid)
-    .first<{ state: string; version: number }>()
+    .first<{ state: string; version: number }>();
   if (!cur) {
     if (req.strict) {
-      throw new DomainError('TX_NOT_FOUND', `transaction ${req.txid} not found`, { txid: req.txid })
+      throw new DomainError("TX_NOT_FOUND", `transaction ${req.txid} not found`, {
+        txid: req.txid,
+      });
     }
-    return { applied: false, previousState: null }
+    return { applied: false, previousState: null };
   }
   if (!fromStates.includes(cur.state)) {
     if (req.strict) {
       throw new DomainError(
-        'CONCURRENCY_CONFLICT',
-        `transaction ${req.txid} state=${cur.state}, expected one of [${fromStates.join(',')}]`,
-        { txid: req.txid, current_state: cur.state, expected: fromStates },
-      )
+        "CONCURRENCY_CONFLICT",
+        `transaction ${req.txid} state=${cur.state}, expected one of [${fromStates.join(",")}]`,
+        { txid: req.txid, current_state: cur.state, expected: fromStates }
+      );
     }
-    return { applied: false, previousState: cur.state }
+    return { applied: false, previousState: cur.state };
   }
 
   // State-machine validation: each candidate source must permit transitioning
@@ -142,11 +144,11 @@ export async function transitionWithLog(
   if (!req.skipStateMachineCheck) {
     if (!isValidTransition(cur.state as TxState, req.toState as TxState)) {
       throw new DomainError(
-        'INVARIANT_VIOLATION',
+        "INVARIANT_VIOLATION",
         `Disallowed state transition ${cur.state} → ${req.toState} for ${req.txid}. ` +
-          `Allowed from ${cur.state}: [${(ALLOWED_TRANSITIONS[cur.state as TxState] ?? []).join(',') || '<none>'}]`,
-        { txid: req.txid, from: cur.state, to: req.toState },
-      )
+          `Allowed from ${cur.state}: [${(ALLOWED_TRANSITIONS[cur.state as TxState] ?? []).join(",") || "<none>"}]`,
+        { txid: req.txid, from: cur.state, to: req.toState }
+      );
     }
   }
 
@@ -154,25 +156,25 @@ export async function transitionWithLog(
   // form enumerated `sets` three times (Object.keys + 2× .map) which both
   // allocates intermediate arrays and forces V8 to walk the property table
   // repeatedly. One `for...in` builds both arrays inline.
-  const sets = req.setColumns ?? {}
-  let setSql = ''
-  const setValues: Array<string | number | null> = []
+  const sets = req.setColumns ?? {};
+  let setSql = "";
+  const setValues: Array<string | number | null> = [];
   for (const k in sets) {
-    setSql += setSql ? `, ${k} = ?` : `${k} = ?`
-    setValues.push(sets[k]!)
+    setSql += setSql ? `, ${k} = ?` : `${k} = ?`;
+    setValues.push(sets[k]!);
   }
-  const now = nowISO()
+  const now = nowISO();
 
   const updateSql = `
     UPDATE Transactions
        SET state = ?
-           ${setSql ? ', ' + setSql : ''}
+           ${setSql ? ", " + setSql : ""}
            , updated_at = ?
            , version = version + 1
      WHERE txid = ?
        AND state IN (${placeholders})
        AND version = ?
-  `
+  `;
 
   // Pre-compute the FinalityLog row (event_seq, prev_hash, entry_hash) so the
   // INSERT can be batched with the UPDATE without a second round-trip.
@@ -183,7 +185,7 @@ export async function transitionWithLog(
     state_to: req.toState,
     payload_json: JSON.stringify(req.payload ?? { txid: req.txid }),
     txid_or_gtid: req.txid,
-  })
+  });
 
   // Atomic batch: either all statements commit, or all roll back.
   // The conditional INSERT is gated on `changes() > 0` for the immediately
@@ -192,24 +194,26 @@ export async function transitionWithLog(
   // FinalityLog INSERT — their changes() do not gate anything, but they
   // commit-or-rollback as a unit with the canonical CAS.
   const results = await db.batch([
-    db.prepare(updateSql).bind(req.toState, ...setValues, now, req.txid, ...fromStates, cur.version),
+    db
+      .prepare(updateSql)
+      .bind(req.toState, ...setValues, now, req.txid, ...fromStates, cur.version),
     buildFinalityLogConditionalInsert(db, logRow),
-    ...(req.sideUpdates ?? []).map(u => db.prepare(u.sql).bind(...u.binds)),
-  ])
+    ...(req.sideUpdates ?? []).map((u) => db.prepare(u.sql).bind(...u.binds)),
+  ]);
 
-  const updateChanges = results[0]?.meta.changes ?? 0
+  const updateChanges = results[0]?.meta.changes ?? 0;
   if (updateChanges === 0) {
     if (req.strict) {
       throw new DomainError(
-        'CONCURRENCY_CONFLICT',
+        "CONCURRENCY_CONFLICT",
         `CAS lost on ${req.txid}: another writer advanced the row`,
-        { txid: req.txid, expected_version: cur.version },
-      )
+        { txid: req.txid, expected_version: cur.version }
+      );
     }
-    return { applied: false, previousState: cur.state }
+    return { applied: false, previousState: cur.state };
   }
 
-  return { applied: true, previousState: cur.state }
+  return { applied: true, previousState: cur.state };
 }
 
 // ---------------------------------------------------------------------------
@@ -225,48 +229,48 @@ export async function transitionWithLog(
  * silently bypassing the state machine by INSERTing arbitrary states.
  */
 const ALLOWED_ENTRY_STATES: ReadonlySet<TxState> = new Set<TxState>([
-  'RECEIVED',
-  'HTLC_LOCKED',
-  'DECIDED_TO_SETTLE',
-])
+  "RECEIVED",
+  "HTLC_LOCKED",
+  "DECIDED_TO_SETTLE",
+]);
 
 export interface InsertTxRequest {
-  txid: string
-  lane: string
+  txid: string;
+  lane: string;
   /** Initial state of the row. Must be in ALLOWED_ENTRY_STATES. */
-  initialState: TxState
-  amount: { value: number; currency: string }
-  payerBankId: string
-  payerAccountHash: string
-  payeeBankId: string
-  payeeAccountHash: string
-  idempotencyKey: string
-  decisionProofRef?: string | null
-  finalityLogRef?: string | null
-  hReservationId?: string | null
-  dnsCycleId?: string | null
+  initialState: TxState;
+  amount: { value: number; currency: string };
+  payerBankId: string;
+  payerAccountHash: string;
+  payeeBankId: string;
+  payeeAccountHash: string;
+  idempotencyKey: string;
+  decisionProofRef?: string | null;
+  finalityLogRef?: string | null;
+  hReservationId?: string | null;
+  dnsCycleId?: string | null;
   /**
    * Escape hatch for one-off Transactions columns the helper does not expose
    * as first-class fields (e.g. `purpose`). Keep this list small — if a column
    * is being set by more than one lane, promote it to a named field instead.
    */
-  extraColumns?: Record<string, string | number | null>
+  extraColumns?: Record<string, string | number | null>;
   /** FinalityLog event_type recording the row entry (e.g. 'GtidLegDecidedToSettle'). */
-  eventType: FinalityEventType | string
+  eventType: FinalityEventType | string;
   /** Arbitrary fields to record in the FinalityLog payload. */
-  payload?: Record<string, unknown>
+  payload?: Record<string, unknown>;
   /**
    * Optional secondary-table UPDATEs run atomically in the same D1 batch
    * as the canonical Transactions INSERT (e.g. GtidLegs.txid backref). Their
    * `changes` count is informational only; commit-or-rollback is gated on
    * the whole batch.
    */
-  sideUpdates?: Array<{ sql: string; binds: Array<string | number | null> }>
+  sideUpdates?: Array<{ sql: string; binds: Array<string | number | null> }>;
 }
 
 export interface InsertTxResult {
   /** True when this call inserted a new row; false when the row already existed (idempotent no-op). */
-  inserted: boolean
+  inserted: boolean;
 }
 
 /**
@@ -292,18 +296,18 @@ export interface InsertTxResult {
  */
 export async function insertTxWithLog(
   db: D1Database,
-  req: InsertTxRequest,
+  req: InsertTxRequest
 ): Promise<InsertTxResult> {
   if (!ALLOWED_ENTRY_STATES.has(req.initialState)) {
     throw new DomainError(
-      'INVARIANT_VIOLATION',
+      "INVARIANT_VIOLATION",
       `Disallowed entry state ${req.initialState} for ${req.txid}. ` +
-        `Allowed entry states: [${Array.from(ALLOWED_ENTRY_STATES).join(',')}]`,
-      { txid: req.txid, initial_state: req.initialState },
-    )
+        `Allowed entry states: [${Array.from(ALLOWED_ENTRY_STATES).join(",")}]`,
+      { txid: req.txid, initial_state: req.initialState }
+    );
   }
 
-  const now = nowISO()
+  const now = nowISO();
   const logRow = await prepareFinalityLogRow(db, {
     txid: req.txid,
     event_type: req.eventType,
@@ -311,19 +315,19 @@ export async function insertTxWithLog(
     state_to: req.initialState,
     payload_json: JSON.stringify(req.payload ?? { txid: req.txid }),
     txid_or_gtid: req.txid,
-  })
+  });
 
   // Compose the column list and bind vector. The fixed columns come first;
   // `extraColumns` (escape hatch for one-off fields like `purpose`) extends
   // both arrays in lockstep so the INSERT remains parameterized.
-  const extra = req.extraColumns ?? {}
-  let extraCols = ''
-  let extraPlaceholders = ''
-  const extraValues: Array<string | number | null> = []
+  const extra = req.extraColumns ?? {};
+  let extraCols = "";
+  let extraPlaceholders = "";
+  const extraValues: Array<string | number | null> = [];
   for (const k in extra) {
-    extraCols += `, ${k}`
-    extraPlaceholders += ', ?'
-    extraValues.push(extra[k]!)
+    extraCols += `, ${k}`;
+    extraPlaceholders += ", ?";
+    extraValues.push(extra[k]!);
   }
 
   const insertSql = `
@@ -333,28 +337,36 @@ export async function insertTxWithLog(
        idempotency_key, schema_version, decision_proof_ref, finality_log_ref,
        h_reservation_id, dns_cycle_id, version, created_at, updated_at${extraCols})
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '1.0', ?, ?, ?, ?, 0, ?, ?${extraPlaceholders})
-  `
+  `;
 
   const results = await db.batch([
-    db.prepare(insertSql).bind(
-      req.txid, req.lane, req.initialState,
-      req.amount.value, req.amount.currency,
-      req.payerBankId, req.payerAccountHash,
-      req.payeeBankId, req.payeeAccountHash,
-      req.idempotencyKey,
-      req.decisionProofRef ?? null,
-      req.finalityLogRef ?? null,
-      req.hReservationId ?? null,
-      req.dnsCycleId ?? null,
-      now, now,
-      ...extraValues,
-    ),
+    db
+      .prepare(insertSql)
+      .bind(
+        req.txid,
+        req.lane,
+        req.initialState,
+        req.amount.value,
+        req.amount.currency,
+        req.payerBankId,
+        req.payerAccountHash,
+        req.payeeBankId,
+        req.payeeAccountHash,
+        req.idempotencyKey,
+        req.decisionProofRef ?? null,
+        req.finalityLogRef ?? null,
+        req.hReservationId ?? null,
+        req.dnsCycleId ?? null,
+        now,
+        now,
+        ...extraValues
+      ),
     buildFinalityLogConditionalInsert(db, logRow),
-    ...(req.sideUpdates ?? []).map(u => db.prepare(u.sql).bind(...u.binds)),
-  ])
+    ...(req.sideUpdates ?? []).map((u) => db.prepare(u.sql).bind(...u.binds)),
+  ]);
 
-  const insertChanges = results[0]?.meta.changes ?? 0
-  return { inserted: insertChanges > 0 }
+  const insertChanges = results[0]?.meta.changes ?? 0;
+  return { inserted: insertChanges > 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -362,12 +374,12 @@ export async function insertTxWithLog(
 // ---------------------------------------------------------------------------
 
 export interface CancelRequest {
-  txid: string
-  reasonCode: string
+  txid: string;
+  reasonCode: string;
   /** States from which a cancel is permitted. Defaults to pre-decision states. */
-  fromStates?: string[]
+  fromStates?: string[];
   /** Skip the H release step (used for lanes that never reserve H). */
-  skipReleaseH?: boolean
+  skipReleaseH?: boolean;
   /**
    * Optional secondary-table CAS UPDATEs run atomically in the same D1 batch
    * as the canonical Transactions UPDATE. Each entry's individual `changes`
@@ -376,14 +388,14 @@ export interface CancelRequest {
    * that side-table state (e.g. HtlcContracts.state) cannot lead H to be
    * released when the canonical decision has already committed to settle.
    */
-  sideUpdates?: Array<{ sql: string; binds: Array<string | number | null> }>
+  sideUpdates?: Array<{ sql: string; binds: Array<string | number | null> }>;
   /**
    * Custom FinalityLog event_type. Defaults to 'DecidedCancel'.
    * Useful when a lane wants a more specific name (e.g. 'HtlcCancelled').
    */
-  eventType?: string
+  eventType?: string;
   /** Additional fields merged into the FinalityLog payload. */
-  payloadExtra?: Record<string, unknown>
+  payloadExtra?: Record<string, unknown>;
 }
 
 /**
@@ -403,58 +415,62 @@ export interface CancelRequest {
  * Returns true when the canonical cancel took effect; false when the row
  * was already past the cancel window (idempotent no-op).
  */
-export async function cancelInFlightTx(
-  db: D1Database,
-  req: CancelRequest,
-): Promise<boolean> {
-  const now = nowISO()
+export async function cancelInFlightTx(db: D1Database, req: CancelRequest): Promise<boolean> {
+  const now = nowISO();
   const fromStates = req.fromStates ?? [
-    'RECEIVED', 'PRECHECKED', 'PRECHECKED_SUSPENDED', 'H_RESERVED',
-  ]
-  const placeholders = fromStates.map(() => '?').join(',')
+    "RECEIVED",
+    "PRECHECKED",
+    "PRECHECKED_SUSPENDED",
+    "H_RESERVED",
+  ];
+  const placeholders = fromStates.map(() => "?").join(",");
 
   const txRow = await db
     .prepare(`SELECT state, version FROM Transactions WHERE txid = ?`)
-    .bind(req.txid).first<{ state: string; version: number }>()
-  if (!txRow) return false
-  if (!fromStates.includes(txRow.state)) return false
+    .bind(req.txid)
+    .first<{ state: string; version: number }>();
+  if (!txRow) return false;
+  if (!fromStates.includes(txRow.state)) return false;
 
   // Pre-compute the DecidedCancel log row so it can be batched with the CAS.
   const logRow = await prepareFinalityLogRow(db, {
     txid: req.txid,
-    event_type: req.eventType ?? 'DecidedCancel',
+    event_type: req.eventType ?? "DecidedCancel",
     state_from: txRow.state,
-    state_to: 'DECIDED_CANCEL',
+    state_to: "DECIDED_CANCEL",
     payload_json: JSON.stringify({ reason_code: req.reasonCode, ...(req.payloadExtra ?? {}) }),
     txid_or_gtid: req.txid,
-  })
+  });
 
   // Statement order matters: the FinalityLog INSERT must come directly after
   // the CAS UPDATE so its `changes() > 0` guard reflects the UPDATE's row
   // count. Side-updates run last; their changes() do not gate anything.
   const stmts = [
-    db.prepare(
-      `UPDATE Transactions
+    db
+      .prepare(
+        `UPDATE Transactions
           SET state = 'DECIDED_CANCEL', reason_code = ?, updated_at = ?, version = version + 1
         WHERE txid = ? AND state IN (${placeholders}) AND version = ?`
-    ).bind(req.reasonCode, now, req.txid, ...fromStates, txRow.version),
+      )
+      .bind(req.reasonCode, now, req.txid, ...fromStates, txRow.version),
     buildFinalityLogConditionalInsert(db, logRow),
-    ...(req.sideUpdates ?? []).map(u => db.prepare(u.sql).bind(...u.binds)),
-  ]
+    ...(req.sideUpdates ?? []).map((u) => db.prepare(u.sql).bind(...u.binds)),
+  ];
 
-  const results = await db.batch(stmts)
-  const canonicalChanges = results[0]?.meta.changes ?? 0
-  if (canonicalChanges === 0) return false
+  const results = await db.batch(stmts);
+  const canonicalChanges = results[0]?.meta.changes ?? 0;
+  if (canonicalChanges === 0) return false;
 
   if (!req.skipReleaseH) {
     const txForH = await db
       .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)
-      .bind(req.txid).first<{ h_reservation_id: string | null }>()
+      .bind(req.txid)
+      .first<{ h_reservation_id: string | null }>();
     if (txForH?.h_reservation_id) {
-      await releaseH(txForH.h_reservation_id, db)
+      await releaseH(txForH.h_reservation_id, db);
     }
   }
 
-  await finalizeCancelledTx(req.txid, db)
-  return true
+  await finalizeCancelledTx(req.txid, db);
+  return true;
 }

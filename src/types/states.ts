@@ -16,55 +16,55 @@
  *   -> PAYER_EXEC_CONFIRMED -> PAYEE_EXEC_CONFIRMED -> SETTLED
  */
 export type TxState =
-  | 'RECEIVED'
-  | 'PRECHECKED'
-  | 'PRECHECKED_SUSPENDED'
-  | 'H_RESERVED'
-  | 'HTLC_LOCKED'
-  | 'HTLC_FULFILL_REQUESTED'
-  | 'DECIDED_TO_SETTLE'
-  | 'DECIDED_CANCEL'
-  | 'PAYER_EXEC_CONFIRMED'
-  | 'PAYEE_EXEC_CONFIRMED'
-  | 'SETTLED'
-  | 'SUSPENDED'
-  | 'FAILED_EXECUTION'
-  | 'CANCELLED'
+  | "RECEIVED"
+  | "PRECHECKED"
+  | "PRECHECKED_SUSPENDED"
+  | "H_RESERVED"
+  | "HTLC_LOCKED"
+  | "HTLC_FULFILL_REQUESTED"
+  | "DECIDED_TO_SETTLE"
+  | "DECIDED_CANCEL"
+  | "PAYER_EXEC_CONFIRMED"
+  | "PAYEE_EXEC_CONFIRMED"
+  | "SETTLED"
+  | "SUSPENDED"
+  | "FAILED_EXECUTION"
+  | "CANCELLED";
 
 /** State machine for HTLC (Hash Time-Locked Contract) transactions. */
 export type HtlcState =
-  | 'HTLC_RECEIVED'
-  | 'HTLC_LOCKED'
-  | 'HTLC_FULFILL_REQUESTED'
-  | 'DECIDED_TO_SETTLE'
-  | 'PAYER_EXEC_CONFIRMED'
-  | 'PAYEE_EXEC_CONFIRMED'
-  | 'SETTLED'
-  | 'SUSPENDED'
-  | 'DECIDED_CANCEL'
-  | 'CANCELLED'
-  | 'FAILED_EXECUTION'
+  | "HTLC_RECEIVED"
+  | "HTLC_LOCKED"
+  | "HTLC_FULFILL_REQUESTED"
+  | "DECIDED_TO_SETTLE"
+  | "PAYER_EXEC_CONFIRMED"
+  | "PAYEE_EXEC_CONFIRMED"
+  | "SETTLED"
+  | "SUSPENDED"
+  | "DECIDED_CANCEL"
+  | "CANCELLED"
+  | "FAILED_EXECUTION";
 
 /** State machine for GTID coordinated multi-leg transactions. */
 export type GtidState =
-  | 'GT_RECEIVED'
-  | 'GT_PRECHECKED'
-  | 'GT_DECIDED_TO_SETTLE'
-  | 'GT_DECIDED_CANCEL'
-  | 'GT_SETTLED'
-  | 'GT_SUSPENDED'
-  | 'GT_CANCELLED'
-  | 'GT_FAILED'
+  | "GT_RECEIVED"
+  | "GT_PRECHECKED"
+  | "GT_DECIDED_TO_SETTLE"
+  | "GT_DECIDED_CANCEL"
+  | "GT_SETTLED"
+  | "GT_SUSPENDED"
+  | "GT_CANCELLED"
+  | "GT_FAILED";
 
 /** State of an individual leg within a GTID coordinated transaction. */
 export type LegState =
-  | 'LEG_REGISTERED'
-  | 'LEG_READY_CHECKED'
-  | 'LEG_PAYER_CONFIRMED'
-  | 'LEG_PAYEE_CONFIRMED'
-  | 'LEG_SETTLED'
-  | 'LEG_SUSPENDED'
-  | 'LEG_FAILED'
+  | "LEG_REGISTERED"
+  | "LEG_READY_CHECKED"
+  | "LEG_PAYER_CONFIRMED"
+  | "LEG_PAYEE_CONFIRMED"
+  | "LEG_SETTLED"
+  | "LEG_SUSPENDED"
+  | "LEG_FAILED";
 
 /**
  * DNS (Deferred Net Settlement) cycle state.
@@ -73,7 +73,7 @@ export type LegState =
  * - SETTLED: All net positions settled via BOJ.
  * - HOLD_ACTIVE: Settlement suspended (e.g. insufficient funds at BOJ).
  */
-export type DnsState = 'OPEN' | 'KICKED' | 'SETTLED' | 'HOLD_ACTIVE'
+export type DnsState = "OPEN" | "KICKED" | "SETTLED" | "HOLD_ACTIVE";
 
 /**
  * IGS (Interbank Gross Settlement) operating mode.
@@ -82,13 +82,13 @@ export type DnsState = 'OPEN' | 'KICKED' | 'SETTLED' | 'HOLD_ACTIVE'
  * - RINGFENCED: Only pre-approved transactions settle.
  * - RINGFENCED_PLUS: Stricter ringfencing with additional controls.
  */
-export type IgsMode = 'NORMAL' | 'STOP' | 'RINGFENCED' | 'RINGFENCED_PLUS'
+export type IgsMode = "NORMAL" | "STOP" | "RINGFENCED" | "RINGFENCED_PLUS";
 
 /** Investigation case lifecycle state. */
-export type CaseState = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'ESCALATED'
+export type CaseState = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "ESCALATED";
 
 /** Request-to-Pay lifecycle state. */
-export type RtpState = 'REQUESTED' | 'ATTEMPTED' | 'SETTLED' | 'EXPIRED' | 'FAILED'
+export type RtpState = "REQUESTED" | "ATTEMPTED" | "SETTLED" | "EXPIRED" | "FAILED";
 
 /**
  * Processing lane determining settlement speed and method.
@@ -100,17 +100,10 @@ export type RtpState = 'REQUESTED' | 'ATTEMPTED' | 'SETTLED' | 'EXPIRED' | 'FAIL
  * - HTLC: Hash Time-Locked Contract conditional payment.
  * - HIGH_VALUE: Large-value transactions requiring IGS/RTGS settlement.
  */
-export type LaneType =
-  | 'EXPRESS'
-  | 'STANDARD'
-  | 'BULK'
-  | 'DEFERRED'
-  | 'RTP'
-  | 'HTLC'
-  | 'HIGH_VALUE'
+export type LaneType = "EXPRESS" | "STANDARD" | "BULK" | "DEFERRED" | "RTP" | "HTLC" | "HIGH_VALUE";
 
 /** Transaction purpose category. */
-export type PurposeType = 'MERCHANT' | 'P2P' | 'BILL' | 'SALARY' | 'REFUND'
+export type PurposeType = "MERCHANT" | "P2P" | "BILL" | "SALARY" | "REFUND";
 
 // ---------------------------------------------------------------------------
 // Bank-side State Types
@@ -128,23 +121,23 @@ export type PurposeType = 'MERCHANT' | 'P2P' | 'BILL' | 'SALARY' | 'REFUND'
  * - RETURNED: Funds returned to originator.
  */
 export type SuspenseStatus =
-  | 'RESERVED'
-  | 'EXECUTED'
-  | 'HV_TRANSIT'
-  | 'HTLC_LOCKED'
-  | 'LANDED'
-  | 'SETTLED'
-  | 'CUSTODY'
-  | 'RETURNED'
+  | "RESERVED"
+  | "EXECUTED"
+  | "HV_TRANSIT"
+  | "HTLC_LOCKED"
+  | "LANDED"
+  | "SETTLED"
+  | "CUSTODY"
+  | "RETURNED";
 
 /** Direction of a suspense entry relative to the bank. */
-export type SuspenseDirection = 'PAY' | 'RECEIVE' | 'HV_TRANSIT' | 'HTLC'
+export type SuspenseDirection = "PAY" | "RECEIVE" | "HV_TRANSIT" | "HTLC";
 
 /** Status of a ZC Ingress command processed by the bank. */
-export type ZcRequestStatus = 'PROCESSING' | 'DONE' | 'PROOF_ISSUED'
+export type ZcRequestStatus = "PROCESSING" | "DONE" | "PROOF_ISSUED";
 
 /** Customer account status governing transaction eligibility. */
-export type AccountStatus = 'NORMAL' | 'FROZEN' | 'CLOSING_HOLD' | 'CLOSED'
+export type AccountStatus = "NORMAL" | "FROZEN" | "CLOSING_HOLD" | "CLOSED";
 
 /**
  * Bank account type.
@@ -154,79 +147,85 @@ export type AccountStatus = 'NORMAL' | 'FROZEN' | 'CLOSING_HOLD' | 'CLOSED'
  * - ASSET: Bank's own asset account (e.g. cash).
  * - BOJ: Bank of Japan current account (prefund balance).
  */
-export type AccountType = 'SAVINGS' | 'CURRENT' | 'SUSPENSE' | 'SETTLEMENT' | 'ASSET' | 'BOJ'
+export type AccountType = "SAVINGS" | "CURRENT" | "SUSPENSE" | "SETTLEMENT" | "ASSET" | "BOJ";
 
 // ---------------------------------------------------------------------------
 // Feature State Types
 // ---------------------------------------------------------------------------
 
-export type TxEventStatus = 'OK' | 'NG' | 'PENDING'
+export type TxEventStatus = "OK" | "NG" | "PENDING";
 
 export type FilterType =
-  | 'SENDER_BLOCK'
-  | 'SENDER_BANK_BLOCK'
-  | 'AMOUNT_LIMIT'
-  | 'EDI_PATTERN'
-  | 'REQUIRE_APPROVAL'
+  | "SENDER_BLOCK"
+  | "SENDER_BANK_BLOCK"
+  | "AMOUNT_LIMIT"
+  | "EDI_PATTERN"
+  | "REQUIRE_APPROVAL";
 
-export type FilterAction = 'REJECT' | 'HOLD_CONFIRM' | 'HOLD_MANUAL'
-export type FilterScope = 'BANK_WIDE' | 'ACCOUNT'
-export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'TIMEOUT'
+export type FilterAction = "REJECT" | "HOLD_CONFIRM" | "HOLD_MANUAL";
+export type FilterScope = "BANK_WIDE" | "ACCOUNT";
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "TIMEOUT";
 
 export type HtlcAuthStatus =
-  | 'AUTH_REQUESTED'
-  | 'AUTH_APPROVED'
-  | 'AUTH_DECLINED'
-  | 'CAPTURED'
-  | 'VOIDED'
-  | 'EXPIRED'
+  | "AUTH_REQUESTED"
+  | "AUTH_APPROVED"
+  | "AUTH_DECLINED"
+  | "CAPTURED"
+  | "VOIDED"
+  | "EXPIRED";
 
-export type IgsStatus = 'REQUESTED' | 'SETTLED' | 'FAILED' | 'HOLD' | 'TIMEOUT'
-export type ExternalSettlementStatus = 'NONE' | 'REQUESTED' | 'SETTLED' | 'FAILED' | 'HOLD'
+export type IgsStatus = "REQUESTED" | "SETTLED" | "FAILED" | "HOLD" | "TIMEOUT";
+export type ExternalSettlementStatus = "NONE" | "REQUESTED" | "SETTLED" | "FAILED" | "HOLD";
 
-export type VerificationStatus = 'PENDING' | 'MATCHED' | 'UNMATCHED' | 'NOT_FOUND' | 'ERROR' | 'EXPIRED'
+export type VerificationStatus =
+  | "PENDING"
+  | "MATCHED"
+  | "UNMATCHED"
+  | "NOT_FOUND"
+  | "ERROR"
+  | "EXPIRED";
 
-export type NotificationStatus = 'PENDING' | 'DELIVERED' | 'FAILED' | 'EXPIRED'
+export type NotificationStatus = "PENDING" | "DELIVERED" | "FAILED" | "EXPIRED";
 
-export type QrType = 'STATIC' | 'DYNAMIC'
+export type QrType = "STATIC" | "DYNAMIC";
 
 export type RtpFullStatus =
-  | 'CREATED'
-  | 'NOTIFIED'
-  | 'ACCEPTED'
-  | 'TX_CREATED'
-  | 'COMPLETED'
-  | 'REJECTED'
-  | 'DECLINED'
-  | 'EXPIRED'
+  | "CREATED"
+  | "NOTIFIED"
+  | "ACCEPTED"
+  | "TX_CREATED"
+  | "COMPLETED"
+  | "REJECTED"
+  | "DECLINED"
+  | "EXPIRED";
 
-export type RichDataType = 'EDI' | 'INVOICE' | 'ATTACHMENT_META' | 'REMITTANCE'
+export type RichDataType = "EDI" | "INVOICE" | "ATTACHMENT_META" | "REMITTANCE";
 
 export type CrossBorderStatus =
-  | 'INITIATED'
-  | 'ROUTED'
-  | 'FOREIGN_ACCEPTED'
-  | 'SETTLED'
-  | 'FAILED'
-  | 'RETURNED'
+  | "INITIATED"
+  | "ROUTED"
+  | "FOREIGN_ACCEPTED"
+  | "SETTLED"
+  | "FAILED"
+  | "RETURNED";
 
 export type StreamEventType =
-  | 'tx_state_change'
-  | 'credit_notification'
-  | 'rtp_request'
-  | 'dns_status_change'
-  | 'igs_result'
-  | 'TX_STATE_CHANGED'
-  | 'CREDIT_RECEIVED'
-  | 'IGS_SETTLED'
-  | 'DNS_KICKED'
-  | 'RTP_RECEIVED'
-  | 'ACCOUNT_VERIFIED'
-  | 'QR_PAYMENT_RECEIVED'
-  | 'CROSS_BORDER_UPDATED'
+  | "tx_state_change"
+  | "credit_notification"
+  | "rtp_request"
+  | "dns_status_change"
+  | "igs_result"
+  | "TX_STATE_CHANGED"
+  | "CREDIT_RECEIVED"
+  | "IGS_SETTLED"
+  | "DNS_KICKED"
+  | "RTP_RECEIVED"
+  | "ACCOUNT_VERIFIED"
+  | "QR_PAYMENT_RECEIVED"
+  | "CROSS_BORDER_UPDATED";
 
-export type ParticipationMode = 'FULL' | 'RECEIVE_ONLY' | 'SEND_ONLY'
+export type ParticipationMode = "FULL" | "RECEIVE_ONLY" | "SEND_ONLY";
 
-export type MessageFormat = 'ZENITH_NATIVE' | 'ISO20022' | 'ZENGIN_FIXED'
+export type MessageFormat = "ZENITH_NATIVE" | "ISO20022" | "ZENGIN_FIXED";
 
-export type ProxyType = 'PHONE' | 'EMAIL' | 'NATIONAL_ID'
+export type ProxyType = "PHONE" | "EMAIL" | "NATIONAL_ID";

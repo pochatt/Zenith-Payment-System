@@ -14,30 +14,30 @@
  */
 export const REQUEST_PREFIX = {
   /** AML/制裁スクリーニング */
-  AUTHORITY_CHECK: 'AUTH',
+  AUTHORITY_CHECK: "AUTH",
   /** 名義確認 */
-  NAME_CHECK: 'NAME',
+  NAME_CHECK: "NAME",
   /** 資金予約 */
-  RESERVE_FUNDS: 'RESERVE',
+  RESERVE_FUNDS: "RESERVE",
   /** 仕向実行 (a) */
-  EXECUTE_DEBIT: 'DEBIT',
+  EXECUTE_DEBIT: "DEBIT",
   /** 被仕向実行 (b) */
-  EXECUTE_CREDIT: 'CREDIT',
+  EXECUTE_CREDIT: "CREDIT",
   /** 資金予約解放 */
-  RELEASE_RESERVE: 'RELEASE',
+  RELEASE_RESERVE: "RELEASE",
   /** HTLC recheck */
-  RECHECK: 'RECHECK',
+  RECHECK: "RECHECK",
   /** 送金取消 */
-  CANCEL: 'CANCEL',
+  CANCEL: "CANCEL",
   /** 取消時の予約解放 */
-  CANCEL_RELEASE: 'CANCEL-RELEASE',
+  CANCEL_RELEASE: "CANCEL-RELEASE",
   /** Credit 再開 (着金承認後) */
-  CREDIT_RESUME: 'CREDIT-RESUME',
+  CREDIT_RESUME: "CREDIT-RESUME",
   /** GTID leg レディネス確認 */
-  LEG_READY: 'LEG-READY',
-} as const
+  LEG_READY: "LEG-READY",
+} as const;
 
-export type RequestPrefix = typeof REQUEST_PREFIX[keyof typeof REQUEST_PREFIX]
+export type RequestPrefix = (typeof REQUEST_PREFIX)[keyof typeof REQUEST_PREFIX];
 
 /**
  * 決定論的リクエストIDを生成する。
@@ -56,5 +56,5 @@ export type RequestPrefix = typeof REQUEST_PREFIX[keyof typeof REQUEST_PREFIX]
  * ```
  */
 export function makeRequestId(prefix: RequestPrefix, key: string): string {
-  return `${prefix}-${key}`
+  return `${prefix}-${key}`;
 }

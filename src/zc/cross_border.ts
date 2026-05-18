@@ -10,17 +10,17 @@ import type {
   CrossBorderStatus,
   FatfR16Data,
   Pacs008Message,
-} from '../types'
-import { nowISO } from '../types'
-import { validateFatfR16, serializeFatfData } from '../shared/fatf_validator'
-import { buildPacs008 } from '../shared/iso20022'
+} from "../types";
+import { nowISO } from "../types";
+import { validateFatfR16, serializeFatfData } from "../shared/fatf_validator";
+import { buildPacs008 } from "../shared/iso20022";
 
 // ---------------------------------------------------------------------------
 // 定数
 // ---------------------------------------------------------------------------
 
 /** モック固定為替レート（外貨 → JPY）: constants.ts を正として統一使用 */
-import { EXCHANGE_RATE_TO_JPY as MOCK_EXCHANGE_RATES } from '../shared/constants'
+import { EXCHANGE_RATE_TO_JPY as MOCK_EXCHANGE_RATES } from "../shared/constants";
 
 // ---------------------------------------------------------------------------
 // クロスボーダー送金開始
@@ -45,69 +45,75 @@ import { EXCHANGE_RATE_TO_JPY as MOCK_EXCHANGE_RATES } from '../shared/constants
 export async function initiateCrossBorderTransfer(
   db: D1Database,
   req: CrossBorderSendRequest,
-  env: { FOREIGN_FPS_ENDPOINT?: string },
+  env: { FOREIGN_FPS_ENDPOINT?: string }
 ): Promise<{ cbTxid: string; domesticTxid: string; pacs008: Pacs008Message }> {
   // 1. FATF R16 検証
-  const fatfResult = validateFatfR16(req.fatf_data)
+  const fatfResult = validateFatfR16(req.fatf_data);
   if (!fatfResult.valid) {
-    throw new Error(`FATF R16 validation failed: ${fatfResult.errors.join('; ')}`)
+    throw new Error(`FATF R16 validation failed: ${fatfResult.errors.join("; ")}`);
   }
 
-  const now = nowISO()
-  const cbTxid = req.cb_txid.startsWith('CB-') ? req.cb_txid : `CB-${crypto.randomUUID()}`
-  const domesticTxid = `TX-${crypto.randomUUID()}`
+  const now = nowISO();
+  const cbTxid = req.cb_txid.startsWith("CB-") ? req.cb_txid : `CB-${crypto.randomUUID()}`;
+  const domesticTxid = `TX-${crypto.randomUUID()}`;
 
   // 外貨 → 円換算
-  const rate = MOCK_EXCHANGE_RATES[req.foreign_currency.toUpperCase()] ?? 1
-  const domesticAmount = Math.round(req.foreign_amount * rate)
+  const rate = MOCK_EXCHANGE_RATES[req.foreign_currency.toUpperCase()] ?? 1;
+  const domesticAmount = Math.round(req.foreign_amount * rate);
 
-  const fatfJson = serializeFatfData(req.fatf_data)
+  const fatfJson = serializeFatfData(req.fatf_data);
 
   // 2. CrossBorderTransactions レコード作成
-  await db.prepare(`
+  await db
+    .prepare(`
     INSERT INTO CrossBorderTransactions
       (cb_txid, domestic_txid, direction, foreign_fps_id, foreign_bank_bic,
        foreign_account_id, foreign_currency, foreign_amount, exchange_rate,
        domestic_amount, status, settlement_bank_id, nostro_account_ref,
        fatf_data_json, created_at, updated_at)
     VALUES (?, ?, 'OUTBOUND', ?, ?, ?, ?, ?, ?, ?, 'INITIATED', NULL, NULL, ?, ?, ?)
-  `).bind(
-    cbTxid,
-    domesticTxid,
-    req.foreign_fps_id,
-    req.foreign_bank_bic,
-    req.foreign_account_id,
-    req.foreign_currency,
-    req.foreign_amount,
-    rate,
-    domesticAmount,
-    fatfJson,
-    now,
-    now,
-  ).run()
+  `)
+    .bind(
+      cbTxid,
+      domesticTxid,
+      req.foreign_fps_id,
+      req.foreign_bank_bic,
+      req.foreign_account_id,
+      req.foreign_currency,
+      req.foreign_amount,
+      rate,
+      domesticAmount,
+      fatfJson,
+      now,
+      now
+    )
+    .run();
 
   // 3. 国内 Transactions レコード (DEFERRED lane) 作成
   // payee 側は外部 FPS の情報を設定する（空文字列だと execute-credit で口座特定不可）
   // クロスボーダーでは foreign_bank_bic を payee_bank_id、foreign_account_id を
   // payee_account_hash に格納し、着金処理で参照可能にする
-  await db.prepare(`
+  await db
+    .prepare(`
     INSERT OR IGNORE INTO Transactions
       (txid, state, lane, amount_value, amount_currency,
        payer_bank_id, payer_account_hash, payee_bank_id, payee_account_hash,
        idempotency_key, version, created_at, updated_at)
     VALUES (?, 'RECEIVED', 'DEFERRED', ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-  `).bind(
-    domesticTxid,
-    domesticAmount,
-    'JPY',
-    req.payer_bank_id,
-    req.payer_account_id,
-    req.foreign_bank_bic,
-    req.foreign_account_id,
-    req.idempotency_key,
-    now,
-    now,
-  ).run()
+  `)
+    .bind(
+      domesticTxid,
+      domesticAmount,
+      "JPY",
+      req.payer_bank_id,
+      req.payer_account_id,
+      req.foreign_bank_bic,
+      req.foreign_account_id,
+      req.idempotency_key,
+      now,
+      now
+    )
+    .run();
 
   // 4. pacs.008 メッセージ生成
   const pacs008 = buildPacs008({
@@ -122,19 +128,19 @@ export async function initiateCrossBorderTransfer(
     payeeAccount: req.foreign_account_id,
     payeeName: req.fatf_data.beneficiary.name,
     fatf: req.fatf_data,
-  })
+  });
 
   // 5. 外部 FPS へ送信 (モック: ログのみ)
   if (env.FOREIGN_FPS_ENDPOINT) {
     console.log(
       `[cross_border] MOCK send to foreign FPS ${env.FOREIGN_FPS_ENDPOINT}`,
-      JSON.stringify({ cbTxid, pacs008: pacs008.message_id }),
-    )
+      JSON.stringify({ cbTxid, pacs008: pacs008.message_id })
+    );
   } else {
-    console.log(`[cross_border] No FOREIGN_FPS_ENDPOINT configured. cbTxid=${cbTxid} (dry-run)`)
+    console.log(`[cross_border] No FOREIGN_FPS_ENDPOINT configured. cbTxid=${cbTxid} (dry-run)`);
   }
 
-  return { cbTxid, domesticTxid, pacs008 }
+  return { cbTxid, domesticTxid, pacs008 };
 }
 
 // ---------------------------------------------------------------------------
@@ -153,22 +159,28 @@ export async function updateCrossBorderStatus(
   db: D1Database,
   cbTxid: string,
   status: CrossBorderStatus,
-  foreignRef?: string,
+  foreignRef?: string
 ): Promise<void> {
-  const now = nowISO()
+  const now = nowISO();
 
   if (foreignRef) {
-    await db.prepare(`
+    await db
+      .prepare(`
       UPDATE CrossBorderTransactions
       SET status = ?, nostro_account_ref = ?, updated_at = ?
       WHERE cb_txid = ?
-    `).bind(status, foreignRef, now, cbTxid).run()
+    `)
+      .bind(status, foreignRef, now, cbTxid)
+      .run();
   } else {
-    await db.prepare(`
+    await db
+      .prepare(`
       UPDATE CrossBorderTransactions
       SET status = ?, updated_at = ?
       WHERE cb_txid = ?
-    `).bind(status, now, cbTxid).run()
+    `)
+      .bind(status, now, cbTxid)
+      .run();
   }
 }
 
@@ -185,11 +197,14 @@ export async function updateCrossBorderStatus(
  */
 export async function getCrossBorderTransaction(
   db: D1Database,
-  cbTxid: string,
+  cbTxid: string
 ): Promise<CrossBorderTransactionRow | null> {
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT * FROM CrossBorderTransactions WHERE cb_txid = ?
-  `).bind(cbTxid).first<CrossBorderTransactionRow>()
+  `)
+    .bind(cbTxid)
+    .first<CrossBorderTransactionRow>();
 }
 
 // ---------------------------------------------------------------------------
@@ -205,9 +220,12 @@ export async function getCrossBorderTransaction(
  */
 export async function getCrossBorderByDomesticTxid(
   db: D1Database,
-  domesticTxid: string,
+  domesticTxid: string
 ): Promise<CrossBorderTransactionRow | null> {
-  return db.prepare(`
+  return db
+    .prepare(`
     SELECT * FROM CrossBorderTransactions WHERE domestic_txid = ?
-  `).bind(domesticTxid).first<CrossBorderTransactionRow>()
+  `)
+    .bind(domesticTxid)
+    .first<CrossBorderTransactionRow>();
 }

@@ -12,11 +12,13 @@
  * @module zc/lanes/rtp
  */
 export {
-  registerRtp, attemptRtp, settleRtp, registerRtpRequest,
-} from './rtp/register'
+  registerRtp,
+  attemptRtp,
+  settleRtp,
+  registerRtpRequest,
+} from "./rtp/register";
+export { respondToRtp } from "./rtp/respond";
 export {
-  respondToRtp,
-} from './rtp/respond'
-export {
-  getRtpStatus, expireRtpRequests,
-} from './rtp/query'
+  getRtpStatus,
+  expireRtpRequests,
+} from "./rtp/query";

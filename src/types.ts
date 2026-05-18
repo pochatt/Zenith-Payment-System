@@ -13,7 +13,7 @@
  * @module types
  */
 
-export * from './types/primitives'
-export * from './types/states'
-export * from './types/rows'
-export * from './types/api'
+export * from "./types/primitives";
+export * from "./types/states";
+export * from "./types/rows";
+export * from "./types/api";

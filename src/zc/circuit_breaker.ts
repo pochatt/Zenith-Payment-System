@@ -25,46 +25,46 @@
  *
  * @module zc/circuit_breaker
  */
-import { nowISO } from '../types'
+import { nowISO } from "../types";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 /** Number of consecutive failures before the circuit trips OPEN. */
-const FAILURE_THRESHOLD = 5
+const FAILURE_THRESHOLD = 5;
 
 /** How long (ms) to stay OPEN before allowing HALF_OPEN probes. */
-const OPEN_DURATION_MS = 30_000  // 30 seconds
+const OPEN_DURATION_MS = 30_000; // 30 seconds
 
 /**
  * Maximum number of in-flight probes admitted while state=HALF_OPEN. Keeps a
  * recovering bank from being stampeded by the queued backlog the moment the
  * OPEN_DURATION_MS timer expires. A single failure still re-opens immediately.
  */
-const MAX_HALF_OPEN_PROBES = 3
+const MAX_HALF_OPEN_PROBES = 3;
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN'
+export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface CircuitBreakerStatus {
-  bank_id: string
-  state: CircuitState
-  consecutive_failures: number
-  last_failure_at: string | null
-  opened_at: string | null
-  half_open_at: string | null
-  updated_at: string
+  bank_id: string;
+  state: CircuitState;
+  consecutive_failures: number;
+  last_failure_at: string | null;
+  opened_at: string | null;
+  half_open_at: string | null;
+  updated_at: string;
   // Metrics (added in migration 0017)
-  total_requests: number
-  total_successes: number
-  total_failures: number
-  total_denied: number
-  half_open_inflight: number
-  last_success_at: string | null
+  total_requests: number;
+  total_successes: number;
+  total_failures: number;
+  total_denied: number;
+  half_open_inflight: number;
+  last_success_at: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -83,50 +83,59 @@ export interface CircuitBreakerStatus {
  * @returns `true` if the request may proceed, `false` if fast-failed
  */
 export async function allowRequest(bankId: string, db: D1Database): Promise<boolean> {
-  const row = await getOrInit(bankId, db)
-  const now = nowISO()
+  const row = await getOrInit(bankId, db);
+  const now = nowISO();
 
-  if (row.state === 'CLOSED') {
-    await db.prepare(
-      `UPDATE CircuitBreakerState
+  if (row.state === "CLOSED") {
+    await db
+      .prepare(
+        `UPDATE CircuitBreakerState
        SET total_requests = total_requests + 1, updated_at = ?
-       WHERE bank_id = ? AND state = 'CLOSED'`,
-    ).bind(now, bankId).run()
-    return true
+       WHERE bank_id = ? AND state = 'CLOSED'`
+      )
+      .bind(now, bankId)
+      .run();
+    return true;
   }
 
-  if (row.state === 'HALF_OPEN') {
-    return claimHalfOpenProbe(bankId, db, now)
+  if (row.state === "HALF_OPEN") {
+    return claimHalfOpenProbe(bankId, db, now);
   }
 
   // OPEN: check elapsed time
   if (row.opened_at) {
-    const elapsed = Date.now() - new Date(row.opened_at).getTime()
+    const elapsed = Date.now() - new Date(row.opened_at).getTime();
     if (elapsed >= OPEN_DURATION_MS) {
       // Transition OPEN → HALF_OPEN atomically and claim the first probe slot.
       // Doing both in one statement avoids a race where two concurrent callers
       // each promote the row and double-count probes.
-      const upd = await db.prepare(
-        `UPDATE CircuitBreakerState
+      const upd = await db
+        .prepare(
+          `UPDATE CircuitBreakerState
          SET state = 'HALF_OPEN', half_open_at = ?,
              half_open_inflight = 1, total_requests = total_requests + 1,
              updated_at = ?
-         WHERE bank_id = ? AND state = 'OPEN'`,
-      ).bind(now, now, bankId).run()
-      if ((upd.meta.changes ?? 0) > 0) return true
+         WHERE bank_id = ? AND state = 'OPEN'`
+        )
+        .bind(now, now, bankId)
+        .run();
+      if ((upd.meta.changes ?? 0) > 0) return true;
       // Lost the CAS race: another caller already promoted the row. Try to
       // claim a probe slot under the new HALF_OPEN state.
-      return claimHalfOpenProbe(bankId, db, now)
+      return claimHalfOpenProbe(bankId, db, now);
     }
   }
 
   // OPEN and not yet eligible to probe: fast-fail.
-  await db.prepare(
-    `UPDATE CircuitBreakerState
+  await db
+    .prepare(
+      `UPDATE CircuitBreakerState
      SET total_denied = total_denied + 1, updated_at = ?
-     WHERE bank_id = ?`,
-  ).bind(now, bankId).run()
-  return false
+     WHERE bank_id = ?`
+    )
+    .bind(now, bankId)
+    .run();
+  return false;
 }
 
 /**
@@ -134,20 +143,23 @@ export async function allowRequest(bankId: string, db: D1Database): Promise<bool
  * resets the probe counter; from CLOSED it just bumps the success metric.
  */
 export async function recordSuccess(bankId: string, db: D1Database): Promise<void> {
-  const now = nowISO()
+  const now = nowISO();
   // Close the circuit and reset all transient counters; runs unconditionally
   // (success in any state should restore CLOSED). half_open_inflight resets so
   // the next OPEN→HALF_OPEN cycle starts clean.
-  await db.prepare(
-    `UPDATE CircuitBreakerState
+  await db
+    .prepare(
+      `UPDATE CircuitBreakerState
      SET state = 'CLOSED', consecutive_failures = 0,
          last_failure_at = NULL, opened_at = NULL, half_open_at = NULL,
          half_open_inflight = 0,
          total_successes = total_successes + 1,
          last_success_at = ?,
          updated_at = ?
-     WHERE bank_id = ?`,
-  ).bind(now, now, bankId).run()
+     WHERE bank_id = ?`
+    )
+    .bind(now, now, bankId)
+    .run();
 }
 
 /**
@@ -156,58 +168,70 @@ export async function recordSuccess(bankId: string, db: D1Database): Promise<voi
  * re-opens immediately regardless of how many probes are still in flight.
  */
 export async function recordFailure(bankId: string, db: D1Database): Promise<void> {
-  const now = nowISO()
-  const row = await getOrInit(bankId, db)
+  const now = nowISO();
+  const row = await getOrInit(bankId, db);
 
-  const newCount = row.consecutive_failures + 1
+  const newCount = row.consecutive_failures + 1;
 
-  if (row.state === 'HALF_OPEN') {
+  if (row.state === "HALF_OPEN") {
     // Probe failed → back to OPEN. Reset half_open_inflight so the next probe
     // window starts from zero; remaining concurrent probes that arrive after
     // this point will be fast-failed by the OPEN-state check.
-    await db.prepare(
-      `UPDATE CircuitBreakerState
+    await db
+      .prepare(
+        `UPDATE CircuitBreakerState
        SET state = 'OPEN', consecutive_failures = ?, last_failure_at = ?,
            opened_at = ?, half_open_at = NULL, half_open_inflight = 0,
            total_failures = total_failures + 1,
            updated_at = ?
-       WHERE bank_id = ?`,
-    ).bind(newCount, now, now, now, bankId).run()
-    return
+       WHERE bank_id = ?`
+      )
+      .bind(newCount, now, now, now, bankId)
+      .run();
+    return;
   }
 
-  if (newCount >= FAILURE_THRESHOLD && row.state === 'CLOSED') {
+  if (newCount >= FAILURE_THRESHOLD && row.state === "CLOSED") {
     // Trip OPEN
-    await db.prepare(
-      `UPDATE CircuitBreakerState
+    await db
+      .prepare(
+        `UPDATE CircuitBreakerState
        SET state = 'OPEN', consecutive_failures = ?, last_failure_at = ?,
            opened_at = ?,
            total_failures = total_failures + 1,
            updated_at = ?
-       WHERE bank_id = ?`,
-    ).bind(newCount, now, now, now, bankId).run()
-    return
+       WHERE bank_id = ?`
+      )
+      .bind(newCount, now, now, now, bankId)
+      .run();
+    return;
   }
 
   // Still CLOSED, just bump counters
-  await db.prepare(
-    `UPDATE CircuitBreakerState
+  await db
+    .prepare(
+      `UPDATE CircuitBreakerState
      SET consecutive_failures = ?, last_failure_at = ?,
          total_failures = total_failures + 1,
          updated_at = ?
-     WHERE bank_id = ?`,
-  ).bind(newCount, now, now, bankId).run()
+     WHERE bank_id = ?`
+    )
+    .bind(newCount, now, now, bankId)
+    .run();
 }
 
 /**
  * Get the current circuit breaker status for a bank. Returns null if the
  * bank is not registered in the circuit breaker table.
  */
-export async function getCircuitStatus(bankId: string, db: D1Database): Promise<CircuitBreakerStatus | null> {
+export async function getCircuitStatus(
+  bankId: string,
+  db: D1Database
+): Promise<CircuitBreakerStatus | null> {
   return db
     .prepare(`SELECT * FROM CircuitBreakerState WHERE bank_id = ?`)
     .bind(bankId)
-    .first<CircuitBreakerStatus>()
+    .first<CircuitBreakerStatus>();
 }
 
 /**
@@ -216,8 +240,8 @@ export async function getCircuitStatus(bankId: string, db: D1Database): Promise<
 export async function listCircuitStates(db: D1Database): Promise<CircuitBreakerStatus[]> {
   const { results } = await db
     .prepare(`SELECT * FROM CircuitBreakerState ORDER BY bank_id`)
-    .all<CircuitBreakerStatus>()
-  return results ?? []
+    .all<CircuitBreakerStatus>();
+  return results ?? [];
 }
 
 /**
@@ -225,15 +249,18 @@ export async function listCircuitStates(db: D1Database): Promise<CircuitBreakerS
  * counters so reliability history isn't lost on a manual reset.
  */
 export async function resetCircuit(bankId: string, db: D1Database): Promise<void> {
-  const now = nowISO()
-  await db.prepare(
-    `UPDATE CircuitBreakerState
+  const now = nowISO();
+  await db
+    .prepare(
+      `UPDATE CircuitBreakerState
      SET state = 'CLOSED', consecutive_failures = 0,
          last_failure_at = NULL, opened_at = NULL, half_open_at = NULL,
          half_open_inflight = 0,
          updated_at = ?
-     WHERE bank_id = ?`,
-  ).bind(now, bankId).run()
+     WHERE bank_id = ?`
+    )
+    .bind(now, bankId)
+    .run();
 }
 
 // ---------------------------------------------------------------------------
@@ -247,50 +274,55 @@ export async function resetCircuit(bankId: string, db: D1Database): Promise<void
  * The single UPDATE statement is the synchronization primitive: SQLite/D1
  * serialize writes, so the `half_open_inflight < MAX` predicate cannot race.
  */
-async function claimHalfOpenProbe(
-  bankId: string,
-  db: D1Database,
-  now: string,
-): Promise<boolean> {
-  const upd = await db.prepare(
-    `UPDATE CircuitBreakerState
+async function claimHalfOpenProbe(bankId: string, db: D1Database, now: string): Promise<boolean> {
+  const upd = await db
+    .prepare(
+      `UPDATE CircuitBreakerState
      SET half_open_inflight = half_open_inflight + 1,
          total_requests = total_requests + 1,
          updated_at = ?
      WHERE bank_id = ?
        AND state = 'HALF_OPEN'
-       AND half_open_inflight < ?`,
-  ).bind(now, bankId, MAX_HALF_OPEN_PROBES).run()
-  if ((upd.meta.changes ?? 0) > 0) return true
+       AND half_open_inflight < ?`
+    )
+    .bind(now, bankId, MAX_HALF_OPEN_PROBES)
+    .run();
+  if ((upd.meta.changes ?? 0) > 0) return true;
 
   // Probe cap full: fast-fail and count the denial for visibility.
-  await db.prepare(
-    `UPDATE CircuitBreakerState
+  await db
+    .prepare(
+      `UPDATE CircuitBreakerState
      SET total_denied = total_denied + 1, updated_at = ?
-     WHERE bank_id = ?`,
-  ).bind(now, bankId).run()
-  return false
+     WHERE bank_id = ?`
+    )
+    .bind(now, bankId)
+    .run();
+  return false;
 }
 
 async function getOrInit(bankId: string, db: D1Database): Promise<CircuitBreakerStatus> {
   const existing = await db
     .prepare(`SELECT * FROM CircuitBreakerState WHERE bank_id = ?`)
     .bind(bankId)
-    .first<CircuitBreakerStatus>()
+    .first<CircuitBreakerStatus>();
 
-  if (existing) return existing
+  if (existing) return existing;
 
-  const now = nowISO()
-  await db.prepare(
-    `INSERT OR IGNORE INTO CircuitBreakerState
+  const now = nowISO();
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO CircuitBreakerState
      (bank_id, state, consecutive_failures, last_failure_at, opened_at, half_open_at, updated_at,
       total_requests, total_successes, total_failures, total_denied, half_open_inflight, last_success_at)
-     VALUES (?, 'CLOSED', 0, NULL, NULL, NULL, ?, 0, 0, 0, 0, 0, NULL)`,
-  ).bind(bankId, now).run()
+     VALUES (?, 'CLOSED', 0, NULL, NULL, NULL, ?, 0, 0, 0, 0, 0, NULL)`
+    )
+    .bind(bankId, now)
+    .run();
 
   return {
     bank_id: bankId,
-    state: 'CLOSED',
+    state: "CLOSED",
     consecutive_failures: 0,
     last_failure_at: null,
     opened_at: null,
@@ -302,5 +334,5 @@ async function getOrInit(bankId: string, db: D1Database): Promise<CircuitBreaker
     total_denied: 0,
     half_open_inflight: 0,
     last_success_at: null,
-  }
+  };
 }

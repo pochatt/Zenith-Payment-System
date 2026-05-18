@@ -27,32 +27,32 @@
  * ```
  */
 
-import { newUUID } from './idempotency'
+import { newUUID } from "./idempotency";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
+export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface LogContext {
-  request_id?: string
-  method?: string
-  path?: string
-  [k: string]: unknown
+  request_id?: string;
+  method?: string;
+  path?: string;
+  [k: string]: unknown;
 }
 
 export interface RequestLogger {
   /** Generate a child logger with merged baggage. Useful inside lane code. */
-  child(extra: Record<string, unknown>): RequestLogger
-  debug(event: string, fields?: Record<string, unknown>): void
-  info(event: string, fields?: Record<string, unknown>): void
-  warn(event: string, fields?: Record<string, unknown>): void
-  error(event: string, fields?: Record<string, unknown>): void
+  child(extra: Record<string, unknown>): RequestLogger;
+  debug(event: string, fields?: Record<string, unknown>): void;
+  info(event: string, fields?: Record<string, unknown>): void;
+  warn(event: string, fields?: Record<string, unknown>): void;
+  error(event: string, fields?: Record<string, unknown>): void;
   /** Milliseconds elapsed since logger creation. */
-  elapsed(): number
+  elapsed(): number;
   /** The request_id used for tracing; surfaced in error responses. */
-  readonly request_id: string
+  readonly request_id: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -64,12 +64,12 @@ export interface RequestLogger {
  * If `ctx.request_id` is omitted a new one is generated.
  */
 export function newRequestLogger(ctx: LogContext = {}): RequestLogger {
-  const start = Date.now()
+  const start = Date.now();
   const baggage: LogContext = {
     request_id: ctx.request_id ?? `req-${newUUID()}`,
     ...ctx,
-  }
-  return makeLogger(baggage, start)
+  };
+  return makeLogger(baggage, start);
 }
 
 function makeLogger(baggage: LogContext, start: number): RequestLogger {
@@ -84,36 +84,50 @@ function makeLogger(baggage: LogContext, start: number): RequestLogger {
       ts: new Date().toISOString(),
       level,
       event,
-    }
+    };
     for (const k in baggage) {
-      const v = (baggage as Record<string, unknown>)[k]
-      if (v !== undefined) line[k] = v
+      const v = (baggage as Record<string, unknown>)[k];
+      if (v !== undefined) line[k] = v;
     }
-    if (fields) sanitizeInto(fields, line)
-    const writer = level === 'debug' ? console.log
-                 : level === 'info'  ? console.info
-                 : level === 'warn'  ? console.warn
-                 :                     console.error
-    writer(JSON.stringify(line))
-  }
+    if (fields) sanitizeInto(fields, line);
+    const writer =
+      level === "debug"
+        ? console.log
+        : level === "info"
+          ? console.info
+          : level === "warn"
+            ? console.warn
+            : console.error;
+    writer(JSON.stringify(line));
+  };
   return {
     request_id: baggage.request_id as string,
     child(extra) {
       // Cheap merge: copy baggage then overwrite with extras. Avoids the
       // double-spread allocation pattern.
-      const merged: LogContext = {}
+      const merged: LogContext = {};
       for (const k in baggage) {
-        merged[k] = (baggage as Record<string, unknown>)[k]
+        merged[k] = (baggage as Record<string, unknown>)[k];
       }
-      for (const k in extra) merged[k] = extra[k]
-      return makeLogger(merged, start)
+      for (const k in extra) merged[k] = extra[k];
+      return makeLogger(merged, start);
     },
-    debug(event, fields) { emit('debug', event, fields) },
-    info(event, fields)  { emit('info',  event, fields) },
-    warn(event, fields)  { emit('warn',  event, fields) },
-    error(event, fields) { emit('error', event, fields) },
-    elapsed() { return Date.now() - start },
-  }
+    debug(event, fields) {
+      emit("debug", event, fields);
+    },
+    info(event, fields) {
+      emit("info", event, fields);
+    },
+    warn(event, fields) {
+      emit("warn", event, fields);
+    },
+    error(event, fields) {
+      emit("error", event, fields);
+    },
+    elapsed() {
+      return Date.now() - start;
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -132,31 +146,36 @@ function makeLogger(baggage: LogContext, start: number): RequestLogger {
 function sanitizeInto(fields: Record<string, unknown>, out: Record<string, unknown>): void {
   for (const k in fields) {
     if (isPiiKey(k)) {
-      out[k] = '[REDACTED]'
-      continue
+      out[k] = "[REDACTED]";
+      continue;
     }
-    const v = fields[k]
-    if (v === undefined) continue
+    const v = fields[k];
+    if (v === undefined) continue;
     if (v instanceof Error) {
-      const errObj: Record<string, unknown> = { name: v.name, message: v.message }
-      const rc = (v as { reason_code?: unknown }).reason_code
-      if (rc != null) errObj.reason_code = rc
-      const details = (v as { details?: unknown }).details
-      if (details != null) errObj.details = details
-      out[k] = errObj
+      const errObj: Record<string, unknown> = { name: v.name, message: v.message };
+      const rc = (v as { reason_code?: unknown }).reason_code;
+      if (rc != null) errObj.reason_code = rc;
+      const details = (v as { details?: unknown }).details;
+      if (details != null) errObj.details = details;
+      out[k] = errObj;
     } else {
-      out[k] = v
+      out[k] = v;
     }
   }
 }
 
 const PII_KEYS = new Set([
-  'vault_ref', 'preimage', 'secret', 'hmac_secret',
-  'authorization', 'api_key', 'private_key',
-])
+  "vault_ref",
+  "preimage",
+  "secret",
+  "hmac_secret",
+  "authorization",
+  "api_key",
+  "private_key",
+]);
 
 function isPiiKey(k: string): boolean {
-  const lower = k.toLowerCase()
-  if (PII_KEYS.has(lower)) return true
-  return lower.includes('password') || lower.endsWith('_pii')
+  const lower = k.toLowerCase();
+  if (PII_KEYS.has(lower)) return true;
+  return lower.includes("password") || lower.endsWith("_pii");
 }
