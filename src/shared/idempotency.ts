@@ -7,8 +7,8 @@
  *
  * @module shared/idempotency
  */
-import type { Env } from '../types'
-import { nowISO } from '../types'
+import type { Env } from "../types";
+import { nowISO } from "../types";
 
 /**
  * Attempt to acquire an idempotency key atomically.
@@ -22,15 +22,15 @@ import { nowISO } from '../types'
  *          `false` if the key already existed (caller should replay)
  */
 export async function acquireIdempotency(key: string, db: D1Database): Promise<boolean> {
-  const now = nowISO()
+  const now = nowISO();
   const result = await db
     .prepare(
       `INSERT OR IGNORE INTO IdempotencyKeys (key, status, created_at)
-       VALUES (?, 'PROCESSING', ?)`,
+       VALUES (?, 'PROCESSING', ?)`
     )
     .bind(key, now)
-    .run()
-  return (result.meta.changes ?? 0) > 0
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 /**
@@ -46,16 +46,16 @@ export async function acquireIdempotency(key: string, db: D1Database): Promise<b
 export async function completeIdempotency(
   key: string,
   responseBody: unknown,
-  db: D1Database,
+  db: D1Database
 ): Promise<void> {
   await db
     .prepare(
       `UPDATE IdempotencyKeys
        SET status = 'DONE', response_body = ?, updated_at = ?
-       WHERE key = ?`,
+       WHERE key = ?`
     )
     .bind(JSON.stringify(responseBody), nowISO(), key)
-    .run()
+    .run();
 }
 
 /**
@@ -69,19 +69,16 @@ export async function completeIdempotency(
  * @param db  - D1 database binding
  * @returns Cached response, a PROCESSING sentinel, or null
  */
-export async function getIdempotentResponse(
-  key: string,
-  db: D1Database,
-): Promise<unknown | null> {
+export async function getIdempotentResponse(key: string, db: D1Database): Promise<unknown | null> {
   const row = await db
     .prepare(`SELECT response_body, status FROM IdempotencyKeys WHERE key = ?`)
     .bind(key)
-    .first<{ response_body: string | null; status: string }>()
+    .first<{ response_body: string | null; status: string }>();
 
-  if (!row) return null
-  if (row.status === 'PROCESSING') return { result: 'PROCESSING' }
-  if (row.response_body) return JSON.parse(row.response_body)
-  return null
+  if (!row) return null;
+  if (row.status === "PROCESSING") return { result: "PROCESSING" };
+  if (row.response_body) return JSON.parse(row.response_body);
+  return null;
 }
 
 /**
@@ -90,5 +87,5 @@ export async function getIdempotentResponse(
  * @returns A new random UUID string (e.g. `"550e8400-e29b-41d4-a716-446655440000"`)
  */
 export function newUUID(): string {
-  return crypto.randomUUID()
+  return crypto.randomUUID();
 }

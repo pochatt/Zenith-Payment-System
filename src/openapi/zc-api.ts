@@ -1459,6 +1459,6 @@ components:
         as_of: { type: string, format: date-time }
         freshness_level: { type: string, example: GREEN }
         next_action_hint: { type: string, enum: [WAIT, RETRY_LATER, CONTACT_PAYER_BANK, OPEN_CASE] }
-`
+`;
 
-export default zcApiYaml
+export default zcApiYaml;

@@ -3,58 +3,93 @@
  *       processing. Manages leg-ready-check and atomic multi-bank settlement.
  * @module zc/lanes/gtid
  */
-import type { Env, GtidRegisterRequest, GtidTransactionRow, GtidLegRow } from '../../types'
-import { nowISO } from '../../types'
-import { writeFinalityLog, callBankLegReadyCheck, callBankReleaseReserve } from '../orchestrator'
-import { newDecisionProofRef, newFinalityLogRef } from '../../shared/proof'
-import { reserveH, lockH, releaseH } from '../h_model'
-import { getOrCreateDnsCycle } from '../dns'
-import { insertTxWithLog } from './_helpers'
+import type { Env, GtidRegisterRequest, GtidTransactionRow, GtidLegRow } from "../../types";
+import { nowISO } from "../../types";
+import { writeFinalityLog, callBankLegReadyCheck, callBankReleaseReserve } from "../orchestrator";
+import { newDecisionProofRef, newFinalityLogRef } from "../../shared/proof";
+import { reserveH, lockH, releaseH } from "../h_model";
+import { getOrCreateDnsCycle } from "../dns";
+import { insertTxWithLog } from "./_helpers";
 
 /**
  * GTID 登録: GT_RECEIVED + legs = LEG_REGISTERED
  */
-export async function registerGtid(req: GtidRegisterRequest, env: Env): Promise<{
-  result: 'GTID_ACCEPTED'; gtid: string; state: string
+export async function registerGtid(
+  req: GtidRegisterRequest,
+  env: Env
+): Promise<{
+  result: "GTID_ACCEPTED";
+  gtid: string;
+  state: string;
 }> {
-  const db = env.DB
-  const now = nowISO()
+  const db = env.DB;
+  const now = nowISO();
   // total_amount は PAYER leg の合計（全 leg 合算は2倍になる）
-  const totalAmount = req.legs.filter(l => l.role === 'PAYER').reduce((s, l) => s + l.amount.value, 0)
+  const totalAmount = req.legs
+    .filter((l) => l.role === "PAYER")
+    .reduce((s, l) => s + l.amount.value, 0);
 
   const stmts = [
-    db.prepare(
-      `INSERT OR IGNORE INTO GtidTransactions
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO GtidTransactions
        (gtid, state, initiator_bank_id, total_amount, leg_count, legs_ready_count,
         legs_settled_count, expires_at, version, created_at, updated_at)
        VALUES (?, 'GT_RECEIVED', ?, ?, ?, 0, 0, ?, 0, ?, ?)`
-    ).bind(req.gtid, req.legs[0]?.bank_id ?? '', totalAmount, req.legs.length, req.expires_at ?? null, now, now),
-  ]
+      )
+      .bind(
+        req.gtid,
+        req.legs[0]?.bank_id ?? "",
+        totalAmount,
+        req.legs.length,
+        req.expires_at ?? null,
+        now,
+        now
+      ),
+  ];
 
   for (const leg of req.legs) {
-    stmts.push(db.prepare(
-      `INSERT OR IGNORE INTO GtidLegs
+    stmts.push(
+      db
+        .prepare(
+          `INSERT OR IGNORE INTO GtidLegs
        (leg_id, gtid, role, bank_id, account_hash, amount_value, state, version, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, 'LEG_REGISTERED', 0, ?, ?)`
-    ).bind(leg.leg_id, req.gtid, leg.role, leg.bank_id, leg.account_hash, leg.amount.value, now, now))
+        )
+        .bind(
+          leg.leg_id,
+          req.gtid,
+          leg.role,
+          leg.bank_id,
+          leg.account_hash,
+          leg.amount.value,
+          now,
+          now
+        )
+    );
   }
 
-  await db.batch(stmts)
+  await db.batch(stmts);
 
   await writeFinalityLog(db, {
-    txid: null, event_type: 'GtidRegistered', state_from: null, state_to: 'GT_RECEIVED',
+    txid: null,
+    event_type: "GtidRegistered",
+    state_from: null,
+    state_to: "GT_RECEIVED",
     payload_json: JSON.stringify({ gtid: req.gtid, leg_count: req.legs.length }),
     txid_or_gtid: req.gtid,
-  })
+  });
 
   // 非同期で全 leg の ready-check を実行
   await env.QUEUE.send({
-    type: 'ZC_BANK_LEG_READY',
+    type: "ZC_BANK_LEG_READY",
     payload: { gtid: req.gtid },
-    gtid: req.gtid, attempt: 0, enqueued_at: now,
-  })
+    gtid: req.gtid,
+    attempt: 0,
+    enqueued_at: now,
+  });
 
-  return { result: 'GTID_ACCEPTED', gtid: req.gtid, state: 'GT_RECEIVED' }
+  return { result: "GTID_ACCEPTED", gtid: req.gtid, state: "GT_RECEIVED" };
 }
 
 /**
@@ -62,61 +97,85 @@ export async function registerGtid(req: GtidRegisterRequest, env: Env): Promise<
  * QueueConsumer から呼ばれる
  */
 export async function advanceGtid(gtid: string, env: Env): Promise<void> {
-  const db = env.DB
-  const now = nowISO()
+  const db = env.DB;
+  const now = nowISO();
 
   const gt = await db
     .prepare(`SELECT * FROM GtidTransactions WHERE gtid = ?`)
     .bind(gtid)
-    .first<GtidTransactionRow>()
-  if (!gt || gt.state !== 'GT_RECEIVED') return
+    .first<GtidTransactionRow>();
+  if (!gt || gt.state !== "GT_RECEIVED") return;
 
   const legs = await db
     .prepare(`SELECT * FROM GtidLegs WHERE gtid = ?`)
     .bind(gtid)
-    .all<GtidLegRow>()
+    .all<GtidLegRow>();
 
   // GT_PRECHECKED に遷移（CAS: 並行処理による二重実行を防ぐ）
-  const toPrechecked = await db.prepare(
-    `UPDATE GtidTransactions SET state='GT_PRECHECKED', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_RECEIVED'`
-  ).bind(now, gtid).run()
+  const toPrechecked = await db
+    .prepare(
+      `UPDATE GtidTransactions SET state='GT_PRECHECKED', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_RECEIVED'`
+    )
+    .bind(now, gtid)
+    .run();
 
   // changes=0 は他の Worker が先に遷移済み → 二重実行しない
-  if ((toPrechecked.meta.changes ?? 0) === 0) return
+  if ((toPrechecked.meta.changes ?? 0) === 0) return;
 
   // 各 leg の ready-check
-  let allReady = true
+  let allReady = true;
   for (const leg of legs.results) {
     // キュー再試行で同一 request_id を保証（leg_id は一意なので安全）
-    const checkResult = await callBankLegReadyCheck(leg.bank_id, {
-      request_id: `LEG-READY-${leg.leg_id}`, gtid, leg_id: leg.leg_id, role: leg.role,
-      amount: { value: leg.amount_value, currency: 'JPY' }, account_hash: leg.account_hash,
-    }, env)
+    const checkResult = await callBankLegReadyCheck(
+      leg.bank_id,
+      {
+        request_id: `LEG-READY-${leg.leg_id}`,
+        gtid,
+        leg_id: leg.leg_id,
+        role: leg.role,
+        amount: { value: leg.amount_value, currency: "JPY" },
+        account_hash: leg.account_hash,
+      },
+      env
+    );
 
-    if (checkResult.result === 'OK') {
-      await db.prepare(
-        `UPDATE GtidLegs SET state='LEG_READY_CHECKED', updated_at=?, version=version+1 WHERE leg_id=? AND state='LEG_REGISTERED'`
-      ).bind(now, leg.leg_id).run()
+    if (checkResult.result === "OK") {
+      await db
+        .prepare(
+          `UPDATE GtidLegs SET state='LEG_READY_CHECKED', updated_at=?, version=version+1 WHERE leg_id=? AND state='LEG_REGISTERED'`
+        )
+        .bind(now, leg.leg_id)
+        .run();
     } else {
-      allReady = false
-      await db.prepare(
-        `UPDATE GtidLegs SET state='LEG_FAILED', updated_at=?, version=version+1 WHERE leg_id=? AND state='LEG_REGISTERED'`
-      ).bind(now, leg.leg_id).run()
+      allReady = false;
+      await db
+        .prepare(
+          `UPDATE GtidLegs SET state='LEG_FAILED', updated_at=?, version=version+1 WHERE leg_id=? AND state='LEG_REGISTERED'`
+        )
+        .bind(now, leg.leg_id)
+        .run();
     }
   }
 
   if (!allReady) {
     // Bug fix: AND state='GT_PRECHECKED' を追加して並行処理の上書きを防ぐ
-    const cancelUpdated = await db.prepare(
-      `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
-    ).bind(now, gtid).run()
-    if ((cancelUpdated.meta.changes ?? 0) === 0) return
+    const cancelUpdated = await db
+      .prepare(
+        `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
+      )
+      .bind(now, gtid)
+      .run();
+    if ((cancelUpdated.meta.changes ?? 0) === 0) return;
     await writeFinalityLog(db, {
-      txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
-      payload_json: JSON.stringify({ gtid, reason: 'LEG_READY_CHECK_NG' }), txid_or_gtid: gtid,
-    })
-    await finalizeGtidCancelled(gtid, db, env)
-    return
+      txid: null,
+      event_type: "GtidDecidedCancel",
+      state_from: "GT_PRECHECKED",
+      state_to: "GT_DECIDED_CANCEL",
+      payload_json: JSON.stringify({ gtid, reason: "LEG_READY_CHECK_NG" }),
+      txid_or_gtid: gtid,
+    });
+    await finalizeGtidCancelled(gtid, db, env);
+    return;
   }
 
   // Bug #6 fix: PAYER/PAYEE 両ロールの存在確認を Decision 確定前に実施
@@ -124,19 +183,19 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   // V8 perf: single-pass partition + amount aggregation. The previous form did
   // two .filter() passes plus two .reduce() passes (4 traversals + 2 array
   // allocations). One for-loop covers all four computations.
-  const payerLegs: GtidLegRow[] = []
-  const payeeLegs: GtidLegRow[] = []
-  let totalPayerAmount = 0
-  let totalPayeeAmount = 0
-  const legRows = legs.results
+  const payerLegs: GtidLegRow[] = [];
+  const payeeLegs: GtidLegRow[] = [];
+  let totalPayerAmount = 0;
+  let totalPayeeAmount = 0;
+  const legRows = legs.results;
   for (let i = 0; i < legRows.length; i++) {
-    const leg = legRows[i]!
-    if (leg.role === 'PAYER') {
-      payerLegs.push(leg)
-      totalPayerAmount += leg.amount_value
-    } else if (leg.role === 'PAYEE') {
-      payeeLegs.push(leg)
-      totalPayeeAmount += leg.amount_value
+    const leg = legRows[i]!;
+    if (leg.role === "PAYER") {
+      payerLegs.push(leg);
+      totalPayerAmount += leg.amount_value;
+    } else if (leg.role === "PAYEE") {
+      payeeLegs.push(leg);
+      totalPayeeAmount += leg.amount_value;
     }
   }
   // PAYER ↔ PAYEE の対応付けは leg_id の辞書順で確定する。
@@ -146,22 +205,29 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   // ソートしておくと「両側の i 番目」で必ず正しい対が取れる。
   // 仕様コメント: 'leg_id による安定的なマッピング' を実装で保証する。
   const cmpLegId = (a: GtidLegRow, b: GtidLegRow) =>
-    a.leg_id < b.leg_id ? -1 : a.leg_id > b.leg_id ? 1 : 0
-  payerLegs.sort(cmpLegId)
-  payeeLegs.sort(cmpLegId)
-  const payerLeg = payerLegs[0]
-  const payeeLeg = payeeLegs[0]
+    a.leg_id < b.leg_id ? -1 : a.leg_id > b.leg_id ? 1 : 0;
+  payerLegs.sort(cmpLegId);
+  payeeLegs.sort(cmpLegId);
+  const payerLeg = payerLegs[0];
+  const payeeLeg = payeeLegs[0];
   if (!payerLeg || !payeeLeg) {
-    console.error(`[gtid] GTID ${gtid} is missing PAYER or PAYEE leg — cancelling`)
-    await db.prepare(
-      `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
-    ).bind(now, gtid).run()
+    console.error(`[gtid] GTID ${gtid} is missing PAYER or PAYEE leg — cancelling`);
+    await db
+      .prepare(
+        `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
+      )
+      .bind(now, gtid)
+      .run();
     await writeFinalityLog(db, {
-      txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
-      payload_json: JSON.stringify({ gtid, reason: 'MISSING_LEG_ROLE' }), txid_or_gtid: gtid,
-    })
-    await finalizeGtidCancelled(gtid, db, env)
-    return
+      txid: null,
+      event_type: "GtidDecidedCancel",
+      state_from: "GT_PRECHECKED",
+      state_to: "GT_DECIDED_CANCEL",
+      payload_json: JSON.stringify({ gtid, reason: "MISSING_LEG_ROLE" }),
+      txid_or_gtid: gtid,
+    });
+    await finalizeGtidCancelled(gtid, db, env);
+    return;
   }
 
   // Bug #2 fix: Validate amount balance between PAYER and PAYEE legs.
@@ -171,75 +237,100 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   // (totalPayerAmount / totalPayeeAmount were computed during the single-pass
   // partition above to avoid two extra .reduce() traversals.)
   if (totalPayerAmount !== totalPayeeAmount) {
-    console.error(`[gtid] GTID ${gtid} amount mismatch: PAYER total=${totalPayerAmount}, PAYEE total=${totalPayeeAmount} — cancelling`)
-    await db.prepare(
-      `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
-    ).bind(now, gtid).run()
+    console.error(
+      `[gtid] GTID ${gtid} amount mismatch: PAYER total=${totalPayerAmount}, PAYEE total=${totalPayeeAmount} — cancelling`
+    );
+    await db
+      .prepare(
+        `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
+      )
+      .bind(now, gtid)
+      .run();
     await writeFinalityLog(db, {
-      txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
+      txid: null,
+      event_type: "GtidDecidedCancel",
+      state_from: "GT_PRECHECKED",
+      state_to: "GT_DECIDED_CANCEL",
       payload_json: JSON.stringify({
-        gtid, reason: 'AMOUNT_BALANCE_MISMATCH',
+        gtid,
+        reason: "AMOUNT_BALANCE_MISMATCH",
         total_payer_amount: totalPayerAmount,
         total_payee_amount: totalPayeeAmount,
-      }), txid_or_gtid: gtid,
-    })
-    await finalizeGtidCancelled(gtid, db, env)
-    return
+      }),
+      txid_or_gtid: gtid,
+    });
+    await finalizeGtidCancelled(gtid, db, env);
+    return;
   }
 
   // Decision 確定前に PAYER leg の H 予約を取得・ロック
-  const hReservations = new Map<string, string>() // leg_id → reservationId
+  const hReservations = new Map<string, string>(); // leg_id → reservationId
   for (const leg of legs.results) {
-    if (leg.role !== 'PAYER') continue
-    const legTxid = `TX-GT-${leg.leg_id}`
-    const hResult = await reserveH(leg.bank_id, legTxid, leg.amount_value, db)
+    if (leg.role !== "PAYER") continue;
+    const legTxid = `TX-GT-${leg.leg_id}`;
+    const hResult = await reserveH(leg.bank_id, legTxid, leg.amount_value, db);
     if (!hResult.ok) {
       // H超過または参加行なし → 既確保済みを解放してキャンセル
       for (const resId of hReservations.values()) {
-        await releaseH(resId, db)
+        await releaseH(resId, db);
       }
-      await db.prepare(
-        `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
-      ).bind(now, gtid).run()
+      await db
+        .prepare(
+          `UPDATE GtidTransactions SET state='GT_DECIDED_CANCEL', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
+        )
+        .bind(now, gtid)
+        .run();
       await writeFinalityLog(db, {
-        txid: null, event_type: 'GtidDecidedCancel', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_CANCEL',
-        payload_json: JSON.stringify({ gtid, reason: hResult.reason }), txid_or_gtid: gtid,
-      })
-      await finalizeGtidCancelled(gtid, db, env)
-      return
+        txid: null,
+        event_type: "GtidDecidedCancel",
+        state_from: "GT_PRECHECKED",
+        state_to: "GT_DECIDED_CANCEL",
+        payload_json: JSON.stringify({ gtid, reason: hResult.reason }),
+        txid_or_gtid: gtid,
+      });
+      await finalizeGtidCancelled(gtid, db, env);
+      return;
     }
-    const reservationId = hResult.reservation_id
+    const reservationId = hResult.reservation_id;
     // DECIDED_TO_SETTLE 直行なので即 LOCK
-    await lockH(reservationId, db)
-    hReservations.set(leg.leg_id, reservationId)
+    await lockH(reservationId, db);
+    hReservations.set(leg.leg_id, reservationId);
   }
 
   // 全 leg OK → Decision 原子確定
-  const decisionProofRef = newDecisionProofRef()
-  const finalityLogRef = newFinalityLogRef()
+  const decisionProofRef = newDecisionProofRef();
+  const finalityLogRef = newFinalityLogRef();
   // dns_cycle_id を設定（DNS清算でのH解放に必要）
-  const dnsCycleId = await getOrCreateDnsCycle(db, now)
+  const dnsCycleId = await getOrCreateDnsCycle(db, now);
 
   // Bug #5 fix: AND state='GT_PRECHECKED' でステートガードを追加し、
   // 並行タイムアウトキャンセルが先に GT_DECIDED_CANCEL に遷移していた場合に上書きしない
-  const decisionUpdated = await db.prepare(
-    `UPDATE GtidTransactions SET state='GT_DECIDED_TO_SETTLE', legs_ready_count=leg_count, updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
-  ).bind(now, gtid).run()
+  const decisionUpdated = await db
+    .prepare(
+      `UPDATE GtidTransactions SET state='GT_DECIDED_TO_SETTLE', legs_ready_count=leg_count, updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
+    )
+    .bind(now, gtid)
+    .run();
 
   if ((decisionUpdated.meta.changes ?? 0) === 0) {
     // 並行処理で既にキャンセル等に遷移済み → 確保済みH予約を解放してスキップ
     for (const resId of hReservations.values()) {
-      await releaseH(resId, db)
+      await releaseH(resId, db);
     }
-    console.warn(`[gtid] advanceGtid: decision CAS failed for ${gtid} (already transitioned from GT_PRECHECKED)`)
-    return
+    console.warn(
+      `[gtid] advanceGtid: decision CAS failed for ${gtid} (already transitioned from GT_PRECHECKED)`
+    );
+    return;
   }
 
   await writeFinalityLog(db, {
-    txid: null, event_type: 'GtidDecided', state_from: 'GT_PRECHECKED', state_to: 'GT_DECIDED_TO_SETTLE',
+    txid: null,
+    event_type: "GtidDecided",
+    state_from: "GT_PRECHECKED",
+    state_to: "GT_DECIDED_TO_SETTLE",
     payload_json: JSON.stringify({ gtid, decision_proof_ref: decisionProofRef }),
     txid_or_gtid: gtid,
-  })
+  });
 
   // PAYERレグ用 Transaction を作成し Execution をキューへ投入する。
   // PAYEEレグは Transaction を持たない。クレジットは PAYER Transaction の
@@ -249,16 +340,16 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
   for (const leg of legs.results) {
     // PAYEEレグは Transaction を作らず ZC_BANK_CREDIT も送らない。
     // クレジットは対応する PAYERレグ Transaction の onPayerExecConfirmed で投入される。
-    if (leg.role === 'PAYEE') continue
+    if (leg.role === "PAYEE") continue;
 
-    const txid = `TX-GT-${leg.leg_id}`
+    const txid = `TX-GT-${leg.leg_id}`;
     // PAYER の対応 PAYEE は leg_id の辞書順位（== sort 後の配列 index）で決定。
     // 両配列は上で leg_id 昇順にソート済みのため、findIndex の結果がそのまま
     // 正しい対の index になる。PAYEE 数が PAYER 数より少ない場合は先頭 PAYEE
     // をフォールバックとする（単一受取人 fan-in 等の利便のため）。
-    const payerIdx = payerLegs.findIndex(p => p.leg_id === leg.leg_id)
-    const counterpartyPayeeLeg = payeeLegs[payerIdx] ?? payeeLeg
-    const hReservationId = hReservations.get(leg.leg_id) ?? null
+    const payerIdx = payerLegs.findIndex((p) => p.leg_id === leg.leg_id);
+    const counterpartyPayeeLeg = payeeLegs[payerIdx] ?? payeeLeg;
+    const hReservationId = hReservations.get(leg.leg_id) ?? null;
 
     // Atomic INSERT + paired FinalityLog + GtidLegs.txid backref via insertTxWithLog.
     // GTID is the one lane where leg-level Transactions rows enter at
@@ -268,9 +359,9 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     // auditable exception rather than a free-for-all.
     await insertTxWithLog(db, {
       txid,
-      lane: 'DEFERRED',
-      initialState: 'DECIDED_TO_SETTLE',
-      amount: { value: leg.amount_value, currency: 'JPY' },
+      lane: "DEFERRED",
+      initialState: "DECIDED_TO_SETTLE",
+      amount: { value: leg.amount_value, currency: "JPY" },
       payerBankId: leg.bank_id,
       payerAccountHash: leg.account_hash,
       payeeBankId: counterpartyPayeeLeg.bank_id,
@@ -279,24 +370,31 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
       decisionProofRef,
       hReservationId,
       dnsCycleId,
-      eventType: 'GtidLegDecidedToSettle',
+      eventType: "GtidLegDecidedToSettle",
       payload: { gtid, leg_id: leg.leg_id, decision_proof_ref: decisionProofRef },
-      sideUpdates: [{
-        sql: `UPDATE GtidLegs SET txid=?, updated_at=?, version=version+1 WHERE leg_id=?`,
-        binds: [txid, now, leg.leg_id],
-      }],
-    })
+      sideUpdates: [
+        {
+          sql: `UPDATE GtidLegs SET txid=?, updated_at=?, version=version+1 WHERE leg_id=?`,
+          binds: [txid, now, leg.leg_id],
+        },
+      ],
+    });
 
     await env.QUEUE.send({
-      type: 'ZC_BANK_DEBIT',
+      type: "ZC_BANK_DEBIT",
       payload: {
-        gtid, leg_id: leg.leg_id,
-        payer_bank_id: leg.bank_id, payee_bank_id: counterpartyPayeeLeg.bank_id,
-        txid, amount: { value: leg.amount_value, currency: 'JPY' },
+        gtid,
+        leg_id: leg.leg_id,
+        payer_bank_id: leg.bank_id,
+        payee_bank_id: counterpartyPayeeLeg.bank_id,
+        txid,
+        amount: { value: leg.amount_value, currency: "JPY" },
         decision_proof_ref: decisionProofRef,
       },
-      gtid, attempt: 0, enqueued_at: now,
-    })
+      gtid,
+      attempt: 0,
+      enqueued_at: now,
+    });
   }
 }
 
@@ -310,34 +408,47 @@ async function finalizeGtidCancelled(gtid: string, db: D1Database, env?: Env): P
     const payerLegs = await db
       .prepare(`SELECT leg_id, bank_id FROM GtidLegs WHERE gtid = ? AND role = 'PAYER'`)
       .bind(gtid)
-      .all<{ leg_id: string; bank_id: string }>()
+      .all<{ leg_id: string; bank_id: string }>();
     for (const leg of payerLegs.results ?? []) {
-      const predictedTxid = `TX-GT-${leg.leg_id}`
+      const predictedTxid = `TX-GT-${leg.leg_id}`;
       const suspense = await db
-        .prepare(`SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' LIMIT 1`)
-        .bind(predictedTxid, leg.bank_id)
-        .first<{ suspense_id: string }>()
-      if (suspense) {
-        await callBankReleaseReserve(leg.bank_id, {
-          request_id: `GTID-CANCEL-${leg.leg_id}`,
-          txid: predictedTxid,
-          reservation_ref: suspense.suspense_id,
-        }, env).catch(e =>
-          console.error(`[gtid] bank release-reserve failed for leg ${leg.leg_id}:`, e)
+        .prepare(
+          `SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' LIMIT 1`
         )
+        .bind(predictedTxid, leg.bank_id)
+        .first<{ suspense_id: string }>();
+      if (suspense) {
+        await callBankReleaseReserve(
+          leg.bank_id,
+          {
+            request_id: `GTID-CANCEL-${leg.leg_id}`,
+            txid: predictedTxid,
+            reservation_ref: suspense.suspense_id,
+          },
+          env
+        ).catch((e) =>
+          console.error(`[gtid] bank release-reserve failed for leg ${leg.leg_id}:`, e)
+        );
       }
     }
   }
 
-  const now = nowISO()
-  const updated = await db.prepare(
-    `UPDATE GtidTransactions SET state='GT_CANCELLED', updated_at=?, version=version+1
+  const now = nowISO();
+  const updated = await db
+    .prepare(
+      `UPDATE GtidTransactions SET state='GT_CANCELLED', updated_at=?, version=version+1
      WHERE gtid=? AND state='GT_DECIDED_CANCEL'`
-  ).bind(now, gtid).run()
+    )
+    .bind(now, gtid)
+    .run();
   if ((updated.meta.changes ?? 0) > 0) {
     await writeFinalityLog(db, {
-      txid: null, event_type: 'GtidCancelled', state_from: 'GT_DECIDED_CANCEL', state_to: 'GT_CANCELLED',
-      payload_json: JSON.stringify({ gtid }), txid_or_gtid: gtid,
-    })
+      txid: null,
+      event_type: "GtidCancelled",
+      state_from: "GT_DECIDED_CANCEL",
+      state_to: "GT_CANCELLED",
+      payload_json: JSON.stringify({ gtid }),
+      txid_or_gtid: gtid,
+    });
   }
 }

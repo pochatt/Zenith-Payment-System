@@ -9,10 +9,14 @@
     "db:migrate:remote": "wrangler d1 migrations apply zenith-db --remote",
     "db:seed": "wrangler d1 execute zenith-db --local --command \"SELECT 1\"",
     "type-check": "tsc --noEmit",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint . --fix",
+    "format": "biome format . --write",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.15",
     "@cloudflare/workers-types": "^4.20260418.1",
     "@types/better-sqlite3": "^7.6.12",
     "better-sqlite3": "^11.9.1",

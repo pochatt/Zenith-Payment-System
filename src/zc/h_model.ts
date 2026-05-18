@@ -12,9 +12,9 @@
  *
  * All mutations use D1 batch or single-statement atomicity; no SELECT FOR UPDATE.
  */
-import type { HReservationRow } from '../types'
-import { nowISO } from '../types'
-import { newUUID } from '../shared/idempotency'
+import type { HReservationRow } from "../types";
+import { nowISO } from "../types";
+import { newUUID } from "../shared/idempotency";
 
 // ---------------------------------------------------------------------------
 // H予約取得（楽観的ロック）
@@ -32,24 +32,24 @@ import { newUUID } from '../shared/idempotency'
  */
 export type ReserveHResult =
   | {
-      ok: true
-      reservation_id: string
-      bank_id: string
-      amount: number
-      h_used_after: number
-      h_limit: number
+      ok: true;
+      reservation_id: string;
+      bank_id: string;
+      amount: number;
+      h_used_after: number;
+      h_limit: number;
     }
-  | { ok: false; reason: 'BANK_NOT_FOUND'; bank_id: string }
-  | { ok: false; reason: 'BANK_INACTIVE'; bank_id: string }
+  | { ok: false; reason: "BANK_NOT_FOUND"; bank_id: string }
+  | { ok: false; reason: "BANK_INACTIVE"; bank_id: string }
   | {
-      ok: false
-      reason: 'H_LIMIT_EXCEEDED'
-      bank_id: string
-      requested: number
-      h_used: number
-      h_limit: number
-      available: number
-    }
+      ok: false;
+      reason: "H_LIMIT_EXCEEDED";
+      bank_id: string;
+      requested: number;
+      h_used: number;
+      h_limit: number;
+      available: number;
+    };
 
 /**
  * Acquire an H-limit reservation for an outbound transfer.
@@ -65,20 +65,20 @@ export async function reserveH(
   bankId: string,
   txid: string,
   amount: number,
-  db: D1Database,
+  db: D1Database
 ): Promise<ReserveHResult> {
-  const reservationId = `H-${newUUID()}`
-  const now = nowISO()
+  const reservationId = `H-${newUUID()}`;
+  const now = nowISO();
 
   // Step 1: h_limit 超過チェック（UPDATE の changes=0 で判定）
   const upd = await db
     .prepare(
       `UPDATE Participants
        SET h_used = h_used + ?
-       WHERE bank_id = ? AND is_active = 1 AND (h_used + ?) <= h_limit`,
+       WHERE bank_id = ? AND is_active = 1 AND (h_used + ?) <= h_limit`
     )
     .bind(amount, bankId, amount)
-    .run()
+    .run();
 
   if ((upd.meta.changes ?? 0) === 0) {
     // changes=0 は (a) 参加行なし、(b) 非アクティブ、(c) h_limit 超過 のいずれか。
@@ -86,18 +86,18 @@ export async function reserveH(
     const bankRow = await db
       .prepare(`SELECT is_active, h_limit, h_used FROM Participants WHERE bank_id = ?`)
       .bind(bankId)
-      .first<{ is_active: number; h_limit: number; h_used: number }>()
-    if (!bankRow) return { ok: false, reason: 'BANK_NOT_FOUND', bank_id: bankId }
-    if (bankRow.is_active === 0) return { ok: false, reason: 'BANK_INACTIVE', bank_id: bankId }
+      .first<{ is_active: number; h_limit: number; h_used: number }>();
+    if (!bankRow) return { ok: false, reason: "BANK_NOT_FOUND", bank_id: bankId };
+    if (bankRow.is_active === 0) return { ok: false, reason: "BANK_INACTIVE", bank_id: bankId };
     return {
       ok: false,
-      reason: 'H_LIMIT_EXCEEDED',
+      reason: "H_LIMIT_EXCEEDED",
       bank_id: bankId,
       requested: amount,
       h_used: bankRow.h_used,
       h_limit: bankRow.h_limit,
       available: bankRow.h_limit - bankRow.h_used,
-    }
+    };
   }
 
   // Step 2: h_used 増加成功後に HReservations を作成
@@ -105,16 +105,16 @@ export async function reserveH(
     .prepare(
       `INSERT INTO HReservations
          (reservation_id, txid, bank_id, amount, mode, is_released, created_at)
-       VALUES (?, ?, ?, ?, 'RESERVED', 0, ?)`,
+       VALUES (?, ?, ?, ?, 'RESERVED', 0, ?)`
     )
     .bind(reservationId, txid, bankId, amount, now)
-    .run()
+    .run();
 
   // 成功時のスナップショット（h_used_after, h_limit）を 1 クエリで取得
   const after = await db
     .prepare(`SELECT h_used, h_limit FROM Participants WHERE bank_id = ?`)
     .bind(bankId)
-    .first<{ h_used: number; h_limit: number }>()
+    .first<{ h_used: number; h_limit: number }>();
 
   return {
     ok: true,
@@ -123,7 +123,7 @@ export async function reserveH(
     amount,
     h_used_after: after?.h_used ?? 0,
     h_limit: after?.h_limit ?? 0,
-  }
+  };
 }
 
 /**
@@ -138,11 +138,11 @@ export async function lockH(reservationId: string, db: D1Database): Promise<bool
   const result = await db
     .prepare(
       `UPDATE HReservations SET mode = 'LOCKED'
-       WHERE reservation_id = ? AND mode = 'RESERVED' AND is_released = 0`,
+       WHERE reservation_id = ? AND mode = 'RESERVED' AND is_released = 0`
     )
     .bind(reservationId)
-    .run()
-  return (result.meta.changes ?? 0) > 0
+    .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 /**
@@ -158,15 +158,13 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
   // HReservations の is_released=0 ガードが二重解放を防ぎ、
   // Participants の h_used 減算はそのガードの成功に依存する
   const row = await db
-    .prepare(
-      `SELECT bank_id, amount, is_released FROM HReservations WHERE reservation_id = ?`,
-    )
+    .prepare(`SELECT bank_id, amount, is_released FROM HReservations WHERE reservation_id = ?`)
     .bind(reservationId)
-    .first<{ bank_id: string; amount: number; is_released: number }>()
+    .first<{ bank_id: string; amount: number; is_released: number }>();
 
-  if (!row || row.is_released === 1) return false
+  if (!row || row.is_released === 1) return false;
 
-  const now = nowISO()
+  const now = nowISO();
   // バッチ内で HReservations の CAS 更新と Participants の h_used 減算を同一トランザクションで実行
   // HReservations の UPDATE が changes=0 なら（既に is_released=1）、
   // Participants の UPDATE も同じトランザクション内で実行されるが、
@@ -175,7 +173,7 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
     db
       .prepare(
         `UPDATE HReservations SET is_released = 1, released_at = ?
-         WHERE reservation_id = ? AND is_released = 0`,
+         WHERE reservation_id = ? AND is_released = 0`
       )
       .bind(now, reservationId),
     // h_used 減算は HReservations の CAS が成功した場合のみ意味がある
@@ -192,34 +190,34 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
          WHERE bank_id = ? AND EXISTS (
            SELECT 1 FROM HReservations
            WHERE reservation_id = ? AND is_released = 1 AND released_at = ?
-         )`,
+         )`
       )
       .bind(row.amount, row.amount, row.bank_id, reservationId, now),
-  ]
+  ];
 
-  const results = await db.batch(stmts)
-  const released = (results[0]?.meta.changes ?? 0) > 0
+  const results = await db.batch(stmts);
+  const released = (results[0]?.meta.changes ?? 0) > 0;
   if (released) {
     // h_used < amount の場合は会計不整合（h_used が 0 にクランプされる）
     const p = await db
       .prepare(`SELECT h_used FROM Participants WHERE bank_id = ?`)
       .bind(row.bank_id)
-      .first<{ h_used: number }>()
+      .first<{ h_used: number }>();
     if (p && p.h_used === 0) {
       // 解放後 h_used=0 が期待通りでない可能性がある場合の警告
       // (他の予約が存在するのに 0 になっていればフロア保護が作動した兆候)
       const otherActive = await db
         .prepare(`SELECT COUNT(*) as cnt FROM HReservations WHERE bank_id = ? AND is_released = 0`)
         .bind(row.bank_id)
-        .first<{ cnt: number }>()
+        .first<{ cnt: number }>();
       if (otherActive && otherActive.cnt > 0) {
         console.warn(
-          `[h_model] WARNING: h_used floored to 0 for bank_id=${row.bank_id} but ${otherActive.cnt} active reservations remain. Possible accounting inconsistency.`,
-        )
+          `[h_model] WARNING: h_used floored to 0 for bank_id=${row.bank_id} but ${otherActive.cnt} active reservations remain. Possible accounting inconsistency.`
+        );
       }
     }
   }
-  return released
+  return released;
 }
 
 /**
@@ -231,12 +229,12 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
  */
 export async function getHReservation(
   reservationId: string,
-  db: D1Database,
+  db: D1Database
 ): Promise<HReservationRow | null> {
   return db
     .prepare(`SELECT * FROM HReservations WHERE reservation_id = ?`)
     .bind(reservationId)
-    .first<HReservationRow>()
+    .first<HReservationRow>();
 }
 
 /**
@@ -248,10 +246,10 @@ export async function getHReservation(
  */
 export async function getHStatus(
   bankId: string,
-  db: D1Database,
+  db: D1Database
 ): Promise<{ h_limit: number; h_used: number } | null> {
   return db
     .prepare(`SELECT h_limit, h_used FROM Participants WHERE bank_id = ? AND is_active = 1`)
     .bind(bankId)
-    .first<{ h_limit: number; h_used: number }>()
+    .first<{ h_limit: number; h_used: number }>();
 }

@@ -16,17 +16,20 @@
  * @module zc/lanes/htlc_auth
  */
 export {
-  registerAuthWhitelist, revokeAuthWhitelist, listAuthWhitelist,
-} from './htlc_auth/whitelist'
+  registerAuthWhitelist,
+  revokeAuthWhitelist,
+  listAuthWhitelist,
+} from "./htlc_auth/whitelist";
 export {
-  createAuthRequest, declineAuthRequest,
-} from './htlc_auth/request'
+  createAuthRequest,
+  declineAuthRequest,
+} from "./htlc_auth/request";
+export { approveAuthRequest } from "./htlc_auth/approve";
 export {
-  approveAuthRequest,
-} from './htlc_auth/approve'
+  captureHtlcAuth,
+  voidHtlcAuth,
+} from "./htlc_auth/capture";
 export {
-  captureHtlcAuth, voidHtlcAuth,
-} from './htlc_auth/capture'
-export {
-  getAuthRequest, listAuthRequests,
-} from './htlc_auth/query'
+  getAuthRequest,
+  listAuthRequests,
+} from "./htlc_auth/query";

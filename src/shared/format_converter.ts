@@ -52,10 +52,10 @@
  */
 export function zenginCodeToMockBankId(zenginCode: string): string {
   if (!/^\d{4}$/.test(zenginCode)) {
-    throw new Error(`Invalid zengin bank code: "${zenginCode}" (must be 4 digits)`)
+    throw new Error(`Invalid zengin bank code: "${zenginCode}" (must be 4 digits)`);
   }
   // 先頭1桁（常に '0'）を除去して3桁に
-  return zenginCode.slice(1)
+  return zenginCode.slice(1);
 }
 
 /**
@@ -67,9 +67,9 @@ export function zenginCodeToMockBankId(zenginCode: string): string {
  */
 export function mockBankIdToZenginCode(bankId: string): string {
   if (!/^\d{3}$/.test(bankId)) {
-    throw new Error(`Invalid mock bank_id: "${bankId}" (must be 3 digits)`)
+    throw new Error(`Invalid mock bank_id: "${bankId}" (must be 3 digits)`);
   }
-  return '0' + bankId
+  return "0" + bankId;
 }
 
 /**
@@ -84,9 +84,9 @@ export function mockBankIdToZenginCode(bankId: string): string {
 export function buildUnresolvedAccountRef(
   zenginBankCode: string,
   sitenCode: string,
-  kozaBango: string,
+  kozaBango: string
 ): string {
-  return `unresolved:${zenginBankCode}-${sitenCode}-${kozaBango.padStart(7, '0')}`
+  return `unresolved:${zenginBankCode}-${sitenCode}-${kozaBango.padStart(7, "0")}`;
 }
 
 /**
@@ -94,7 +94,7 @@ export function buildUnresolvedAccountRef(
  * `account-verify` を呼ぶ前に使用。
  */
 export function isUnresolvedAccountRef(accountHash: string): boolean {
-  return accountHash.startsWith('unresolved:')
+  return accountHash.startsWith("unresolved:");
 }
 
 // ---------------------------------------------------------------------------
@@ -110,37 +110,37 @@ export function isUnresolvedAccountRef(accountHash: string): boolean {
  */
 export interface LegacyZenginTransfer {
   /** 仕向銀行コード（全銀4桁: '0001'〜'9999'） */
-  shimukeKinko: string
+  shimukeKinko: string;
   /** 仕向支店コード（3桁: '001'〜'999'）。zenith-mock では DB 照合に不使用 */
-  shimukeSiten: string
+  shimukeSiten: string;
   /** 被仕向銀行コード（全銀4桁: '0001'〜'9999'） */
-  hishimukeKinko: string
+  hishimukeKinko: string;
   /** 被仕向支店コード（3桁: '001'〜'999'）。zenith-mock では DB 照合に不使用 */
-  hishimukeSiten: string
+  hishimukeSiten: string;
   /** 科目 ('1'=普通, '2'=当座, '4'=貯蓄) */
-  kamoku: '1' | '2' | '4'
+  kamoku: "1" | "2" | "4";
   /** 口座番号（7桁数字）。zenith-mock の account_hash とは別体系 */
-  kozaBango: string
+  kozaBango: string;
   /** 受取人名（カタカナ半角, 最大48文字） */
-  uketorininMei: string
+  uketorininMei: string;
   /** 金額（円, 正の整数, 最大10桁） */
-  kingaku: number
+  kingaku: number;
   /** 振込指定日 'YYYYMMDD' */
-  furikomiShiteibi: string
+  furikomiShiteibi: string;
   /** 依頼人コード（省略可） */
-  iraininCode?: string
+  iraininCode?: string;
   /** 依頼人名（カタカナ半角, 省略可） */
-  iraininMei?: string
+  iraininMei?: string;
   /** EDI情報（最大20文字, 省略可） */
-  ediJoho?: string
+  ediJoho?: string;
 }
 
 /** 全銀科目コード → zenith-mock 口座種別マッピング */
 const KAMOKU_MAP: Record<string, string> = {
-  '1': 'SAVINGS',    // 普通預金
-  '2': 'CHECKING',   // 当座預金
-  '4': 'SAVINGS',    // 貯蓄預金（zenith-mock では SAVINGS 扱い）
-}
+  "1": "SAVINGS", // 普通預金
+  "2": "CHECKING", // 当座預金
+  "4": "SAVINGS", // 貯蓄預金（zenith-mock では SAVINGS 扱い）
+};
 
 // ---------------------------------------------------------------------------
 // New format types（Zenith Coordinator API）
@@ -154,34 +154,34 @@ const KAMOKU_MAP: Record<string, string> = {
  * 送信前に `account-verify` エンドポイントで解決が必要。
  */
 export interface ConvertedPaymentRequest {
-  txid: string
-  lane: 'STANDARD' | 'EXPRESS'
-  amount: { value: number; currency: 'JPY' }
+  txid: string;
+  lane: "STANDARD" | "EXPRESS";
+  amount: { value: number; currency: "JPY" };
   /** bank_id は zenith-mock 3桁形式 */
-  payer: { bank_id: string; account_hash: string }
+  payer: { bank_id: string; account_hash: string };
   /**
    * bank_id は zenith-mock 3桁形式。
    * account_hash が `unresolved:` プレフィックスを持つ場合は
    * `account-verify` で解決してから使用する。
    */
-  payee: { bank_id: string; account_hash: string; account_name?: string }
-  purpose: string
-  idempotency_key: string
+  payee: { bank_id: string; account_hash: string; account_name?: string };
+  purpose: string;
+  idempotency_key: string;
   /** 元の全銀フォーマットのEDI情報（存在する場合） */
-  legacy_edi?: string
+  legacy_edi?: string;
   /** 変換元フォーマット（監査用） */
-  _source_format: 'ZENGIN_LEGACY'
+  _source_format: "ZENGIN_LEGACY";
   /**
    * 変換元の全銀コード情報（支店コード等の補足情報を保持）
    * DB 照合には使わないが、障害調査・照合用に保持する。
    */
   _zengin_meta: {
-    shimukeKinko: string    // 全銀4桁
-    shimukeSiten: string    // 支店3桁（DB非対応）
-    hishimukeKinko: string  // 全銀4桁
-    hishimukeSiten: string  // 支店3桁（DB非対応）
-    kozaBango: string       // 7桁口座番号（account_hash とは別体系）
-  }
+    shimukeKinko: string; // 全銀4桁
+    shimukeSiten: string; // 支店3桁（DB非対応）
+    hishimukeKinko: string; // 全銀4桁
+    hishimukeSiten: string; // 支店3桁（DB非対応）
+    kozaBango: string; // 7桁口座番号（account_hash とは別体系）
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -221,45 +221,45 @@ export interface ConvertedPaymentRequest {
 export function convertLegacyToNew(
   legacy: LegacyZenginTransfer,
   txid: string,
-  payerAccountHash: string,
+  payerAccountHash: string
 ): ConvertedPaymentRequest {
   // 銀行コード: 全銀4桁 → zenith-mock 3桁
-  const payerBankId = zenginCodeToMockBankId(legacy.shimukeKinko)
-  const payeeBankId = zenginCodeToMockBankId(legacy.hishimukeKinko)
+  const payerBankId = zenginCodeToMockBankId(legacy.shimukeKinko);
+  const payeeBankId = zenginCodeToMockBankId(legacy.hishimukeKinko);
 
   // 被仕向口座: 全銀口座番号はそのまま account_hash にできない。
   // 未解決識別子を生成し、呼び出し元が account-verify で解決する。
   const payeeAccountHash = buildUnresolvedAccountRef(
     legacy.hishimukeKinko,
     legacy.hishimukeSiten,
-    legacy.kozaBango,
-  )
+    legacy.kozaBango
+  );
 
   return {
     txid,
-    lane: 'STANDARD',
-    amount: { value: legacy.kingaku, currency: 'JPY' },
+    lane: "STANDARD",
+    amount: { value: legacy.kingaku, currency: "JPY" },
     payer: {
       bank_id: payerBankId,
       account_hash: payerAccountHash,
     },
     payee: {
       bank_id: payeeBankId,
-      account_hash: payeeAccountHash,  // 未解決: account-verify が必要
+      account_hash: payeeAccountHash, // 未解決: account-verify が必要
       account_name: normalizeKatakana(legacy.uketorininMei),
     },
-    purpose: 'P2P',
+    purpose: "P2P",
     idempotency_key: `LEGACY-${txid}`,
     legacy_edi: legacy.ediJoho,
-    _source_format: 'ZENGIN_LEGACY',
+    _source_format: "ZENGIN_LEGACY",
     _zengin_meta: {
-      shimukeKinko:    legacy.shimukeKinko,
-      shimukeSiten:    legacy.shimukeSiten,
-      hishimukeKinko:  legacy.hishimukeKinko,
-      hishimukeSiten:  legacy.hishimukeSiten,
-      kozaBango:       legacy.kozaBango,
+      shimukeKinko: legacy.shimukeKinko,
+      shimukeSiten: legacy.shimukeSiten,
+      hishimukeKinko: legacy.hishimukeKinko,
+      hishimukeSiten: legacy.hishimukeSiten,
+      kozaBango: legacy.kozaBango,
     },
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -283,24 +283,24 @@ export function convertLegacyToNew(
  * @param shimukeSitenCode - 仕向支店コード（3桁, 省略時 '000'）
  */
 export function convertNewToLegacy(
-  converted: Pick<ConvertedPaymentRequest, 'payer' | 'payee' | 'amount'>,
+  converted: Pick<ConvertedPaymentRequest, "payer" | "payee" | "amount">,
   payeeKozaBango: string,
   uketorininMei: string,
   furikomiShiteibi: string,
-  payeeSitenCode: string = '000',
-  shimukeSitenCode: string = '000',
+  payeeSitenCode: string = "000",
+  shimukeSitenCode: string = "000"
 ): LegacyZenginTransfer {
   return {
-    shimukeKinko:    mockBankIdToZenginCode(converted.payer.bank_id),
-    shimukeSiten:    shimukeSitenCode,
-    hishimukeKinko:  mockBankIdToZenginCode(converted.payee.bank_id),
-    hishimukeSiten:  payeeSitenCode,
-    kamoku:          '1',  // デフォルト: 普通預金
-    kozaBango:       payeeKozaBango.slice(-7).padStart(7, '0'),
-    uketorininMei:   toHalfWidthKatakana(uketorininMei).slice(0, 48),
-    kingaku:         converted.amount.value,
+    shimukeKinko: mockBankIdToZenginCode(converted.payer.bank_id),
+    shimukeSiten: shimukeSitenCode,
+    hishimukeKinko: mockBankIdToZenginCode(converted.payee.bank_id),
+    hishimukeSiten: payeeSitenCode,
+    kamoku: "1", // デフォルト: 普通預金
+    kozaBango: payeeKozaBango.slice(-7).padStart(7, "0"),
+    uketorininMei: toHalfWidthKatakana(uketorininMei).slice(0, 48),
+    kingaku: converted.amount.value,
     furikomiShiteibi,
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -313,39 +313,46 @@ export function convertNewToLegacy(
  * 銀行コードは全銀標準の4桁、支店コードは3桁を期待する。
  * zenith-mock の DB 側コード（3桁）とは異なることに注意。
  */
-export function validateLegacyFormat(legacy: LegacyZenginTransfer): { ok: boolean; errors: string[] } {
-  const errors: string[] = []
+export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
+  ok: boolean;
+  errors: string[];
+} {
+  const errors: string[] = [];
 
   if (!/^\d{4}$/.test(legacy.shimukeKinko))
-    errors.push(`shimukeKinko must be 4 digits (zengin standard), got "${legacy.shimukeKinko}"`)
+    errors.push(`shimukeKinko must be 4 digits (zengin standard), got "${legacy.shimukeKinko}"`);
   if (!/^\d{3}$/.test(legacy.shimukeSiten))
-    errors.push(`shimukeSiten must be 3 digits, got "${legacy.shimukeSiten}"`)
+    errors.push(`shimukeSiten must be 3 digits, got "${legacy.shimukeSiten}"`);
   if (!/^\d{4}$/.test(legacy.hishimukeKinko))
-    errors.push(`hishimukeKinko must be 4 digits (zengin standard), got "${legacy.hishimukeKinko}"`)
+    errors.push(
+      `hishimukeKinko must be 4 digits (zengin standard), got "${legacy.hishimukeKinko}"`
+    );
   if (!/^\d{3}$/.test(legacy.hishimukeSiten))
-    errors.push(`hishimukeSiten must be 3 digits, got "${legacy.hishimukeSiten}"`)
-  if (!['1', '2', '4'].includes(legacy.kamoku))
-    errors.push(`kamoku must be '1' (普通), '2' (当座), or '4' (貯蓄)`)
+    errors.push(`hishimukeSiten must be 3 digits, got "${legacy.hishimukeSiten}"`);
+  if (!["1", "2", "4"].includes(legacy.kamoku))
+    errors.push(`kamoku must be '1' (普通), '2' (当座), or '4' (貯蓄)`);
   if (!/^\d{1,7}$/.test(legacy.kozaBango))
-    errors.push(`kozaBango must be 1–7 digits, got "${legacy.kozaBango}"`)
-  if (legacy.uketorininMei.length === 0)
-    errors.push('uketorininMei is required')
+    errors.push(`kozaBango must be 1–7 digits, got "${legacy.kozaBango}"`);
+  if (legacy.uketorininMei.length === 0) errors.push("uketorininMei is required");
   if (legacy.uketorininMei.length > 48)
-    errors.push(`uketorininMei must be ≤ 48 chars, got ${legacy.uketorininMei.length}`)
+    errors.push(`uketorininMei must be ≤ 48 chars, got ${legacy.uketorininMei.length}`);
   if (!Number.isInteger(legacy.kingaku) || legacy.kingaku <= 0)
-    errors.push('kingaku must be a positive integer')
-  if (legacy.kingaku > 9_999_999_999)
-    errors.push('kingaku must be < 10,000,000,000')
+    errors.push("kingaku must be a positive integer");
+  if (legacy.kingaku > 9_999_999_999) errors.push("kingaku must be < 10,000,000,000");
   if (!/^\d{8}$/.test(legacy.furikomiShiteibi))
-    errors.push(`furikomiShiteibi must be YYYYMMDD, got "${legacy.furikomiShiteibi}"`)
+    errors.push(`furikomiShiteibi must be YYYYMMDD, got "${legacy.furikomiShiteibi}"`);
 
   // 先頭が '0' であることを確認（全銀銀行コードは '0' + 3桁）
-  if (/^\d{4}$/.test(legacy.shimukeKinko) && legacy.shimukeKinko[0] !== '0')
-    errors.push(`shimukeKinko first digit should be '0' for domestic banks, got "${legacy.shimukeKinko[0]}"`)
-  if (/^\d{4}$/.test(legacy.hishimukeKinko) && legacy.hishimukeKinko[0] !== '0')
-    errors.push(`hishimukeKinko first digit should be '0' for domestic banks, got "${legacy.hishimukeKinko[0]}"`)
+  if (/^\d{4}$/.test(legacy.shimukeKinko) && legacy.shimukeKinko[0] !== "0")
+    errors.push(
+      `shimukeKinko first digit should be '0' for domestic banks, got "${legacy.shimukeKinko[0]}"`
+    );
+  if (/^\d{4}$/.test(legacy.hishimukeKinko) && legacy.hishimukeKinko[0] !== "0")
+    errors.push(
+      `hishimukeKinko first digit should be '0' for domestic banks, got "${legacy.hishimukeKinko[0]}"`
+    );
 
-  return { ok: errors.length === 0, errors }
+  return { ok: errors.length === 0, errors };
 }
 
 // ---------------------------------------------------------------------------
@@ -354,37 +361,103 @@ export function validateLegacyFormat(legacy: LegacyZenginTransfer): { ok: boolea
 
 /** 全銀科目コードから zenith-mock 口座種別文字列を返す */
 export function kamokuToAccountType(kamoku: string): string {
-  return KAMOKU_MAP[kamoku] ?? 'SAVINGS'
+  return KAMOKU_MAP[kamoku] ?? "SAVINGS";
 }
 
 /** 全角カタカナ → 半角カタカナ変換（ルックアップテーブル方式） */
 const FULL_TO_HALF_KATAKANA: Record<string, string> = {
-  'ァ': 'ｧ', 'ア': 'ｱ', 'ィ': 'ｨ', 'イ': 'ｲ', 'ゥ': 'ｩ', 'ウ': 'ｳ', 'ェ': 'ｪ', 'エ': 'ｴ', 'ォ': 'ｫ', 'オ': 'ｵ',
-  'カ': 'ｶ', 'キ': 'ｷ', 'ク': 'ｸ', 'ケ': 'ｹ', 'コ': 'ｺ',
-  'サ': 'ｻ', 'シ': 'ｼ', 'ス': 'ｽ', 'セ': 'ｾ', 'ソ': 'ｿ',
-  'タ': 'ﾀ', 'チ': 'ﾁ', 'ツ': 'ﾂ', 'テ': 'ﾃ', 'ト': 'ﾄ',
-  'ナ': 'ﾅ', 'ニ': 'ﾆ', 'ヌ': 'ﾇ', 'ネ': 'ﾈ', 'ノ': 'ﾉ',
-  'ハ': 'ﾊ', 'ヒ': 'ﾋ', 'フ': 'ﾌ', 'ヘ': 'ﾍ', 'ホ': 'ﾎ',
-  'マ': 'ﾏ', 'ミ': 'ﾐ', 'ム': 'ﾑ', 'メ': 'ﾒ', 'モ': 'ﾓ',
-  'ヤ': 'ﾔ', 'ュ': 'ｭ', 'ユ': 'ﾕ', 'ョ': 'ｮ', 'ヨ': 'ﾖ', 'ャ': 'ｬ',
-  'ラ': 'ﾗ', 'リ': 'ﾘ', 'ル': 'ﾙ', 'レ': 'ﾚ', 'ロ': 'ﾛ',
-  'ワ': 'ﾜ', 'ヲ': 'ｦ', 'ン': 'ﾝ', 'ヴ': 'ｳﾞ', 'ッ': 'ｯ',
-  'ガ': 'ｶﾞ', 'ギ': 'ｷﾞ', 'グ': 'ｸﾞ', 'ゲ': 'ｹﾞ', 'ゴ': 'ｺﾞ',
-  'ザ': 'ｻﾞ', 'ジ': 'ｼﾞ', 'ズ': 'ｽﾞ', 'ゼ': 'ｾﾞ', 'ゾ': 'ｿﾞ',
-  'ダ': 'ﾀﾞ', 'ヂ': 'ﾁﾞ', 'ヅ': 'ﾂﾞ', 'デ': 'ﾃﾞ', 'ド': 'ﾄﾞ',
-  'バ': 'ﾊﾞ', 'ビ': 'ﾋﾞ', 'ブ': 'ﾌﾞ', 'ベ': 'ﾍﾞ', 'ボ': 'ﾎﾞ',
-  'パ': 'ﾊﾟ', 'ピ': 'ﾋﾟ', 'プ': 'ﾌﾟ', 'ペ': 'ﾍﾟ', 'ポ': 'ﾎﾟ',
-}
+  ァ: "ｧ",
+  ア: "ｱ",
+  ィ: "ｨ",
+  イ: "ｲ",
+  ゥ: "ｩ",
+  ウ: "ｳ",
+  ェ: "ｪ",
+  エ: "ｴ",
+  ォ: "ｫ",
+  オ: "ｵ",
+  カ: "ｶ",
+  キ: "ｷ",
+  ク: "ｸ",
+  ケ: "ｹ",
+  コ: "ｺ",
+  サ: "ｻ",
+  シ: "ｼ",
+  ス: "ｽ",
+  セ: "ｾ",
+  ソ: "ｿ",
+  タ: "ﾀ",
+  チ: "ﾁ",
+  ツ: "ﾂ",
+  テ: "ﾃ",
+  ト: "ﾄ",
+  ナ: "ﾅ",
+  ニ: "ﾆ",
+  ヌ: "ﾇ",
+  ネ: "ﾈ",
+  ノ: "ﾉ",
+  ハ: "ﾊ",
+  ヒ: "ﾋ",
+  フ: "ﾌ",
+  ヘ: "ﾍ",
+  ホ: "ﾎ",
+  マ: "ﾏ",
+  ミ: "ﾐ",
+  ム: "ﾑ",
+  メ: "ﾒ",
+  モ: "ﾓ",
+  ヤ: "ﾔ",
+  ュ: "ｭ",
+  ユ: "ﾕ",
+  ョ: "ｮ",
+  ヨ: "ﾖ",
+  ャ: "ｬ",
+  ラ: "ﾗ",
+  リ: "ﾘ",
+  ル: "ﾙ",
+  レ: "ﾚ",
+  ロ: "ﾛ",
+  ワ: "ﾜ",
+  ヲ: "ｦ",
+  ン: "ﾝ",
+  ヴ: "ｳﾞ",
+  ッ: "ｯ",
+  ガ: "ｶﾞ",
+  ギ: "ｷﾞ",
+  グ: "ｸﾞ",
+  ゲ: "ｹﾞ",
+  ゴ: "ｺﾞ",
+  ザ: "ｻﾞ",
+  ジ: "ｼﾞ",
+  ズ: "ｽﾞ",
+  ゼ: "ｾﾞ",
+  ゾ: "ｿﾞ",
+  ダ: "ﾀﾞ",
+  ヂ: "ﾁﾞ",
+  ヅ: "ﾂﾞ",
+  デ: "ﾃﾞ",
+  ド: "ﾄﾞ",
+  バ: "ﾊﾞ",
+  ビ: "ﾋﾞ",
+  ブ: "ﾌﾞ",
+  ベ: "ﾍﾞ",
+  ボ: "ﾎﾞ",
+  パ: "ﾊﾟ",
+  ピ: "ﾋﾟ",
+  プ: "ﾌﾟ",
+  ペ: "ﾍﾟ",
+  ポ: "ﾎﾟ",
+};
 function toHalfWidthKatakana(str: string): string {
   return str
-    .replace(/[\u30A1-\u30F6\u30AC-\u30F4]/g, ch => FULL_TO_HALF_KATAKANA[ch] ?? ch)
-    .replace(/\u30FC/g, '\uFF70')   // 長音符 ー → ｰ
-    .replace(/\u3000/g, ' ')        // 全角スペース → 半角
+    .replace(/[\u30A1-\u30F6\u30AC-\u30F4]/g, (ch) => FULL_TO_HALF_KATAKANA[ch] ?? ch)
+    .replace(/\u30FC/g, "\uFF70") // 長音符 ー → ｰ
+    .replace(/\u3000/g, " "); // 全角スペース → 半角
 }
 
 /** カタカナ文字列を正規化（制御文字・非ASCII除去, trim） */
 function normalizeKatakana(str: string): string {
   return toHalfWidthKatakana(str)
-    .replace(/[^\x20-\x7E\uFF65-\uFF9F]/g, '')  // ASCII + 半角カタカナ以外除去
-    .trim()
+    .replace(/[^\x20-\x7E\uFF65-\uFF9F]/g, "") // ASCII + 半角カタカナ以外除去
+    .trim();
 }

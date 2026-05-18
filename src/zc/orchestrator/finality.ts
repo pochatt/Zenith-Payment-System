@@ -18,12 +18,12 @@
  * `lanes/_helpers.ts`; the same machinery powers `finalizeCancelledTx` and
  * `suspendTx` below.
  */
-import type { TxState, FinalityEventType } from '../../types'
-import { nowISO } from '../../types'
-import { newUUID } from '../../shared/idempotency'
-import { openCase, autoResolveCaseForTx } from '../case'
-import { isValidTransition } from './state_machine'
-import { chainIdOf, computeEntryHash, getChainTipHash } from '../finality_chain'
+import type { TxState, FinalityEventType } from "../../types";
+import { nowISO } from "../../types";
+import { newUUID } from "../../shared/idempotency";
+import { openCase, autoResolveCaseForTx } from "../case";
+import { isValidTransition } from "./state_machine";
+import { chainIdOf, computeEntryHash, getChainTipHash } from "../finality_chain";
 
 // ---------------------------------------------------------------------------
 // FinalityLog persistence
@@ -31,16 +31,16 @@ import { chainIdOf, computeEntryHash, getChainTipHash } from '../finality_chain'
 
 /** Shape of a FinalityLog row to be written. */
 export interface FinalityLogEntry {
-  txid: string | null
-  event_type: FinalityEventType | string
-  state_from: string | null
-  state_to: string
-  payload_json: string
-  txid_or_gtid: string | null
+  txid: string | null;
+  event_type: FinalityEventType | string;
+  state_from: string | null;
+  state_to: string;
+  payload_json: string;
+  txid_or_gtid: string | null;
 }
 
 /** Prefixes recognized as non-TX chain identifiers stored in FinalityLog.gtid. */
-const CHAIN_ID_PREFIXES = ['GT-', 'GTID-', 'DNS-']
+const CHAIN_ID_PREFIXES = ["GT-", "GTID-", "DNS-"];
 
 /**
  * Atomically allocate the next monotonic event_seq from the FinalitySeq table.
@@ -52,38 +52,41 @@ const CHAIN_ID_PREFIXES = ['GT-', 'GTID-', 'DNS-']
 async function allocateEventSeq(db: D1Database): Promise<number> {
   const row = await db
     .prepare(`UPDATE FinalitySeq SET next_seq = next_seq + 1 WHERE id = 1 RETURNING next_seq`)
-    .first<{ next_seq: number }>()
-  if (row && typeof row.next_seq === 'number') return row.next_seq
+    .first<{ next_seq: number }>();
+  if (row && typeof row.next_seq === "number") return row.next_seq;
   // Defensive bootstrap: if the seed row is missing (migration not applied or
   // test fixture forgot to create it), fall back to MAX(event_seq)+1.
   const fallback = await db
     .prepare(`SELECT COALESCE(MAX(event_seq), 0) + 1 AS next_seq FROM FinalityLog`)
-    .first<{ next_seq: number }>()
-  return fallback?.next_seq ?? 1
+    .first<{ next_seq: number }>();
+  return fallback?.next_seq ?? 1;
 }
 
 /** Chain ID resolution for a FinalityLog entry. */
-export function resolveChainContext(entry: FinalityLogEntry): { gtid: string | null; chainId: string } {
-  const txidOrGtid = entry.txid_or_gtid
-  const gtid = txidOrGtid && CHAIN_ID_PREFIXES.some(p => txidOrGtid.startsWith(p))
-    ? txidOrGtid : null
-  const chainId = chainIdOf({ txid: entry.txid, gtid })
-  return { gtid, chainId }
+export function resolveChainContext(entry: FinalityLogEntry): {
+  gtid: string | null;
+  chainId: string;
+} {
+  const txidOrGtid = entry.txid_or_gtid;
+  const gtid =
+    txidOrGtid && CHAIN_ID_PREFIXES.some((p) => txidOrGtid.startsWith(p)) ? txidOrGtid : null;
+  const chainId = chainIdOf({ txid: entry.txid, gtid });
+  return { gtid, chainId };
 }
 
 /** Pre-computed FinalityLog row, ready to bind into an INSERT statement. */
 export interface PreparedFinalityLogRow {
-  log_id: string
-  txid: string | null
-  gtid: string | null
-  event_type: string
-  state_from: string | null
-  state_to: string
-  payload_json: string
-  event_seq: number
-  occurred_at: string
-  prev_hash: string
-  entry_hash: string
+  log_id: string;
+  txid: string | null;
+  gtid: string | null;
+  event_type: string;
+  state_from: string | null;
+  state_to: string;
+  payload_json: string;
+  event_seq: number;
+  occurred_at: string;
+  prev_hash: string;
+  entry_hash: string;
 }
 
 /**
@@ -94,24 +97,27 @@ export interface PreparedFinalityLogRow {
  */
 export async function prepareFinalityLogRow(
   db: D1Database,
-  entry: FinalityLogEntry,
+  entry: FinalityLogEntry
 ): Promise<PreparedFinalityLogRow> {
-  const { gtid, chainId } = resolveChainContext(entry)
-  const log_id = `FL-${newUUID()}`
-  const event_seq = await allocateEventSeq(db)
-  const occurred_at = nowISO()
-  const prev_hash = await getChainTipHash(db, chainId)
-  const entry_hash = await computeEntryHash({
-    log_id,
-    txid: entry.txid,
-    gtid,
-    event_type: entry.event_type,
-    state_from: entry.state_from,
-    state_to: entry.state_to,
-    payload_json: entry.payload_json,
-    event_seq,
-    occurred_at,
-  }, prev_hash)
+  const { gtid, chainId } = resolveChainContext(entry);
+  const log_id = `FL-${newUUID()}`;
+  const event_seq = await allocateEventSeq(db);
+  const occurred_at = nowISO();
+  const prev_hash = await getChainTipHash(db, chainId);
+  const entry_hash = await computeEntryHash(
+    {
+      log_id,
+      txid: entry.txid,
+      gtid,
+      event_type: entry.event_type,
+      state_from: entry.state_from,
+      state_to: entry.state_to,
+      payload_json: entry.payload_json,
+      event_seq,
+      occurred_at,
+    },
+    prev_hash
+  );
   return {
     log_id,
     txid: entry.txid,
@@ -124,16 +130,16 @@ export async function prepareFinalityLogRow(
     occurred_at,
     prev_hash,
     entry_hash,
-  }
+  };
 }
 
 const FINALITY_LOG_COLUMNS = `log_id, txid, gtid, event_type, state_from, state_to,
-  payload_json, event_seq, occurred_at, prev_hash, entry_hash`
+  payload_json, event_seq, occurred_at, prev_hash, entry_hash`;
 
 const FINALITY_LOG_INSERT_SQL = `
   INSERT INTO FinalityLog (${FINALITY_LOG_COLUMNS})
   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`
+`;
 
 /**
  * Conditional INSERT that fires only when the immediately preceding DML
@@ -150,18 +156,28 @@ const FINALITY_LOG_CONDITIONAL_INSERT_SQL = `
   INSERT INTO FinalityLog (${FINALITY_LOG_COLUMNS})
   SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
   WHERE changes() > 0
-`
+`;
 
 /** Build an unconditional INSERT for a pre-computed FinalityLog row. */
 export function buildFinalityLogInsert(
   db: D1Database,
-  row: PreparedFinalityLogRow,
+  row: PreparedFinalityLogRow
 ): D1PreparedStatement {
-  return db.prepare(FINALITY_LOG_INSERT_SQL).bind(
-    row.log_id, row.txid, row.gtid, row.event_type, row.state_from,
-    row.state_to, row.payload_json, row.event_seq, row.occurred_at,
-    row.prev_hash, row.entry_hash,
-  )
+  return db
+    .prepare(FINALITY_LOG_INSERT_SQL)
+    .bind(
+      row.log_id,
+      row.txid,
+      row.gtid,
+      row.event_type,
+      row.state_from,
+      row.state_to,
+      row.payload_json,
+      row.event_seq,
+      row.occurred_at,
+      row.prev_hash,
+      row.entry_hash
+    );
 }
 
 /**
@@ -176,13 +192,23 @@ export function buildFinalityLogInsert(
  */
 export function buildFinalityLogConditionalInsert(
   db: D1Database,
-  row: PreparedFinalityLogRow,
+  row: PreparedFinalityLogRow
 ): D1PreparedStatement {
-  return db.prepare(FINALITY_LOG_CONDITIONAL_INSERT_SQL).bind(
-    row.log_id, row.txid, row.gtid, row.event_type, row.state_from,
-    row.state_to, row.payload_json, row.event_seq, row.occurred_at,
-    row.prev_hash, row.entry_hash,
-  )
+  return db
+    .prepare(FINALITY_LOG_CONDITIONAL_INSERT_SQL)
+    .bind(
+      row.log_id,
+      row.txid,
+      row.gtid,
+      row.event_type,
+      row.state_from,
+      row.state_to,
+      row.payload_json,
+      row.event_seq,
+      row.occurred_at,
+      row.prev_hash,
+      row.entry_hash
+    );
 }
 
 /**
@@ -197,17 +223,19 @@ export function buildFinalityLogConditionalInsert(
  * them out) but we keep them in the retry predicate for defense-in-depth.
  */
 export async function writeFinalityLog(db: D1Database, entry: FinalityLogEntry): Promise<void> {
-  const MAX_RETRIES = 5
+  const MAX_RETRIES = 5;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const row = await prepareFinalityLogRow(db, entry)
+    const row = await prepareFinalityLogRow(db, entry);
     try {
-      await buildFinalityLogInsert(db, row).run()
-      return
+      await buildFinalityLogInsert(db, row).run();
+      return;
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!msg.includes('UNIQUE') && !msg.includes('unique')) throw err
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("UNIQUE") && !msg.includes("unique")) throw err;
       if (attempt === MAX_RETRIES - 1) {
-        throw new Error(`writeFinalityLog: failed after ${MAX_RETRIES} attempts due to concurrent writes — ${msg}`)
+        throw new Error(
+          `writeFinalityLog: failed after ${MAX_RETRIES} attempts due to concurrent writes — ${msg}`
+        );
       }
     }
   }
@@ -227,27 +255,34 @@ export async function writeFinalityLog(db: D1Database, entry: FinalityLogEntry):
  * a 'Cancelled' event being recorded.
  */
 export async function finalizeCancelledTx(txid: string, db: D1Database): Promise<void> {
-  const now = nowISO()
+  const now = nowISO();
   const cur = await db
     .prepare(`SELECT version FROM Transactions WHERE txid = ? AND state = 'DECIDED_CANCEL'`)
-    .bind(txid).first<{ version: number }>()
-  if (!cur) return
+    .bind(txid)
+    .first<{ version: number }>();
+  if (!cur) return;
 
   const logRow = await prepareFinalityLogRow(db, {
-    txid, event_type: 'Cancelled', state_from: 'DECIDED_CANCEL', state_to: 'CANCELLED',
-    payload_json: JSON.stringify({ txid }), txid_or_gtid: txid,
-  })
+    txid,
+    event_type: "Cancelled",
+    state_from: "DECIDED_CANCEL",
+    state_to: "CANCELLED",
+    payload_json: JSON.stringify({ txid }),
+    txid_or_gtid: txid,
+  });
 
   const results = await db.batch([
-    db.prepare(
-      `UPDATE Transactions SET state='CANCELLED', updated_at=?, version=version+1
+    db
+      .prepare(
+        `UPDATE Transactions SET state='CANCELLED', updated_at=?, version=version+1
        WHERE txid=? AND state='DECIDED_CANCEL' AND version=?`
-    ).bind(now, txid, cur.version),
+      )
+      .bind(now, txid, cur.version),
     buildFinalityLogConditionalInsert(db, logRow),
-  ])
+  ]);
 
   if ((results[0]?.meta.changes ?? 0) > 0) {
-    await autoResolveCaseForTx(db, txid)
+    await autoResolveCaseForTx(db, txid);
   }
 }
 
@@ -264,43 +299,60 @@ export async function finalizeCancelledTx(txid: string, db: D1Database): Promise
  * changes do not silently disable the cascade to checkAndFinalizeGtid.
  */
 export async function suspendTx(
-  txid: string, reasonCode: string, db: D1Database,
-  details?: Record<string, unknown>,
+  txid: string,
+  reasonCode: string,
+  db: D1Database,
+  details?: Record<string, unknown>
 ): Promise<void> {
-  const now = nowISO()
+  const now = nowISO();
   const tx = await db
     .prepare(`SELECT state, version FROM Transactions WHERE txid = ?`)
-    .bind(txid).first<{ state: TxState; version: number }>()
-  if (!tx) return
+    .bind(txid)
+    .first<{ state: TxState; version: number }>();
+  if (!tx) return;
 
-  if (!isValidTransition(tx.state, 'SUSPENDED')) return
+  if (!isValidTransition(tx.state, "SUSPENDED")) return;
 
   const logRow = await prepareFinalityLogRow(db, {
-    txid, event_type: 'Suspended', state_from: tx.state, state_to: 'SUSPENDED',
-    payload_json: JSON.stringify({ reason_code: reasonCode, ...details }), txid_or_gtid: txid,
-  })
+    txid,
+    event_type: "Suspended",
+    state_from: tx.state,
+    state_to: "SUSPENDED",
+    payload_json: JSON.stringify({ reason_code: reasonCode, ...details }),
+    txid_or_gtid: txid,
+  });
 
   const results = await db.batch([
-    db.prepare(
-      `UPDATE Transactions SET state='SUSPENDED', reason_code=?, updated_at=?, version=version+1
+    db
+      .prepare(
+        `UPDATE Transactions SET state='SUSPENDED', reason_code=?, updated_at=?, version=version+1
        WHERE txid=? AND state=? AND version=?`
-    ).bind(reasonCode, now, txid, tx.state, tx.version),
+      )
+      .bind(reasonCode, now, txid, tx.state, tx.version),
     buildFinalityLogConditionalInsert(db, logRow),
-  ])
+  ]);
 
   if ((results[0]?.meta.changes ?? 0) === 0) {
-    console.error(`[orchestrator] suspendTx CAS failed for ${txid}: state=${tx.state} may have advanced`)
-    return
+    console.error(
+      `[orchestrator] suspendTx CAS failed for ${txid}: state=${tx.state} may have advanced`
+    );
+    return;
   }
 
-  await openCase(db, { related_txid: txid, reason_code: reasonCode, opened_by: 'ZC', description: `Auto-suspended: ${reasonCode}` })
+  await openCase(db, {
+    related_txid: txid,
+    reason_code: reasonCode,
+    opened_by: "ZC",
+    description: `Auto-suspended: ${reasonCode}`,
+  });
 
   // GTID dispatch: query GtidLegs by txid instead of inferring from a txid prefix.
   const leg = await db
     .prepare(`SELECT gtid FROM GtidLegs WHERE txid = ?`)
-    .bind(txid).first<{ gtid: string }>()
+    .bind(txid)
+    .first<{ gtid: string }>();
   if (leg) {
-    const { checkAndFinalizeGtid } = await import('./gtid')
-    await checkAndFinalizeGtid(leg.gtid, db)
+    const { checkAndFinalizeGtid } = await import("./gtid");
+    await checkAndFinalizeGtid(leg.gtid, db);
   }
 }

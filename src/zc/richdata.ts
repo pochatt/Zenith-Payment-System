@@ -3,10 +3,10 @@
  *       invoices, remittance info). Supports R2 offloading for large payloads.
  * @module zc/richdata
  */
-import type { RichDataStoreRow, RichDataStoreRequest, RichDataType } from '../types'
+import type { RichDataStoreRow, RichDataStoreRequest, RichDataType } from "../types";
 
 // 50KB threshold for R2 offload
-const R2_THRESHOLD_BYTES = 50 * 1024
+const R2_THRESHOLD_BYTES = 50 * 1024;
 
 // ---------------------------------------------------------------------------
 // リッチデータ登録
@@ -16,57 +16,60 @@ export async function storeRichData(
   db: D1Database,
   req: RichDataStoreRequest,
   createdByBankId: string,
-  env: { R2_BUCKET?: R2Bucket },
+  env: { R2_BUCKET?: R2Bucket }
 ): Promise<RichDataStoreRow> {
-  const dataRef = crypto.randomUUID()
-  const now = new Date().toISOString()
-  const { RICHDATA_DEFAULT_RETENTION_DAYS } = await import('../shared/constants')
-  const retentionDays = RICHDATA_DEFAULT_RETENTION_DAYS
+  const dataRef = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const { RICHDATA_DEFAULT_RETENTION_DAYS } = await import("../shared/constants");
+  const retentionDays = RICHDATA_DEFAULT_RETENTION_DAYS;
 
   // Compute expiry
-  const expiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000).toISOString()
+  const expiresAt = new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
 
   // Serialize content
-  const fullJson = JSON.stringify(req.content)
-  const contentBytes = new TextEncoder().encode(fullJson).length
+  const fullJson = JSON.stringify(req.content);
+  const contentBytes = new TextEncoder().encode(fullJson).length;
 
   // Compute SHA-256 hash of full content
-  const contentHash = await computeContentHash(req.content)
+  const contentHash = await computeContentHash(req.content);
 
-  let contentJson: string
-  let r2Key: string | null = null
+  let contentJson: string;
+  let r2Key: string | null = null;
 
   if (contentBytes > R2_THRESHOLD_BYTES && env.R2_BUCKET) {
     // Store full content in R2
-    r2Key = `richdata/${dataRef}`
+    r2Key = `richdata/${dataRef}`;
     await env.R2_BUCKET.put(r2Key, fullJson, {
-      httpMetadata: { contentType: 'application/json' },
+      httpMetadata: { contentType: "application/json" },
       customMetadata: { data_ref: dataRef, data_type: req.data_type, content_hash: contentHash },
-    })
+    });
     // Store only a summary in D1
-    const summary = buildSummary(req.content, req.data_type)
-    contentJson = JSON.stringify(summary)
+    const summary = buildSummary(req.content, req.data_type);
+    contentJson = JSON.stringify(summary);
   } else {
-    contentJson = fullJson
+    contentJson = fullJson;
   }
 
-  await db.prepare(`
+  await db
+    .prepare(`
     INSERT INTO RichDataStore
       (data_ref, data_type, txid, content_json, content_hash, r2_key,
        created_by_bank_id, retention_days, created_at, expires_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    dataRef,
-    req.data_type,
-    req.txid ?? null,
-    contentJson,
-    contentHash,
-    r2Key,
-    createdByBankId,
-    retentionDays,
-    now,
-    expiresAt,
-  ).run()
+  `)
+    .bind(
+      dataRef,
+      req.data_type,
+      req.txid ?? null,
+      contentJson,
+      contentHash,
+      r2Key,
+      createdByBankId,
+      retentionDays,
+      now,
+      expiresAt
+    )
+    .run();
 
   return {
     data_ref: dataRef,
@@ -79,88 +82,105 @@ export async function storeRichData(
     retention_days: retentionDays,
     created_at: now,
     expires_at: expiresAt,
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
 // リッチデータ取得 (data_ref)
 // ---------------------------------------------------------------------------
-export async function getRichData(db: D1Database, dataRef: string): Promise<RichDataStoreRow | null> {
-  const row = await db.prepare(`
+export async function getRichData(
+  db: D1Database,
+  dataRef: string
+): Promise<RichDataStoreRow | null> {
+  const row = await db
+    .prepare(`
     SELECT * FROM RichDataStore WHERE data_ref = ? LIMIT 1
-  `).bind(dataRef).first<RichDataStoreRow>()
-  return row ?? null
+  `)
+    .bind(dataRef)
+    .first<RichDataStoreRow>();
+  return row ?? null;
 }
 
 // ---------------------------------------------------------------------------
 // txid紐付けリッチデータ一覧
 // ---------------------------------------------------------------------------
-export async function listRichDataByTxid(db: D1Database, txid: string): Promise<RichDataStoreRow[]> {
-  const result = await db.prepare(`
+export async function listRichDataByTxid(
+  db: D1Database,
+  txid: string
+): Promise<RichDataStoreRow[]> {
+  const result = await db
+    .prepare(`
     SELECT * FROM RichDataStore WHERE txid = ? ORDER BY created_at ASC
-  `).bind(txid).all<RichDataStoreRow>()
-  return result.results ?? []
+  `)
+    .bind(txid)
+    .all<RichDataStoreRow>();
+  return result.results ?? [];
 }
 
 // ---------------------------------------------------------------------------
 // コンテンツハッシュ計算 (SHA-256 of JSON)
 // ---------------------------------------------------------------------------
 export async function computeContentHash(content: object): Promise<string> {
-  const json = JSON.stringify(content)
-  const msgBuf = new TextEncoder().encode(json)
-  const hashBuf = await crypto.subtle.digest('SHA-256', msgBuf)
-  return bufToHex(hashBuf)
+  const json = JSON.stringify(content);
+  const msgBuf = new TextEncoder().encode(json);
+  const hashBuf = await crypto.subtle.digest("SHA-256", msgBuf);
+  return bufToHex(hashBuf);
 }
 
 // ---------------------------------------------------------------------------
 // 内部ヘルパー: R2保存時のD1サマリー生成
 // ---------------------------------------------------------------------------
-function buildSummary(content: Record<string, unknown>, dataType: RichDataType): Record<string, unknown> {
+function buildSummary(
+  content: Record<string, unknown>,
+  dataType: RichDataType
+): Record<string, unknown> {
   // Extract a small representative subset for the D1 summary
   const base: Record<string, unknown> = {
     _summary: true,
     _data_type: dataType,
-  }
+  };
 
   switch (dataType) {
-    case 'INVOICE':
+    case "INVOICE":
       return {
         ...base,
-        invoice_number: content['invoice_number'],
-        invoice_date: content['invoice_date'],
-        total_amount: content['total_amount'],
-        payee_name: content['payee_name'],
-      }
-    case 'EDI':
+        invoice_number: content["invoice_number"],
+        invoice_date: content["invoice_date"],
+        total_amount: content["total_amount"],
+        payee_name: content["payee_name"],
+      };
+    case "EDI":
       return {
         ...base,
-        invoice_number: content['invoice_number'],
-        sender_ref: content['sender_ref'],
-        receiver_ref: content['receiver_ref'],
-        item_count: Array.isArray(content['line_items']) ? (content['line_items'] as unknown[]).length : null,
-      }
-    case 'REMITTANCE':
+        invoice_number: content["invoice_number"],
+        sender_ref: content["sender_ref"],
+        receiver_ref: content["receiver_ref"],
+        item_count: Array.isArray(content["line_items"])
+          ? (content["line_items"] as unknown[]).length
+          : null,
+      };
+    case "REMITTANCE":
       return {
         ...base,
-        remittance_id: content['remittance_id'],
-        amount: content['amount'],
-        purpose: content['purpose'],
-      }
-    case 'ATTACHMENT_META':
+        remittance_id: content["remittance_id"],
+        amount: content["amount"],
+        purpose: content["purpose"],
+      };
+    case "ATTACHMENT_META":
       return {
         ...base,
-        filename: content['filename'],
-        mime_type: content['mime_type'],
-        file_size: content['file_size'],
-      }
+        filename: content["filename"],
+        mime_type: content["mime_type"],
+        file_size: content["file_size"],
+      };
     default:
       // Generic: keep only top-level scalar values, truncate
       return Object.fromEntries(
         Object.entries(content)
-          .filter(([, v]) => typeof v !== 'object' || v === null)
+          .filter(([, v]) => typeof v !== "object" || v === null)
           .slice(0, 10)
-          .concat([['_summary', true]])
-      )
+          .concat([["_summary", true]])
+      );
   }
 }
 
@@ -169,6 +189,6 @@ function buildSummary(content: Record<string, unknown>, dataType: RichDataType):
 // ---------------------------------------------------------------------------
 function bufToHex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }

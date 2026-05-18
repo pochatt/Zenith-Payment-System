@@ -8,10 +8,10 @@
  *
  * @module shared/proof
  */
-import type { BankProofRef, ProofType, CustodyDetail } from '../types'
-import { nowISO } from '../types'
-import { sha256hex } from './hmac'
-import { newUUID } from './idempotency'
+import type { BankProofRef, ProofType, CustodyDetail } from "../types";
+import { nowISO } from "../types";
+import { sha256hex } from "./hmac";
+import { newUUID } from "./idempotency";
 
 /**
  * Create a new `BankProofRef` with a unique proof ID and timestamp.
@@ -31,22 +31,22 @@ export async function createProof(
   proofType: ProofType,
   txid: string,
   amount: number,
-  custodyDetail?: CustodyDetail,
+  custodyDetail?: CustodyDetail
 ): Promise<BankProofRef> {
-  const proofId = `PROOF-${newUUID()}`
+  const proofId = `PROOF-${newUUID()}`;
   // 証憑の内容ダイジェスト（監査用）
-  await sha256hex(`${issuerBankId}:${proofType}:${txid}:${amount}:${proofId}`)
+  await sha256hex(`${issuerBankId}:${proofType}:${txid}:${amount}:${proofId}`);
 
   const proof: BankProofRef = {
     issuer_bank_id: issuerBankId,
     proof_type: proofType,
     proof_id: proofId,
     recorded_at: nowISO(),
-  }
+  };
   if (custodyDetail) {
-    proof.custody_detail = custodyDetail
+    proof.custody_detail = custodyDetail;
   }
-  return proof
+  return proof;
 }
 
 /**
@@ -55,7 +55,7 @@ export async function createProof(
  * @returns A `DP-{uuid}` formatted reference string
  */
 export function newDecisionProofRef(): string {
-  return `DP-${newUUID()}`
+  return `DP-${newUUID()}`;
 }
 
 /**
@@ -64,7 +64,7 @@ export function newDecisionProofRef(): string {
  * @returns A `FL-{uuid}` formatted reference string
  */
 export function newFinalityLogRef(): string {
-  return `FL-${newUUID()}`
+  return `FL-${newUUID()}`;
 }
 
 /**
@@ -74,7 +74,7 @@ export function newFinalityLogRef(): string {
  * @returns JSON string representation
  */
 export function serializeProof(proof: BankProofRef): string {
-  return JSON.stringify(proof)
+  return JSON.stringify(proof);
 }
 
 /**
@@ -84,10 +84,10 @@ export function serializeProof(proof: BankProofRef): string {
  * @returns Parsed BankProofRef, or null on invalid/missing input
  */
 export function deserializeProof(json: string | null): BankProofRef | null {
-  if (!json) return null
+  if (!json) return null;
   try {
-    return JSON.parse(json) as BankProofRef
+    return JSON.parse(json) as BankProofRef;
   } catch {
-    return null
+    return null;
   }
 }

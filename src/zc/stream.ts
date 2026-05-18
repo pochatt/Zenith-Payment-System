@@ -4,8 +4,8 @@
  * @module zc/stream
  */
 
-import type { EventStreamRow, StreamEventType } from '../types'
-import { nowISO } from '../types'
+import type { EventStreamRow, StreamEventType } from "../types";
+import { nowISO } from "../types";
 
 // ---------------------------------------------------------------------------
 // イベント発行
@@ -24,18 +24,21 @@ export async function publishEvent(
   db: D1Database,
   targetBankId: string,
   eventType: StreamEventType,
-  payload: object,
+  payload: object
 ): Promise<string> {
-  const eventId = crypto.randomUUID()
-  const now = nowISO()
+  const eventId = crypto.randomUUID();
+  const now = nowISO();
 
-  await db.prepare(`
+  await db
+    .prepare(`
     INSERT INTO EventStream
       (event_id, target_bank_id, event_type, payload_json, is_delivered, created_at)
     VALUES (?, ?, ?, ?, 0, ?)
-  `).bind(eventId, targetBankId, eventType, JSON.stringify(payload), now).run()
+  `)
+    .bind(eventId, targetBankId, eventType, JSON.stringify(payload), now)
+    .run();
 
-  return eventId
+  return eventId;
 }
 
 // ---------------------------------------------------------------------------
@@ -54,33 +57,42 @@ export async function publishEvent(
 export async function getPendingEvents(
   db: D1Database,
   targetBankId: string,
-  afterEventId?: string,
+  afterEventId?: string
 ): Promise<EventStreamRow[]> {
   if (afterEventId) {
     // afterEventId の created_at を取得してカーソルとして使う
-    const cursor = await db.prepare(`
+    const cursor = await db
+      .prepare(`
       SELECT created_at FROM EventStream WHERE event_id = ?
-    `).bind(afterEventId).first<{ created_at: string }>()
+    `)
+      .bind(afterEventId)
+      .first<{ created_at: string }>();
 
     if (cursor) {
-      const { results } = await db.prepare(`
+      const { results } = await db
+        .prepare(`
         SELECT * FROM EventStream
         WHERE target_bank_id = ? AND is_delivered = 0 AND created_at > ?
         ORDER BY created_at ASC
         LIMIT 100
-      `).bind(targetBankId, cursor.created_at).all<EventStreamRow>()
-      return results ?? []
+      `)
+        .bind(targetBankId, cursor.created_at)
+        .all<EventStreamRow>();
+      return results ?? [];
     }
   }
 
-  const { results } = await db.prepare(`
+  const { results } = await db
+    .prepare(`
     SELECT * FROM EventStream
     WHERE target_bank_id = ? AND is_delivered = 0
     ORDER BY created_at ASC
     LIMIT 100
-  `).bind(targetBankId).all<EventStreamRow>()
+  `)
+    .bind(targetBankId)
+    .all<EventStreamRow>();
 
-  return results ?? []
+  return results ?? [];
 }
 
 // ---------------------------------------------------------------------------
@@ -94,9 +106,12 @@ export async function getPendingEvents(
  * @param eventId - イベントID
  */
 export async function markEventDelivered(db: D1Database, eventId: string): Promise<void> {
-  await db.prepare(`
+  await db
+    .prepare(`
     UPDATE EventStream SET is_delivered = 1 WHERE event_id = ?
-  `).bind(eventId).run()
+  `)
+    .bind(eventId)
+    .run();
 }
 
 // ---------------------------------------------------------------------------
@@ -111,13 +126,13 @@ export async function markEventDelivered(db: D1Database, eventId: string): Promi
  * @param eventIds - イベントIDの配列
  */
 export async function markEventsDelivered(db: D1Database, eventIds: string[]): Promise<void> {
-  if (eventIds.length === 0) return
+  if (eventIds.length === 0) return;
 
   // D1 は パラメータ展開でIN句が使えないため batch で処理
-  const stmts = eventIds.map(id =>
-    db.prepare(`UPDATE EventStream SET is_delivered = 1 WHERE event_id = ?`).bind(id),
-  )
-  await db.batch(stmts)
+  const stmts = eventIds.map((id) =>
+    db.prepare(`UPDATE EventStream SET is_delivered = 1 WHERE event_id = ?`).bind(id)
+  );
+  await db.batch(stmts);
 }
 
 // ---------------------------------------------------------------------------
@@ -138,61 +153,70 @@ export async function markEventsDelivered(db: D1Database, eventIds: string[]): P
  * @returns SSE レスポンス
  */
 export function createSseResponse(db: D1Database, targetBankId: string): Response {
-  let lastEventId: string | undefined
-  let timerId: ReturnType<typeof setInterval> | null = null
+  let lastEventId: string | undefined;
+  let timerId: ReturnType<typeof setInterval> | null = null;
 
   const stream = new ReadableStream({
     async start(controller) {
       // 初回接続通知
-      const connectMsg = `data: ${JSON.stringify({ type: 'CONNECTED', bank_id: targetBankId })}\n\n`
-      controller.enqueue(new TextEncoder().encode(connectMsg))
+      const connectMsg = `data: ${JSON.stringify({ type: "CONNECTED", bank_id: targetBankId })}\n\n`;
+      controller.enqueue(new TextEncoder().encode(connectMsg));
 
       // ポーリングループ（2 秒間隔）
       const poll = async () => {
         try {
-          const events = await getPendingEvents(db, targetBankId, lastEventId)
+          const events = await getPendingEvents(db, targetBankId, lastEventId);
 
           if (events.length > 0) {
             for (const ev of events) {
-              const sseData = formatSseEvent(ev)
-              controller.enqueue(new TextEncoder().encode(sseData))
-              lastEventId = ev.event_id
+              const sseData = formatSseEvent(ev);
+              controller.enqueue(new TextEncoder().encode(sseData));
+              lastEventId = ev.event_id;
             }
 
             // 配信済みマーク
-            await markEventsDelivered(db, events.map(e => e.event_id))
+            await markEventsDelivered(
+              db,
+              events.map((e) => e.event_id)
+            );
           }
         } catch (err) {
-          console.error('[stream] SSE poll error:', err)
+          console.error("[stream] SSE poll error:", err);
           // エラーをクライアントへ通知してもストリームは継続
-          const errMsg = `data: ${JSON.stringify({ type: 'ERROR', message: 'poll failed' })}\n\n`
+          const errMsg = `data: ${JSON.stringify({ type: "ERROR", message: "poll failed" })}\n\n`;
           try {
-            controller.enqueue(new TextEncoder().encode(errMsg))
+            controller.enqueue(new TextEncoder().encode(errMsg));
           } catch {
             // コントローラが既にクローズされている場合は無視
             // ストリーム破棄 → タイマー停止
-            if (timerId) { clearInterval(timerId); timerId = null }
+            if (timerId) {
+              clearInterval(timerId);
+              timerId = null;
+            }
           }
         }
-      }
+      };
 
       // 2 秒ごとのポーリング（Workers のイベントループ内で動作）
-      timerId = setInterval(poll, 2000)
+      timerId = setInterval(poll, 2000);
     },
     cancel() {
       // クライアント切断時にタイマーを停止（リソースリーク＆誤配信済みマーク防止）
-      if (timerId) { clearInterval(timerId); timerId = null }
+      if (timerId) {
+        clearInterval(timerId);
+        timerId = null;
+      }
     },
-  })
+  });
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no',
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
-  })
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -206,14 +230,17 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
  * @returns 削除件数
  */
 export async function pruneDeliveredEvents(db: D1Database): Promise<number> {
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  const result = await db.prepare(`
+  const result = await db
+    .prepare(`
     DELETE FROM EventStream
     WHERE is_delivered = 1 AND created_at < ?
-  `).bind(cutoff).run()
+  `)
+    .bind(cutoff)
+    .run();
 
-  return result.meta.changes ?? 0
+  return result.meta.changes ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -227,11 +254,11 @@ export async function pruneDeliveredEvents(db: D1Database): Promise<number> {
  * @returns SSE フォーマット文字列 (`id: ...\ndata: ...\n\n`)
  */
 function formatSseEvent(ev: EventStreamRow): string {
-  let payload: object
+  let payload: object;
   try {
-    payload = JSON.parse(ev.payload_json) as object
+    payload = JSON.parse(ev.payload_json) as object;
   } catch {
-    payload = { raw: ev.payload_json }
+    payload = { raw: ev.payload_json };
   }
 
   const data = JSON.stringify({
@@ -239,7 +266,7 @@ function formatSseEvent(ev: EventStreamRow): string {
     event_type: ev.event_type,
     created_at: ev.created_at,
     ...payload,
-  })
+  });
 
-  return `id: ${ev.event_id}\ndata: ${data}\n\n`
+  return `id: ${ev.event_id}\ndata: ${data}\n\n`;
 }

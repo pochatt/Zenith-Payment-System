@@ -8,28 +8,28 @@
  * The chain identifier is `txid` if set, otherwise `gtid`. Entries with neither
  * are anchored to the sentinel 'GLOBAL' chain (system-level events).
  */
-import { sha256hex } from '../shared/hmac'
+import { sha256hex } from "../shared/hmac";
 
-export const GENESIS_PREV_HASH = 'GENESIS'
-export const GLOBAL_CHAIN_ID = 'GLOBAL'
-export const CHAIN_ALGORITHM = 'SHA-256 hash-chain v1'
+export const GENESIS_PREV_HASH = "GENESIS";
+export const GLOBAL_CHAIN_ID = "GLOBAL";
+export const CHAIN_ALGORITHM = "SHA-256 hash-chain v1";
 
 export interface ChainableEntry {
-  log_id: string
-  txid: string | null
-  gtid: string | null
-  event_type: string
-  state_from: string | null
-  state_to: string
-  payload_json: string
-  event_seq: number
-  occurred_at: string
-  prev_hash?: string | null
-  entry_hash?: string | null
+  log_id: string;
+  txid: string | null;
+  gtid: string | null;
+  event_type: string;
+  state_from: string | null;
+  state_to: string;
+  payload_json: string;
+  event_seq: number;
+  occurred_at: string;
+  prev_hash?: string | null;
+  entry_hash?: string | null;
 }
 
-export function chainIdOf(entry: Pick<ChainableEntry, 'txid' | 'gtid'>): string {
-  return entry.txid ?? entry.gtid ?? GLOBAL_CHAIN_ID
+export function chainIdOf(entry: Pick<ChainableEntry, "txid" | "gtid">): string {
+  return entry.txid ?? entry.gtid ?? GLOBAL_CHAIN_ID;
 }
 
 /** Deterministic serialization for hashing. Field order is part of the protocol. */
@@ -37,19 +37,19 @@ function canonicalize(entry: ChainableEntry, prevHash: string): string {
   return [
     prevHash,
     entry.log_id,
-    entry.txid ?? '',
-    entry.gtid ?? '',
+    entry.txid ?? "",
+    entry.gtid ?? "",
     entry.event_type,
-    entry.state_from ?? '',
+    entry.state_from ?? "",
     entry.state_to,
     entry.payload_json,
     String(entry.event_seq),
     entry.occurred_at,
-  ].join('|')
+  ].join("|");
 }
 
 export async function computeEntryHash(entry: ChainableEntry, prevHash: string): Promise<string> {
-  return sha256hex(canonicalize(entry, prevHash))
+  return sha256hex(canonicalize(entry, prevHash));
 }
 
 /** Fetch the most recent entry_hash for a chain, or GENESIS if empty. */
@@ -59,29 +59,29 @@ export async function getChainTipHash(db: D1Database, chainId: string): Promise<
       .prepare(
         `SELECT entry_hash FROM FinalityLog
          WHERE txid IS NULL AND gtid IS NULL
-         ORDER BY event_seq DESC LIMIT 1`,
+         ORDER BY event_seq DESC LIMIT 1`
       )
-      .first<{ entry_hash: string | null }>()
-    return row?.entry_hash ?? GENESIS_PREV_HASH
+      .first<{ entry_hash: string | null }>();
+    return row?.entry_hash ?? GENESIS_PREV_HASH;
   }
   const row = await db
     .prepare(
       `SELECT entry_hash FROM FinalityLog
        WHERE (txid = ? OR gtid = ?)
-       ORDER BY event_seq DESC LIMIT 1`,
+       ORDER BY event_seq DESC LIMIT 1`
     )
     .bind(chainId, chainId)
-    .first<{ entry_hash: string | null }>()
-  return row?.entry_hash ?? GENESIS_PREV_HASH
+    .first<{ entry_hash: string | null }>();
+  return row?.entry_hash ?? GENESIS_PREV_HASH;
 }
 
 export interface ChainVerification {
-  chain_id: string
-  valid: boolean
-  entries_checked: number
-  break_at_seq: number | null
-  break_reason: string | null
-  algorithm: string
+  chain_id: string;
+  valid: boolean;
+  entries_checked: number;
+  break_at_seq: number | null;
+  break_reason: string | null;
+  algorithm: string;
 }
 
 /**
@@ -98,7 +98,7 @@ export async function verifyChain(db: D1Database, chainId: string): Promise<Chai
           `SELECT log_id, txid, gtid, event_type, state_from, state_to, payload_json,
                   event_seq, occurred_at, prev_hash, entry_hash
            FROM FinalityLog WHERE txid IS NULL AND gtid IS NULL
-           ORDER BY event_seq ASC`,
+           ORDER BY event_seq ASC`
         )
         .all<ChainableEntry>()
     : db
@@ -106,15 +106,15 @@ export async function verifyChain(db: D1Database, chainId: string): Promise<Chai
           `SELECT log_id, txid, gtid, event_type, state_from, state_to, payload_json,
                   event_seq, occurred_at, prev_hash, entry_hash
            FROM FinalityLog WHERE txid = ? OR gtid = ?
-           ORDER BY event_seq ASC`,
+           ORDER BY event_seq ASC`
         )
         .bind(chainId, chainId)
-        .all<ChainableEntry>())
+        .all<ChainableEntry>());
 
-  let expectedPrev = GENESIS_PREV_HASH
-  let checked = 0
+  let expectedPrev = GENESIS_PREV_HASH;
+  let checked = 0;
   for (const row of rows.results) {
-    checked++
+    checked++;
     // Legacy entries written before migration 0015 have no entry_hash — skip
     // strict verification but treat the chain as "partially verified".
     if (row.entry_hash == null) {
@@ -123,9 +123,9 @@ export async function verifyChain(db: D1Database, chainId: string): Promise<Chai
         valid: false,
         entries_checked: checked,
         break_at_seq: row.event_seq,
-        break_reason: 'LEGACY_UNCHAINED_ENTRY',
+        break_reason: "LEGACY_UNCHAINED_ENTRY",
         algorithm: CHAIN_ALGORITHM,
-      }
+      };
     }
     if ((row.prev_hash ?? GENESIS_PREV_HASH) !== expectedPrev) {
       return {
@@ -133,22 +133,22 @@ export async function verifyChain(db: D1Database, chainId: string): Promise<Chai
         valid: false,
         entries_checked: checked,
         break_at_seq: row.event_seq,
-        break_reason: 'PREV_HASH_MISMATCH',
+        break_reason: "PREV_HASH_MISMATCH",
         algorithm: CHAIN_ALGORITHM,
-      }
+      };
     }
-    const recomputed = await computeEntryHash(row, expectedPrev)
+    const recomputed = await computeEntryHash(row, expectedPrev);
     if (recomputed !== row.entry_hash) {
       return {
         chain_id: chainId,
         valid: false,
         entries_checked: checked,
         break_at_seq: row.event_seq,
-        break_reason: 'ENTRY_HASH_MISMATCH',
+        break_reason: "ENTRY_HASH_MISMATCH",
         algorithm: CHAIN_ALGORITHM,
-      }
+      };
     }
-    expectedPrev = row.entry_hash
+    expectedPrev = row.entry_hash;
   }
   return {
     chain_id: chainId,
@@ -157,5 +157,5 @@ export async function verifyChain(db: D1Database, chainId: string): Promise<Chai
     break_at_seq: null,
     break_reason: null,
     algorithm: CHAIN_ALGORITHM,
-  }
+  };
 }

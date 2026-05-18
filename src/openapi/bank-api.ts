@@ -1395,6 +1395,6 @@ components:
         expires_at: { type: string, format: date-time }
         payee_name: { type: string }
         description: { type: string }
-`
+`;
 
-export default bankApiYaml
+export default bankApiYaml;

@@ -30,22 +30,22 @@ import type {
   FatfR16Data,
   Pacs008Debtor,
   Pacs008Creditor,
-} from '../types'
-import { bicToBankId, bankIdToBic } from './routing'
+} from "../types";
+import { bicToBankId, bankIdToBic } from "./routing";
 
 // ---------------------------------------------------------------------------
 // 定数
 // ---------------------------------------------------------------------------
 
 /** Zengin fixed-length record size (120 bytes per record). */
-const ZENGIN_RECORD_LENGTH = 120
+const ZENGIN_RECORD_LENGTH = 120;
 
 /** Zengin account type code to ISO 20022 account type label mapping. */
 const ZENGIN_ACCOUNT_TYPE_LABEL: Record<string, string> = {
-  '1': 'SAVINGS',   // 普通
-  '2': 'CURRENT',   // 当座
-  '4': 'SAVINGS',   // 貯蓄
-}
+  "1": "SAVINGS", // 普通
+  "2": "CURRENT", // 当座
+  "4": "SAVINGS", // 貯蓄
+};
 
 // ---------------------------------------------------------------------------
 // pacs.008 生成
@@ -61,49 +61,49 @@ const ZENGIN_ACCOUNT_TYPE_LABEL: Record<string, string> = {
  * @returns Populated Pacs008Message
  */
 export function buildPacs008(params: {
-  msgId: string
-  txid: string
-  amount: number
-  currency: string
-  payerBankBic: string
-  payerAccount: string
-  payerName: string
-  payeeBankBic: string
-  payeeAccount: string
-  payeeName: string
-  purpose?: string
-  fatf?: FatfR16Data
-  ediRef?: string
+  msgId: string;
+  txid: string;
+  amount: number;
+  currency: string;
+  payerBankBic: string;
+  payerAccount: string;
+  payerName: string;
+  payeeBankBic: string;
+  payeeAccount: string;
+  payeeName: string;
+  purpose?: string;
+  fatf?: FatfR16Data;
+  ediRef?: string;
 }): Pacs008Message {
-  const now = new Date().toISOString()
+  const now = new Date().toISOString();
 
   const debtor: Pacs008Debtor = {
     name: params.payerName,
     account_id: params.payerAccount,
     bank_id: bicToBankIdLocal(params.payerBankBic) ?? params.payerBankBic,
     bank_bic: params.payerBankBic,
-  }
+  };
 
   const creditor: Pacs008Creditor = {
     name: params.payeeName,
     account_id: params.payeeAccount,
     bank_id: bicToBankIdLocal(params.payeeBankBic) ?? params.payeeBankBic,
     bank_bic: params.payeeBankBic,
-  }
+  };
 
   const msg: Pacs008Message = {
-    message_type: 'pacs.008',
+    message_type: "pacs.008",
     message_id: params.msgId,
     creation_datetime: now,
     number_of_transactions: 1,
-    settlement_method: 'CLRG',
+    settlement_method: "CLRG",
     debtor,
     creditor,
     instructed_amount: { value: params.amount, currency: params.currency },
-  }
+  };
 
   if (params.purpose) {
-    msg.purpose_code = params.purpose
+    msg.purpose_code = params.purpose;
   }
 
   if (params.ediRef || params.txid) {
@@ -112,14 +112,14 @@ export function buildPacs008(params: {
         creditor_ref: params.txid,
         edi_ref: params.ediRef,
       },
-    }
+    };
   }
 
   if (params.fatf) {
-    msg.regulatory_reporting = params.fatf
+    msg.regulatory_reporting = params.fatf;
   }
 
-  return msg
+  return msg;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,28 +135,28 @@ export function buildPacs008(params: {
  * @returns Populated Pacs002Message
  */
 export function buildPacs002(params: {
-  msgId: string
-  originalMsgId: string
-  txid: string
-  status: 'ACCP' | 'RJCT' | 'PDNG'
-  reasonCode?: string
+  msgId: string;
+  originalMsgId: string;
+  txid: string;
+  status: "ACCP" | "RJCT" | "PDNG";
+  reasonCode?: string;
 }): Pacs002Message {
   const msg: Pacs002Message = {
-    message_type: 'pacs.002',
+    message_type: "pacs.002",
     message_id: params.msgId,
     original_message_id: params.originalMsgId,
     transaction_status: params.status,
-  }
+  };
 
   if (params.reasonCode) {
-    msg.reason_code = params.reasonCode
+    msg.reason_code = params.reasonCode;
   }
 
-  if (params.status === 'RJCT' && params.reasonCode) {
-    msg.additional_info = `Transaction ${params.txid} rejected: ${params.reasonCode}`
+  if (params.status === "RJCT" && params.reasonCode) {
+    msg.additional_info = `Transaction ${params.txid} rejected: ${params.reasonCode}`;
   }
 
-  return msg
+  return msg;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,26 +173,26 @@ export function buildPacs002(params: {
  * @returns Populated Acmt023Message
  */
 export function buildAcmt023(params: {
-  msgId: string
-  verificationId: string
-  requestBankBic: string
-  targetBankBic: string
-  targetAccountId: string
-  targetAccountName?: string
+  msgId: string;
+  verificationId: string;
+  requestBankBic: string;
+  targetBankBic: string;
+  targetAccountId: string;
+  targetAccountName?: string;
 }): Acmt023Message {
   const msg: Acmt023Message = {
-    message_type: 'acmt.023',
+    message_type: "acmt.023",
     message_id: params.msgId,
     account_id: params.targetAccountId,
     inquiry_bank_id: bicToBankIdLocal(params.requestBankBic) ?? params.requestBankBic,
     target_bank_id: bicToBankIdLocal(params.targetBankBic) ?? params.targetBankBic,
-  }
+  };
 
   if (params.targetAccountName) {
-    msg.account_holder_name = params.targetAccountName
+    msg.account_holder_name = params.targetAccountName;
   }
 
-  return msg
+  return msg;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,34 +209,34 @@ export function buildAcmt023(params: {
  * @returns Populated Acmt024Message
  */
 export function buildAcmt024(params: {
-  msgId: string
-  originalMsgId: string
-  verificationId: string
-  matchScore: number
-  nameProvided?: string
-  fraudWarning: boolean
+  msgId: string;
+  originalMsgId: string;
+  verificationId: string;
+  matchScore: number;
+  nameProvided?: string;
+  fraudWarning: boolean;
 }): Acmt024Message {
-  let result: 'MTCH' | 'NMTC' | 'NFND'
+  let result: "MTCH" | "NMTC" | "NFND";
   if (params.matchScore >= 80) {
-    result = 'MTCH'
+    result = "MTCH";
   } else if (params.matchScore >= 0) {
-    result = 'NMTC'
+    result = "NMTC";
   } else {
-    result = 'NFND'
+    result = "NFND";
   }
 
   const msg: Acmt024Message = {
-    message_type: 'acmt.024',
+    message_type: "acmt.024",
     original_message_id: params.originalMsgId,
     verification_result: result,
     match_score: params.matchScore,
-  }
+  };
 
   if (params.nameProvided) {
-    msg.account_holder_name = params.nameProvided
+    msg.account_holder_name = params.nameProvided;
   }
 
-  return msg
+  return msg;
 }
 
 // ---------------------------------------------------------------------------
@@ -252,30 +252,38 @@ export function buildAcmt024(params: {
  * @returns Populated Pacs004Message
  */
 export function buildPacs004(params: {
-  msgId: string
-  originalMsgId: string
-  originalTxid: string
-  returnAmount: number
-  currency: string
-  returnReasonCode: string
-  debtorBankId: string
-  debtorAccount: string
-  debtorName: string
-  creditorBankId: string
-  creditorAccount: string
-  creditorName: string
+  msgId: string;
+  originalMsgId: string;
+  originalTxid: string;
+  returnAmount: number;
+  currency: string;
+  returnReasonCode: string;
+  debtorBankId: string;
+  debtorAccount: string;
+  debtorName: string;
+  creditorBankId: string;
+  creditorAccount: string;
+  creditorName: string;
 }): Pacs004Message {
   return {
-    message_type: 'pacs.004',
+    message_type: "pacs.004",
     message_id: params.msgId,
     creation_datetime: new Date().toISOString(),
     original_message_id: params.originalMsgId,
     original_txid: params.originalTxid,
     return_amount: { value: params.returnAmount, currency: params.currency },
     return_reason_code: params.returnReasonCode,
-    debtor: { name: params.debtorName, bank_id: params.debtorBankId, account_id: params.debtorAccount },
-    creditor: { name: params.creditorName, bank_id: params.creditorBankId, account_id: params.creditorAccount },
-  }
+    debtor: {
+      name: params.debtorName,
+      bank_id: params.debtorBankId,
+      account_id: params.debtorAccount,
+    },
+    creditor: {
+      name: params.creditorName,
+      bank_id: params.creditorBankId,
+      account_id: params.creditorAccount,
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -291,18 +299,18 @@ export function buildPacs004(params: {
  * @returns Populated Pacs028Message
  */
 export function buildPacs028(params: {
-  msgId: string
-  originalMsgId: string
-  originalTxid: string
-  inquiryBankId: string
+  msgId: string;
+  originalMsgId: string;
+  originalTxid: string;
+  inquiryBankId: string;
 }): Pacs028Message {
   return {
-    message_type: 'pacs.028',
+    message_type: "pacs.028",
     message_id: params.msgId,
     original_message_id: params.originalMsgId,
     original_txid: params.originalTxid,
     inquiry_bank_id: params.inquiryBankId,
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -319,21 +327,21 @@ export function buildPacs028(params: {
  * @returns Populated Pain013Message
  */
 export function buildPain013(params: {
-  msgId: string
-  rtpId: string
-  payeeBankId: string
-  payeeAccountId: string
-  payeeName: string
-  payerBankId: string
-  amount: number
-  currency: string
-  requestedExecutionDate: string
-  purposeCode?: string
-  remittanceInfo?: string
-  expiresAt: string
+  msgId: string;
+  rtpId: string;
+  payeeBankId: string;
+  payeeAccountId: string;
+  payeeName: string;
+  payerBankId: string;
+  amount: number;
+  currency: string;
+  requestedExecutionDate: string;
+  purposeCode?: string;
+  remittanceInfo?: string;
+  expiresAt: string;
 }): Pain013Message {
   return {
-    message_type: 'pain.013',
+    message_type: "pain.013",
     message_id: params.msgId,
     creation_datetime: new Date().toISOString(),
     rtp_id: params.rtpId,
@@ -346,7 +354,7 @@ export function buildPain013(params: {
     purpose_code: params.purposeCode,
     remittance_info: params.remittanceInfo,
     expires_at: params.expiresAt,
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -363,22 +371,22 @@ export function buildPain013(params: {
  * @returns Populated Pain014Message
  */
 export function buildPain014(params: {
-  msgId: string
-  originalMsgId: string
-  rtpId: string
-  status: 'ACTC' | 'RJCT' | 'PDNG'
-  reasonCode?: string
-  linkedTxid?: string
+  msgId: string;
+  originalMsgId: string;
+  rtpId: string;
+  status: "ACTC" | "RJCT" | "PDNG";
+  reasonCode?: string;
+  linkedTxid?: string;
 }): Pain014Message {
   return {
-    message_type: 'pain.014',
+    message_type: "pain.014",
     message_id: params.msgId,
     original_message_id: params.originalMsgId,
     rtp_id: params.rtpId,
     status: params.status,
     reason_code: params.reasonCode,
     linked_txid: params.linkedTxid,
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -395,44 +403,44 @@ export function buildPain014(params: {
  * @returns Equivalent Pacs008Message
  */
 export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
-  const now = new Date().toISOString()
-  const msgId = `ZG-${record.originator_bank_code}-${Date.now()}`
+  const now = new Date().toISOString();
+  const msgId = `ZG-${record.originator_bank_code}-${Date.now()}`;
 
   // 全銀の口座番号を内部形式に変換
   // 全銀: 4桁金融機関コード + 3桁支店コード + 7桁口座番号
-  const payeeAccountId = `${record.bank_code}${record.account_number.replace(/\s/g, '').padStart(7, '0')}`
-  const payerAccountId = `${record.originator_bank_code}0000000`  // 送金元は別段預金口座
+  const payeeAccountId = `${record.bank_code}${record.account_number.replace(/\s/g, "").padStart(7, "0")}`;
+  const payerAccountId = `${record.originator_bank_code}0000000`; // 送金元は別段預金口座
 
-  const payerBic = bankIdToBicLocal(record.originator_bank_code)
-  const payeeBic = bankIdToBicLocal(record.bank_code)
+  const payerBic = bankIdToBicLocal(record.originator_bank_code);
+  const payeeBic = bankIdToBicLocal(record.bank_code);
 
   const debtor: Pacs008Debtor = {
     name: record.originator_name.trim(),
     account_id: payerAccountId,
     bank_id: record.originator_bank_code,
     bank_bic: payerBic,
-  }
+  };
 
   const creditor: Pacs008Creditor = {
     name: record.beneficiary_name.trim(),
     account_id: payeeAccountId,
     bank_id: record.bank_code,
     bank_bic: payeeBic,
-  }
+  };
 
   return {
-    message_type: 'pacs.008',
+    message_type: "pacs.008",
     message_id: msgId,
     creation_datetime: now,
     number_of_transactions: 1,
-    settlement_method: 'CLRG',
+    settlement_method: "CLRG",
     debtor,
     creditor,
-    instructed_amount: { value: record.amount, currency: 'JPY' },
+    instructed_amount: { value: record.amount, currency: "JPY" },
     remittance_info: {
       unstructured: `ZENGIN/${record.bank_code}/${record.branch_code}/${record.account_type}/${record.account_number}`,
     },
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -452,46 +460,47 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
 export function iso20022ToZengin(msg: Pacs008Message): ZenginFixedRecord {
   // creditor.bank_id から bank_code / branch_code を分解
   // 内部形式: 3桁(or 4桁)bankId が bank_code に相当
-  const payeeBankId = msg.creditor.bank_id
-  const payerBankId = msg.debtor.bank_id
+  const payeeBankId = msg.creditor.bank_id;
+  const payerBankId = msg.debtor.bank_id;
 
   // 口座番号を全銀形式に変換（7桁固定）
   // 内部口座形式: bankCode + 7桁seq → 末尾7桁を口座番号として取る
-  const rawAccountId = msg.creditor.account_id
-  const accountNumber = rawAccountId.length >= 7
-    ? rawAccountId.slice(-7).padStart(7, '0')
-    : rawAccountId.padStart(7, '0')
+  const rawAccountId = msg.creditor.account_id;
+  const accountNumber =
+    rawAccountId.length >= 7
+      ? rawAccountId.slice(-7).padStart(7, "0")
+      : rawAccountId.padStart(7, "0");
 
   // remittance_info の unstructured から支店コード・口座種別を復元（可能な場合）
-  let branchCode = '000'
-  let accountType: '1' | '2' | '4' = '1'
+  let branchCode = "000";
+  let accountType: "1" | "2" | "4" = "1";
 
-  const unstructured = msg.remittance_info?.unstructured ?? ''
-  const zenginParts = unstructured.startsWith('ZENGIN/') ? unstructured.split('/') : []
+  const unstructured = msg.remittance_info?.unstructured ?? "";
+  const zenginParts = unstructured.startsWith("ZENGIN/") ? unstructured.split("/") : [];
   if (zenginParts.length >= 5) {
     // ZENGIN/bank_code/branch_code/account_type/account_number
-    branchCode = zenginParts[2] ?? '000'
-    const parsedType = zenginParts[3]
-    if (parsedType === '1' || parsedType === '2' || parsedType === '4') {
-      accountType = parsedType
+    branchCode = zenginParts[2] ?? "000";
+    const parsedType = zenginParts[3];
+    if (parsedType === "1" || parsedType === "2" || parsedType === "4") {
+      accountType = parsedType;
     }
   }
 
-  const beneficiaryName = padZenginKana(msg.creditor.name, 30)
-  const originatorName  = padZenginKana(msg.debtor.name, 40)
+  const beneficiaryName = padZenginKana(msg.creditor.name, 30);
+  const originatorName = padZenginKana(msg.debtor.name, 40);
 
   return {
-    record_type: '2',
-    bank_code: payeeBankId.slice(0, 4).padStart(4, '0'),
-    branch_code: branchCode.padStart(3, '0'),
+    record_type: "2",
+    bank_code: payeeBankId.slice(0, 4).padStart(4, "0"),
+    branch_code: branchCode.padStart(3, "0"),
     account_type: accountType,
     account_number: accountNumber,
     beneficiary_name: beneficiaryName,
     amount: msg.instructed_amount.value,
     originator_name: originatorName,
-    originator_bank_code: payerBankId.slice(0, 4).padStart(4, '0'),
-    originator_branch_code: '000',
-  }
+    originator_bank_code: payerBankId.slice(0, 4).padStart(4, "0"),
+    originator_branch_code: "000",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -524,23 +533,22 @@ export function parseZenginRecord(line: string): ZenginFixedRecord {
   if (line.length !== ZENGIN_RECORD_LENGTH) {
     throw new Error(
       `Invalid Zengin record length: expected ${ZENGIN_RECORD_LENGTH}, got ${line.length}`
-    )
+    );
   }
 
-  const recordType = line.substring(0, 1) as '1' | '2' | '8' | '9'
-  const bankCode    = line.substring(1, 5)
-  const branchCode  = line.substring(5, 8)
-  const rawAccType  = line.substring(8, 9)
-  const accountType = (rawAccType === '1' || rawAccType === '2' || rawAccType === '4')
-    ? rawAccType
-    : '1' as const
-  const accountNumber   = line.substring(9, 16).trim()
-  const beneficiaryName = line.substring(16, 46).trimEnd()
-  const amountStr       = line.substring(46, 56)
-  const amount          = parseInt(amountStr, 10) || 0
-  const originatorName  = line.substring(56, 96).trimEnd()
-  const origBankCode    = line.substring(96, 100)
-  const origBranchCode  = line.substring(100, 103)
+  const recordType = line.substring(0, 1) as "1" | "2" | "8" | "9";
+  const bankCode = line.substring(1, 5);
+  const branchCode = line.substring(5, 8);
+  const rawAccType = line.substring(8, 9);
+  const accountType =
+    rawAccType === "1" || rawAccType === "2" || rawAccType === "4" ? rawAccType : ("1" as const);
+  const accountNumber = line.substring(9, 16).trim();
+  const beneficiaryName = line.substring(16, 46).trimEnd();
+  const amountStr = line.substring(46, 56);
+  const amount = parseInt(amountStr, 10) || 0;
+  const originatorName = line.substring(56, 96).trimEnd();
+  const origBankCode = line.substring(96, 100);
+  const origBranchCode = line.substring(100, 103);
 
   return {
     record_type: recordType,
@@ -553,7 +561,7 @@ export function parseZenginRecord(line: string): ZenginFixedRecord {
     originator_name: originatorName,
     originator_bank_code: origBankCode,
     originator_branch_code: origBranchCode,
-  }
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -569,28 +577,28 @@ export function parseZenginRecord(line: string): ZenginFixedRecord {
  */
 export function formatZenginRecord(record: ZenginFixedRecord): string {
   const parts: string[] = [
-    record.record_type,                                           //  1文字
-    record.bank_code.padStart(4, '0').substring(0, 4),           //  4文字
-    record.branch_code.padStart(3, '0').substring(0, 3),         //  3文字
-    record.account_type,                                          //  1文字
-    record.account_number.padStart(7, '0').substring(0, 7),      //  7文字
-    padZenginKana(record.beneficiary_name, 30),                   // 30文字
-    String(record.amount).padStart(10, '0').substring(0, 10),    // 10文字
-    padZenginKana(record.originator_name, 40),                    // 40文字
-    record.originator_bank_code.padStart(4, '0').substring(0, 4),//  4文字
-    record.originator_branch_code.padStart(3, '0').substring(0, 3), // 3文字
-    ''.padEnd(17, ' '),                                           // 17文字（予備）
-  ]
+    record.record_type, //  1文字
+    record.bank_code.padStart(4, "0").substring(0, 4), //  4文字
+    record.branch_code.padStart(3, "0").substring(0, 3), //  3文字
+    record.account_type, //  1文字
+    record.account_number.padStart(7, "0").substring(0, 7), //  7文字
+    padZenginKana(record.beneficiary_name, 30), // 30文字
+    String(record.amount).padStart(10, "0").substring(0, 10), // 10文字
+    padZenginKana(record.originator_name, 40), // 40文字
+    record.originator_bank_code.padStart(4, "0").substring(0, 4), //  4文字
+    record.originator_branch_code.padStart(3, "0").substring(0, 3), // 3文字
+    "".padEnd(17, " "), // 17文字（予備）
+  ];
 
-  const result = parts.join('')
+  const result = parts.join("");
 
   if (result.length !== ZENGIN_RECORD_LENGTH) {
     throw new Error(
       `Zengin record format error: expected ${ZENGIN_RECORD_LENGTH} chars, got ${result.length}`
-    )
+    );
   }
 
-  return result
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -604,8 +612,8 @@ export function formatZenginRecord(record: ZenginFixedRecord): string {
  * accepts any characters and only enforces length.
  */
 function padZenginKana(name: string, length: number): string {
-  const truncated = name.substring(0, length)
-  return truncated.padEnd(length, ' ')
+  const truncated = name.substring(0, length);
+  return truncated.padEnd(length, " ");
 }
 
 /**
@@ -614,10 +622,10 @@ function padZenginKana(name: string, length: number): string {
  * Previously this was a local 5-entry subset, which caused incorrect fallback
  * for bank IDs > 005.
  */
-const bicToBankIdLocal = bicToBankId
+const bicToBankIdLocal = bicToBankId;
 
 /**
  * bank_id to BIC lookup.
  * Delegates to the canonical mapping in routing.ts.
  */
-const bankIdToBicLocal = bankIdToBic
+const bankIdToBicLocal = bankIdToBic;
