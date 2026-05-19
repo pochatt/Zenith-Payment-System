@@ -143,6 +143,7 @@ tailwind.config = {
     <a href="/bank-app" target="_blank" class="block text-xs text-gray-400 hover:text-brand-600 px-2 py-1"><i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i> 銀行アプリ</a>
     <a href="/theater"  target="_blank" class="block text-xs text-gray-400 hover:text-brand-600 px-2 py-1"><i class="fa-solid fa-masks-theater text-[10px]"></i> シアター（取引再生）</a>
     <a href="/sky"      target="_blank" class="block text-xs text-gray-400 hover:text-brand-600 px-2 py-1"><i class="fa-solid fa-moon text-[10px]"></i> Sky（決済の鼓動）</a>
+    <a href="/postcard" target="_blank" class="block text-xs text-gray-400 hover:text-brand-600 px-2 py-1"><i class="fa-solid fa-mug-hot text-[10px]"></i> 金継ぎ（取引の一枚）</a>
   </div>
   <div class="px-5 py-3 border-t border-gray-100 text-[10px] text-gray-400">
     <div id="sidebarStatus">System Ready</div>
@@ -185,7 +186,10 @@ tailwind.config = {
       <div id="txModalTimeline" class="space-y-2"></div>
     </div>
     <div class="px-6 py-3 border-t border-gray-100 flex justify-between items-center gap-2">
-      <a id="txModalTheaterLink" href="#" target="_blank" class="text-sm px-4 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-700 transition-colors"><i class="fa-solid fa-masks-theater mr-1"></i>シアターで観劇</a>
+      <div class="flex gap-2">
+        <a id="txModalTheaterLink" href="#" target="_blank" class="text-sm px-4 py-2 rounded-lg bg-brand-600 text-white hover:bg-brand-700 transition-colors"><i class="fa-solid fa-masks-theater mr-1"></i>シアターで観劇</a>
+        <a id="txModalPostcardLink" href="#" target="_blank" class="text-sm px-4 py-2 rounded-lg border border-amber-500 text-amber-700 hover:bg-amber-50 transition-colors"><i class="fa-solid fa-mug-hot mr-1"></i>金継ぎを見る</a>
+      </div>
       <button onclick="closeTxModal()" class="text-sm px-4 py-2 rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors">閉じる</button>
     </div>
   </div>
@@ -2097,6 +2101,8 @@ async function showTxTimeline(txid) {
   timeline.innerHTML = '<div class="text-gray-400 text-sm py-4 text-center">イベントを取得中...</div>';
   const theaterLink = document.getElementById('txModalTheaterLink');
   if (theaterLink) theaterLink.href = `/theater?txid=${encodeURIComponent(txid)}`;
+  const postcardLink = document.getElementById('txModalPostcardLink');
+  if (postcardLink) postcardLink.href = `/postcard?txid=${encodeURIComponent(txid)}`;
   modal.classList.remove('hidden');
 
   try {
