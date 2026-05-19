@@ -9,50 +9,53 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;600;700&family=Noto+Sans+JP:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  html, body { background: #1c160c; color: #e8ddc6; min-height: 100%; }
+  /* Aligned with the indigo-night palette of /theater and /sky, with gold as
+     the one warm accent — same accent the SVG postcard uses for its seams. */
+  html, body { background: #050c1d; color: #cfd9ee; min-height: 100%; }
   body {
     background:
-      radial-gradient(ellipse at top, #2a200f 0%, #14100a 60%, #0a0805 100%);
-    font-family: 'Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif;
+      radial-gradient(ellipse at top, #15264a 0%, #0a1730 55%, #03081a 100%);
+    font-family: 'IBM Plex Sans','Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif;
   }
   .serif { font-family: 'Noto Serif JP','Hiragino Mincho ProN','Yu Mincho',serif; }
-  .mono { font-family: 'SF Mono','Consolas','Courier New',monospace; }
+  .mono { font-family: 'IBM Plex Mono','SF Mono','Consolas','Courier New',monospace; }
 
   /* Card frame */
   .frame {
-    background: rgba(35,28,16,.65);
-    border: 1px solid rgba(212,160,86,.35);
+    background: rgba(10,23,48,.55);
+    border: 1px solid rgba(140,180,255,.22);
     border-radius: 12px;
     backdrop-filter: blur(6px);
     box-shadow: 0 20px 60px rgba(0,0,0,.55);
   }
   .panel {
-    background: rgba(20,16,10,.55);
-    border: 1px solid rgba(212,160,86,.18);
+    background: rgba(8,16,36,.55);
+    border: 1px solid rgba(140,180,255,.15);
     border-radius: 10px;
   }
 
   .btn {
-    background: rgba(60,42,18,.55);
-    border: 1px solid rgba(212,160,86,.35);
-    color: #f0e3c4;
+    background: rgba(30,50,90,.55);
+    border: 1px solid rgba(140,180,255,.25);
+    color: #dde7ff;
     padding: 6px 12px;
     border-radius: 8px;
     font-size: 12px;
     transition: all .15s;
   }
-  .btn:hover { background: rgba(80,56,24,.85); border-color: rgba(245,212,136,.6); }
+  .btn:hover { background: rgba(50,80,130,.85); border-color: rgba(180,210,255,.5); }
   .btn.primary {
-    background: linear-gradient(135deg, #a87434, #d4a056);
-    color: #1a1208;
+    background: linear-gradient(135deg, #1d4ea8, #0b66cc);
+    color: #f4f8ff;
+    border-color: rgba(180,210,255,.45);
     font-weight: 600;
   }
-  .btn.primary:hover { background: linear-gradient(135deg, #b88440, #e5b066); }
+  .btn.primary:hover { background: linear-gradient(135deg, #225ec3, #0d77ee); }
 
   .chip {
     display:inline-block; padding:2px 9px; border-radius:999px;
     font-size:11px; letter-spacing:.05em;
-    border:1px solid rgba(212,160,86,.4); color:#f5d488;
+    border:1px solid rgba(140,180,255,.35); color:#cfd9ee;
   }
   .chip-state-OK    { background: rgba(120,255,180,.10); color:#9ff5bf; border-color: rgba(120,255,180,.4);}
   .chip-state-WATCH { background: rgba(255,220,140,.10); color:#ffe09a; border-color: rgba(255,220,140,.4);}
@@ -63,31 +66,34 @@
   .seam-dot { width:6px; height:6px; border-radius:50%; background: linear-gradient(135deg,#f5d488,#a87434); box-shadow: 0 0 8px rgba(212,160,86,.6); }
 
   input[type=text] {
-    background: rgba(20,16,10,.7);
-    border: 1px solid rgba(212,160,86,.3);
-    color: #f0e3c4;
+    background: rgba(8,16,36,.7);
+    border: 1px solid rgba(140,180,255,.25);
+    color: #e8efff;
     padding: 6px 10px;
     border-radius: 8px;
-    font-family: 'SF Mono','Consolas',monospace;
+    font-family: 'IBM Plex Mono','SF Mono','Consolas',monospace;
     font-size: 12px;
     width: 100%;
   }
-  input[type=text]:focus { outline: none; border-color: rgba(245,212,136,.7); }
+  input[type=text]:focus { outline: none; border-color: rgba(180,210,255,.7); }
 
-  .poem-line { font-size: 18px; letter-spacing: 4px; }
+  .poem-line { font-size: 18px; letter-spacing: 4px; color: #f0e8d8; }
   .poem-line + .poem-line { margin-top: 6px; }
 
+  /* Subtle gold rule used as a section divider / accent. */
+  .rule-gold { height: 1px; background: linear-gradient(90deg, transparent, rgba(212,160,86,.45), transparent); }
+
   ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-thumb { background: rgba(212,160,86,.3); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: rgba(140,180,255,.25); border-radius: 4px; }
 </style>
 </head>
 <body class="min-h-screen">
 
-<header class="px-6 py-4 flex items-center justify-between border-b border-yellow-900/40">
+<header class="px-6 py-4 flex items-center justify-between border-b border-blue-900/40">
   <div>
-    <div class="text-xs tracking-[0.4em] text-amber-200/60 serif">ZENITH</div>
-    <h1 class="serif text-2xl text-amber-100 mt-0.5">金継ぎ Kintsugi Postcard</h1>
-    <div class="text-xs text-amber-200/50 mt-1">取引の生涯を、ひびと釉薬で一枚に。</div>
+    <div class="text-xs tracking-[0.4em] text-amber-200/70">ZENITH · KINTSUGI</div>
+    <h1 class="text-2xl text-blue-50 mt-0.5 font-semibold">金継ぎ<span class="text-base text-amber-200/60 ml-3">取引の一生を、ひと枚に</span></h1>
+    <div class="text-xs text-blue-200/50 mt-1">器の形は Lane、金の継ぎ目は障害の証跡、印は検証の結果。</div>
   </div>
   <nav class="flex gap-2 text-xs">
     <a href="/" class="btn">Dashboard</a>
