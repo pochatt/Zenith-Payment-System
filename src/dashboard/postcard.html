@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Zenith Kintsugi — 決済の金継ぎ</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;600;700&family=Noto+Sans+JP:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Aligned with the indigo-night palette of /theater and /sky, with gold as
+     the one warm accent — same accent the SVG postcard uses for its seams. */
+  html, body { background: #050c1d; color: #cfd9ee; min-height: 100%; }
+  body {
+    background:
+      radial-gradient(ellipse at top, #15264a 0%, #0a1730 55%, #03081a 100%);
+    font-family: 'IBM Plex Sans','Noto Sans JP','Hiragino Sans','Yu Gothic',sans-serif;
+  }
+  .serif { font-family: 'Noto Serif JP','Hiragino Mincho ProN','Yu Mincho',serif; }
+  .mono { font-family: 'IBM Plex Mono','SF Mono','Consolas','Courier New',monospace; }
+
+  /* Card frame */
+  .frame {
+    background: rgba(10,23,48,.55);
+    border: 1px solid rgba(140,180,255,.22);
+    border-radius: 12px;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 20px 60px rgba(0,0,0,.55);
+  }
+  .panel {
+    background: rgba(8,16,36,.55);
+    border: 1px solid rgba(140,180,255,.15);
+    border-radius: 10px;
+  }
+
+  .btn {
+    background: rgba(30,50,90,.55);
+    border: 1px solid rgba(140,180,255,.25);
+    color: #dde7ff;
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    transition: all .15s;
+  }
+  .btn:hover { background: rgba(50,80,130,.85); border-color: rgba(180,210,255,.5); }
+  .btn.primary {
+    background: linear-gradient(135deg, #1d4ea8, #0b66cc);
+    color: #f4f8ff;
+    border-color: rgba(180,210,255,.45);
+    font-weight: 600;
+  }
+  .btn.primary:hover { background: linear-gradient(135deg, #225ec3, #0d77ee); }
+
+  .chip {
+    display:inline-block; padding:2px 9px; border-radius:999px;
+    font-size:11px; letter-spacing:.05em;
+    border:1px solid rgba(140,180,255,.35); color:#cfd9ee;
+  }
+  .chip-state-OK    { background: rgba(120,255,180,.10); color:#9ff5bf; border-color: rgba(120,255,180,.4);}
+  .chip-state-WATCH { background: rgba(255,220,140,.10); color:#ffe09a; border-color: rgba(255,220,140,.4);}
+  .chip-state-STUCK { background: rgba(255,140,140,.10); color:#ffaaaa; border-color: rgba(255,140,140,.5);}
+  .chip-state-TERM  { background: rgba(160,180,220,.10); color:#cdd9ee; border-color: rgba(160,180,220,.4);}
+
+  .seam-badge { display:flex; align-items:center; gap:6px; }
+  .seam-dot { width:6px; height:6px; border-radius:50%; background: linear-gradient(135deg,#f5d488,#a87434); box-shadow: 0 0 8px rgba(212,160,86,.6); }
+
+  input[type=text] {
+    background: rgba(8,16,36,.7);
+    border: 1px solid rgba(140,180,255,.25);
+    color: #e8efff;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-family: 'IBM Plex Mono','SF Mono','Consolas',monospace;
+    font-size: 12px;
+    width: 100%;
+  }
+  input[type=text]:focus { outline: none; border-color: rgba(180,210,255,.7); }
+
+  .poem-line { font-size: 18px; letter-spacing: 4px; color: #f0e8d8; }
+  .poem-line + .poem-line { margin-top: 6px; }
+
+  /* Subtle gold rule used as a section divider / accent. */
+  .rule-gold { height: 1px; background: linear-gradient(90deg, transparent, rgba(212,160,86,.45), transparent); }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: rgba(140,180,255,.25); border-radius: 4px; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<header class="px-6 py-4 flex items-center justify-between border-b border-blue-900/40">
+  <div>
+    <div class="text-xs tracking-[0.4em] text-amber-200/70">ZENITH · KINTSUGI</div>
+    <h1 class="text-2xl text-blue-50 mt-0.5 font-semibold">金継ぎ<span class="text-base text-amber-200/60 ml-3">取引の一生を、ひと枚に</span></h1>
+    <div class="text-xs text-blue-200/50 mt-1">器の形は Lane、金の継ぎ目は障害の証跡、印は検証の結果。</div>
+  </div>
+  <nav class="flex gap-2 text-xs">
+    <a href="/" class="btn">Dashboard</a>
+    <a href="/theater" class="btn">Theater</a>
+    <a href="/sky" class="btn">Sky</a>
+    <a href="/console" class="btn">Console</a>
+  </nav>
+</header>
+
+<main class="max-w-6xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-[480px_1fr] gap-8 items-start">
+  <!-- Postcard -->
+  <section class="frame p-6">
+    <div id="postcard-mount" class="aspect-[480/680] flex items-center justify-center">
+      <div class="text-amber-200/40 text-sm serif">取引IDを入力してください</div>
+    </div>
+    <div class="mt-4 flex gap-2 justify-center">
+      <a id="dl-svg" class="btn" download>SVG をダウンロード</a>
+      <button id="copy-link" class="btn">リンクをコピー</button>
+    </div>
+  </section>
+
+  <!-- Side panel -->
+  <section class="space-y-4">
+    <div class="panel p-4">
+      <label class="text-xs text-amber-200/60 block mb-2">取引ID（TX-...）</label>
+      <div class="flex gap-2">
+        <input id="txid" type="text" placeholder="TX-EXAMPLE-001" />
+        <button id="render-btn" class="btn primary">描く</button>
+        <button id="random-btn" class="btn" title="保存されている取引から1件選ぶ">任せる</button>
+      </div>
+      <div id="hint" class="text-xs text-amber-200/40 mt-2 leading-relaxed">
+        Lane に応じて器の形が、ひびの数は <span class="seam-dot inline-block align-middle"></span> 障害イベント数に対応します。<br>
+        封 = チェーン検証済 ／ 待 = 進行中 ／ 破 = チェーン破損。
+      </div>
+    </div>
+
+    <div id="meta-panel" class="panel p-4 hidden">
+      <div class="flex items-center justify-between mb-3">
+        <div class="serif text-lg text-amber-100" id="meta-lane">—</div>
+        <div class="chip" id="meta-state">—</div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 text-sm">
+        <div>
+          <div class="text-xs text-amber-200/50">金額</div>
+          <div class="mt-0.5" id="meta-amount">—</div>
+        </div>
+        <div>
+          <div class="text-xs text-amber-200/50">器</div>
+          <div class="mt-0.5" id="meta-shape">—</div>
+        </div>
+        <div>
+          <div class="text-xs text-amber-200/50">金継ぎ（ひび）</div>
+          <div class="mt-0.5 seam-badge"><span class="seam-dot"></span><span id="meta-seams">0</span> 本</div>
+        </div>
+        <div>
+          <div class="text-xs text-amber-200/50">封印</div>
+          <div class="mt-0.5" id="meta-seal">—</div>
+        </div>
+      </div>
+
+      <div class="mt-4 pt-3 border-t border-yellow-900/40">
+        <div class="text-xs text-amber-200/50 mb-2 serif">三行詩</div>
+        <div class="serif text-amber-100" id="poem"></div>
+      </div>
+
+      <div class="mt-4 pt-3 border-t border-yellow-900/40">
+        <div class="text-xs text-amber-200/50 mb-2">パレット</div>
+        <div class="flex gap-2 items-center">
+          <span id="palette-1" class="inline-block w-8 h-8 rounded-md border border-amber-900/40"></span>
+          <span id="palette-2" class="inline-block w-8 h-8 rounded-md border border-amber-900/40"></span>
+          <span class="mono text-xs text-amber-200/50" id="palette-text">—</span>
+        </div>
+      </div>
+
+      <div class="mt-4 pt-3 border-t border-yellow-900/40">
+        <div class="text-xs text-amber-200/50 mb-1">取引ID</div>
+        <div class="mono text-xs text-amber-100 break-all" id="meta-txid">—</div>
+        <div class="mt-3 flex gap-2">
+          <a id="link-explain" class="btn" target="_blank">/explain</a>
+          <a id="link-story" class="btn" target="_blank">/story</a>
+        </div>
+      </div>
+    </div>
+
+    <div id="err" class="panel p-4 hidden text-rose-300 text-sm"></div>
+  </section>
+</main>
+
+<footer class="px-6 py-6 text-center text-xs text-amber-200/30 serif">
+  生成は決定論的：同じ取引IDからは常に同じ一枚が描かれます。
+</footer>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const mount = $("postcard-mount");
+  const errBox = $("err");
+  const metaPanel = $("meta-panel");
+
+  function setError(msg) {
+    errBox.textContent = msg;
+    errBox.classList.remove("hidden");
+  }
+  function clearError() {
+    errBox.classList.add("hidden");
+    errBox.textContent = "";
+  }
+
+  function shapeLabel(s) {
+    return ({
+      tumbler: "タンブラー",
+      teabowl: "茶碗",
+      jar: "壺",
+      ringed_jar: "帯付き壺",
+      twin_cups: "双盃",
+      cone: "漏斗",
+      wide_jar: "広口大壺",
+      basin: "盤",
+    })[s] || s;
+  }
+  function sealLabel(s) {
+    return ({ VERIFIED: "封 — チェーン検証済", BROKEN: "破 — チェーン破損", PENDING: "待 — 進行中" })[s] || s;
+  }
+
+  function classifyHealth(state) {
+    if (state === "SETTLED") return "TERM";
+    if (state === "CANCELLED" || state === "FAILED_EXECUTION" || state === "FAILED") return "TERM";
+    if (state === "SUSPENDED") return "STUCK";
+    return "OK";
+  }
+
+  async function loadCard(txid) {
+    clearError();
+    if (!txid) return;
+    try {
+      const [svgResp, jsonResp] = await Promise.all([
+        fetch(`/api/transactions/${encodeURIComponent(txid)}/postcard.svg`),
+        fetch(`/api/transactions/${encodeURIComponent(txid)}/postcard`),
+      ]);
+      if (!svgResp.ok || !jsonResp.ok) {
+        const body = await jsonResp.json().catch(() => ({}));
+        throw new Error(body?.error?.message || `取引が見つかりません: ${txid}`);
+      }
+      const svg = await svgResp.text();
+      const data = await jsonResp.json();
+
+      mount.innerHTML = svg;
+      const svgEl = mount.querySelector("svg");
+      if (svgEl) {
+        svgEl.style.width = "100%";
+        svgEl.style.height = "auto";
+        svgEl.style.borderRadius = "6px";
+        svgEl.style.boxShadow = "0 10px 30px rgba(0,0,0,.5)";
+      }
+
+      $("meta-lane").textContent = data.motif.lane + " ／ " + (data.caption.state_jp || data.motif.state);
+      const cls = classifyHealth(data.motif.state);
+      const stateEl = $("meta-state");
+      stateEl.textContent = data.caption.state_jp || data.motif.state;
+      stateEl.className = "chip chip-state-" + cls;
+
+      $("meta-amount").textContent = data.caption.amount_label;
+      $("meta-shape").textContent = shapeLabel(data.motif.vessel_shape);
+      $("meta-seams").textContent = String(data.motif.seams);
+      $("meta-seal").textContent = sealLabel(data.motif.seal_status);
+      $("meta-txid").textContent = txid;
+
+      $("poem").innerHTML = data.poem.map((l) => `<div class="poem-line">${l}</div>`).join("");
+
+      $("palette-1").style.background = `hsl(${data.motif.hue_base} 55% 58%)`;
+      $("palette-2").style.background = `hsl(${data.motif.hue_accent} 60% 42%)`;
+      $("palette-text").textContent = `hue ${data.motif.hue_base}° / ${data.motif.hue_accent}°`;
+
+      $("dl-svg").href = `/api/transactions/${encodeURIComponent(txid)}/postcard.svg`;
+      $("dl-svg").setAttribute("download", `${txid}.svg`);
+      $("link-explain").href = `/api/transactions/${encodeURIComponent(txid)}/explain`;
+      $("link-story").href = `/api/transactions/${encodeURIComponent(txid)}/story`;
+
+      metaPanel.classList.remove("hidden");
+
+      const params = new URLSearchParams(location.search);
+      params.set("txid", txid);
+      history.replaceState(null, "", `${location.pathname}?${params.toString()}`);
+    } catch (e) {
+      metaPanel.classList.add("hidden");
+      mount.innerHTML = `<div class="text-rose-300/80 text-sm serif">${e.message}</div>`;
+      setError(e.message);
+    }
+  }
+
+  async function pickRandom() {
+    try {
+      const r = await fetch("/api/transactions?limit=20");
+      if (!r.ok) throw new Error("一覧取得に失敗");
+      const list = await r.json();
+      const rows = list.items || list.transactions || list;
+      if (!Array.isArray(rows) || rows.length === 0) throw new Error("取引がまだありません");
+      const pick = rows[Math.floor(Math.random() * rows.length)];
+      const id = pick.txid || pick.id || pick;
+      $("txid").value = id;
+      loadCard(id);
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  }
+
+  $("render-btn").addEventListener("click", () => loadCard($("txid").value.trim()));
+  $("txid").addEventListener("keydown", (e) => { if (e.key === "Enter") loadCard($("txid").value.trim()); });
+  $("random-btn").addEventListener("click", pickRandom);
+  $("copy-link").addEventListener("click", async () => {
+    await navigator.clipboard.writeText(location.href);
+    const orig = $("copy-link").textContent;
+    $("copy-link").textContent = "コピー済";
+    setTimeout(() => { $("copy-link").textContent = orig; }, 1200);
+  });
+
+  // Boot from ?txid=…
+  const initial = new URLSearchParams(location.search).get("txid");
+  if (initial) {
+    $("txid").value = initial;
+    loadCard(initial);
+  }
+</script>
+</body>
+</html>

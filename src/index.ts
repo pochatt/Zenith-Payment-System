@@ -120,6 +120,7 @@ import { getTxEvents, getRecentEvents, getGtidEvents } from "./zc/trace";
 import { verifyChain } from "./zc/finality_chain";
 import { explainTransaction } from "./zc/explain";
 import { narrateTransaction } from "./zc/story";
+import { renderPostcard } from "./zc/postcard";
 
 // DNS management
 import { kickDns, holdDns, settleDns, getBojPositions } from "./zc/dns";
@@ -156,6 +157,7 @@ import consoleHtml from "./dashboard/console.html";
 import bankAppHtml from "./dashboard/bank-app.html";
 import theaterHtml from "./dashboard/theater.html";
 import skyHtml from "./dashboard/sky.html";
+import postcardHtml from "./dashboard/postcard.html";
 
 // OpenAPI YAML
 import zcApiYaml from "./openapi/zc-api";
@@ -236,6 +238,9 @@ export default {
       }
       if (path === "/sky") {
         return new Response(skyHtml, { headers: HTML_HEADERS_INIT });
+      }
+      if (path === "/postcard") {
+        return new Response(postcardHtml, { headers: HTML_HEADERS_INIT });
       }
 
       // -----------------------------------------------------------------------
@@ -479,6 +484,30 @@ async function handleZcApi(
     const result = await narrateTransaction(env.DB, txStoryMatch[1]!);
     if (!result) return jsonError(404, "NOT_FOUND", `txid ${txStoryMatch[1]} not found`);
     return json(200, result);
+  }
+
+  // GET /api/transactions/:txid/postcard.svg  生成された金継ぎ風 SVG（画像）
+  const txPostcardSvgMatch = path.match(/^\/api\/transactions\/([^/]+)\/postcard\.svg$/);
+  if (method === "GET" && txPostcardSvgMatch) {
+    const exp = await explainTransaction(env.DB, txPostcardSvgMatch[1]!);
+    if (!exp) return jsonError(404, "NOT_FOUND", `txid ${txPostcardSvgMatch[1]} not found`);
+    const card = renderPostcard(exp);
+    return new Response(card.svg, {
+      status: 200,
+      headers: {
+        "content-type": "image/svg+xml; charset=utf-8",
+        "cache-control": "public, max-age=60",
+      },
+    });
+  }
+
+  // GET /api/transactions/:txid/postcard  SVG + 三行詩 + モチーフのメタ
+  const txPostcardMatch = path.match(/^\/api\/transactions\/([^/]+)\/postcard$/);
+  if (method === "GET" && txPostcardMatch) {
+    const exp = await explainTransaction(env.DB, txPostcardMatch[1]!);
+    if (!exp) return jsonError(404, "NOT_FOUND", `txid ${txPostcardMatch[1]} not found`);
+    const card = renderPostcard(exp);
+    return json(200, card);
   }
 
   // GET /api/transactions/:txid/verify  FinalityLog ハッシュチェーン検証
