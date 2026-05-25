@@ -67,6 +67,7 @@ import {
   handleGetHtlc,
   handleGetDnsStatus,
   handleGetDnsPosition,
+  handleGetDnsNettingPlan,
   handleGetCase,
   handleListTransactions,
   handleListGtids,
@@ -610,6 +611,11 @@ async function handleZcApi(
   // GET /api/dns/:business_date/position
   const dnsPosMatch = path.match(/^\/api\/dns\/([^/]+)\/position$/);
   if (method === "GET" && dnsPosMatch) return handleGetDnsPosition(dnsPosMatch[1]!, env);
+
+  // GET /api/dns/:business_date/netting-plan — multilateral netting optimizer (analysis-only)
+  const dnsNettingMatch = path.match(/^\/api\/dns\/([^/]+)\/netting-plan$/);
+  if (method === "GET" && dnsNettingMatch)
+    return handleGetDnsNettingPlan(dnsNettingMatch[1]!, env);
 
   // GET /api/boj/positions — 各参加行の日銀預け金（BOJ）残高照会（公開API）
   // 報告書「論点7: 資金清算・決済のあり方」—プレファンドRTGS方式の残高監視

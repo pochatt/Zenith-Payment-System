@@ -16,6 +16,7 @@ import { nowISO } from "../types";
 import { deserializeProof } from "../shared/proof";
 import { json, jsonError } from "./ingress";
 import { getDnsStatus, getDnsNetPositions } from "./dns";
+import { loadObligationsForDate, computeNettingPlan } from "./netting";
 
 // ---------------------------------------------------------------------------
 // GET /api/transactions/:txid
@@ -182,6 +183,18 @@ export async function handleGetDnsStatus(businessDate: string, env: Env): Promis
 export async function handleGetDnsPosition(businessDate: string, env: Env): Promise<Response> {
   const positions = await getDnsNetPositions(businessDate, env.DB);
   return json(200, { business_date: businessDate, positions });
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/dns/:business_date/netting-plan
+// ---------------------------------------------------------------------------
+export async function handleGetDnsNettingPlan(
+  businessDate: string,
+  env: Env
+): Promise<Response> {
+  const obligations = await loadObligationsForDate(businessDate, env.DB);
+  const plan = computeNettingPlan(obligations);
+  return json(200, { business_date: businessDate, ...plan });
 }
 
 // ---------------------------------------------------------------------------
