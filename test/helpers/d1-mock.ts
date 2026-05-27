@@ -141,6 +141,7 @@ const SCHEMA_MIGRATIONS = [
   "0021_finality_seq_counter.sql",
   "0022_fix_dns_cycles_cleanup.sql",
   "0023_fix_dns_net_positions_fk.sql",
+  "0024_entity_state_log.sql",
 ];
 
 /**

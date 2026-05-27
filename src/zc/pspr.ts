@@ -6,6 +6,10 @@
 import type { PsprRegistryRow } from "../types";
 import { nowISO } from "../types";
 import { sha256hex } from "../shared/hmac";
+import {
+  buildEntityStateLogConditionalInsert,
+  transitionEntityWithLog,
+} from "../shared/entity_state_log";
 
 /**
  * PSPR 登録（POST /api/pspr/register）
@@ -20,17 +24,26 @@ export async function registerPspr(
   const now = nowISO();
   const digest = await sha256hex(`${psprRef}:${payeeBankId}:${accountHash}:${expiresAt}`);
 
-  const result = await db
-    .prepare(
-      `INSERT OR IGNORE INTO PsprRegistry
+  const results = await db.batch([
+    db
+      .prepare(
+        `INSERT OR IGNORE INTO PsprRegistry
      (pspr_ref, payee_bank_id, account_hash, capability_state, digest, expires_at, created_at)
      VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?)`
-    )
-    .bind(psprRef, payeeBankId, accountHash, digest, expiresAt, now)
-    .run();
+      )
+      .bind(psprRef, payeeBankId, accountHash, digest, expiresAt, now),
+    buildEntityStateLogConditionalInsert(db, {
+      entityType: "PSPR",
+      entityId: psprRef,
+      eventType: "PsprRegistered",
+      stateFrom: null,
+      stateTo: "ACTIVE",
+      actor: payeeBankId,
+    }),
+  ]);
 
   return {
-    result: (result.meta.changes ?? 0) > 0 ? "REGISTERED" : "ALREADY_EXISTS",
+    result: (results[0]?.meta.changes ?? 0) > 0 ? "REGISTERED" : "ALREADY_EXISTS",
     pspr_ref: psprRef,
   };
 }
@@ -46,10 +59,20 @@ export async function lookupPspr(db: D1Database, psprRef: string): Promise<PsprR
 
   if (!row) return null;
   if (new Date(row.expires_at) <= new Date()) {
-    await db
-      .prepare(`UPDATE PsprRegistry SET capability_state='REVOKED', revoked_at=? WHERE pspr_ref=?`)
-      .bind(nowISO(), psprRef)
-      .run();
+    await transitionEntityWithLog(db, {
+      update: {
+        sql: `UPDATE PsprRegistry SET capability_state='REVOKED', revoked_at=? WHERE pspr_ref=? AND capability_state!='REVOKED'`,
+        binds: [nowISO(), psprRef],
+      },
+      transition: {
+        entityType: "PSPR",
+        entityId: psprRef,
+        eventType: "PsprRevoked",
+        stateFrom: row.capability_state,
+        stateTo: "REVOKED",
+        reasonCode: "EXPIRED",
+      },
+    });
     return null;
   }
   return row;
@@ -59,8 +82,23 @@ export async function lookupPspr(db: D1Database, psprRef: string): Promise<PsprR
  * PSPR 失効
  */
 export async function revokePspr(db: D1Database, psprRef: string): Promise<void> {
-  await db
-    .prepare(`UPDATE PsprRegistry SET capability_state='REVOKED', revoked_at=? WHERE pspr_ref=?`)
-    .bind(nowISO(), psprRef)
-    .run();
+  const cur = await db
+    .prepare(`SELECT capability_state FROM PsprRegistry WHERE pspr_ref = ?`)
+    .bind(psprRef)
+    .first<{ capability_state: string }>();
+  if (!cur) return;
+
+  await transitionEntityWithLog(db, {
+    update: {
+      sql: `UPDATE PsprRegistry SET capability_state='REVOKED', revoked_at=? WHERE pspr_ref=? AND capability_state!='REVOKED'`,
+      binds: [nowISO(), psprRef],
+    },
+    transition: {
+      entityType: "PSPR",
+      entityId: psprRef,
+      eventType: "PsprRevoked",
+      stateFrom: cur.capability_state,
+      stateTo: "REVOKED",
+    },
+  });
 }

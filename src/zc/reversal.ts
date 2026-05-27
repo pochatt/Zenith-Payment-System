@@ -28,6 +28,10 @@ import type { Env, TransactionRow } from "../types";
 import { nowISO } from "../types";
 import { newUUID } from "../shared/idempotency";
 import { writeFinalityLog } from "./orchestrator";
+import {
+  buildEntityStateLogInsert,
+  transitionEntityWithLog,
+} from "../shared/entity_state_log";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -156,25 +160,36 @@ export async function requestReversal(
 
   // 4. Create ReversalRecords entry
   const reversalId = `REV-${newUUID()}`;
-  await db
-    .prepare(
-      `INSERT INTO ReversalRecords
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO ReversalRecords
      (reversal_id, original_txid, reversal_txid, amount, reason, status,
       requested_by, description, approval_ref, created_at, updated_at)
      VALUES (?, ?, NULL, ?, ?, 'REQUESTED', ?, ?, ?, ?, ?)`
-    )
-    .bind(
-      reversalId,
-      req.original_txid,
-      reversalAmount,
-      req.reason,
-      req.requested_by,
-      req.description ?? null,
-      req.approval_ref ?? null,
-      now,
-      now
-    )
-    .run();
+      )
+      .bind(
+        reversalId,
+        req.original_txid,
+        reversalAmount,
+        req.reason,
+        req.requested_by,
+        req.description ?? null,
+        req.approval_ref ?? null,
+        now,
+        now
+      ),
+    buildEntityStateLogInsert(db, {
+      entityType: "REVERSAL",
+      entityId: reversalId,
+      eventType: "ReversalRequested",
+      stateFrom: null,
+      stateTo: "REQUESTED",
+      reasonCode: req.reason,
+      actor: req.requested_by,
+      payload: { original_txid: req.original_txid, amount: reversalAmount },
+    }),
+  ]);
 
   await writeFinalityLog(db, {
     txid: req.original_txid,
@@ -217,14 +232,22 @@ export async function requestReversal(
     .run();
 
   // Update ReversalRecords with the TX link
-  await db
-    .prepare(
-      `UPDATE ReversalRecords
+  await transitionEntityWithLog(db, {
+    update: {
+      sql: `UPDATE ReversalRecords
      SET status = 'TX_CREATED', reversal_txid = ?, updated_at = ?
-     WHERE reversal_id = ?`
-    )
-    .bind(reversalTxid, now, reversalId)
-    .run();
+     WHERE reversal_id = ? AND status = 'REQUESTED'`,
+      binds: [reversalTxid, now, reversalId],
+    },
+    transition: {
+      entityType: "REVERSAL",
+      entityId: reversalId,
+      eventType: "ReversalTxCreated",
+      stateFrom: "REQUESTED",
+      stateTo: "TX_CREATED",
+      payload: { reversal_txid: reversalTxid },
+    },
+  });
 
   await writeFinalityLog(db, {
     txid: reversalTxid,
@@ -261,14 +284,28 @@ export async function requestReversal(
  */
 export async function completeReversal(reversalTxid: string, db: D1Database): Promise<void> {
   const now = nowISO();
-  await db
-    .prepare(
-      `UPDATE ReversalRecords
+  const cur = await db
+    .prepare(`SELECT reversal_id FROM ReversalRecords WHERE reversal_txid = ? AND status = 'TX_CREATED'`)
+    .bind(reversalTxid)
+    .first<{ reversal_id: string }>();
+  if (!cur) return;
+
+  await transitionEntityWithLog(db, {
+    update: {
+      sql: `UPDATE ReversalRecords
      SET status = 'COMPLETED', updated_at = ?
-     WHERE reversal_txid = ? AND status = 'TX_CREATED'`
-    )
-    .bind(now, reversalTxid)
-    .run();
+     WHERE reversal_txid = ? AND status = 'TX_CREATED'`,
+      binds: [now, reversalTxid],
+    },
+    transition: {
+      entityType: "REVERSAL",
+      entityId: cur.reversal_id,
+      eventType: "ReversalCompleted",
+      stateFrom: "TX_CREATED",
+      stateTo: "COMPLETED",
+      payload: { reversal_txid: reversalTxid },
+    },
+  });
 }
 
 /**

@@ -21,6 +21,9 @@
 - `0019_gtid_chain_fix.sql` — B9 `idx_fl_gtid_chain_prev_hash`（GTID 専用 prev_hash 部分 UNIQUE）
 - `0020_hv_threshold.sql` — `Participants.hv_threshold`（HIGH_VALUE 自動エスカレーション閾値）
 - `0021_finality_seq_counter.sql` — B10 `FinalitySeq` カウンタ表（event_seq 単調割当）
+- `0022_fix_dns_cycles_cleanup.sql` — `0012` の部分適用（`DnsCycles_old` 残置 / `DnsCycles` 欠落）を `IF [NOT] EXISTS` で是正
+- `0023_fix_dns_net_positions_fk.sql` — `DnsNetPositions` の FK を `DnsCycles` に貼り直し（`0012` の RENAME 由来の dangling FK 解消）
+- `0024_entity_state_log.sql` — `EntityStateLog` 追記専用表（Transactions 以外のエンティティの状態遷移履歴）
 
 > **`schema/baseline.sql` の位置付け**: `baseline.sql` は全マイグレーション
 > 適用後のスキーマ断面を**人間レビュー用**にまとめた参照資料であり、再生成は
@@ -204,6 +207,40 @@ VALUES (1, COALESCE((SELECT MAX(event_seq) FROM FinalityLog), 0));
 `writeFinalityLog` は `UPDATE FinalitySeq SET next_seq = next_seq + 1
 WHERE id = 1 RETURNING next_seq` で event_seq をアトミック割当する。
 旧方式（`Date.now()*1000 + random` + UNIQUE リトライ）は廃止。
+
+### EntityStateLog（非Transaction エンティティの状態遷移履歴・INSERT ONLY、0024）
+マネーパス（`Transactions` / `HtlcContracts` / `GtidTransactions` / `GtidLegs`）
+の状態遷移は `transitionWithLog` が `FinalityLog` に、DNS サイクルは
+`'DNS-'` チェーンにそれぞれ追記する。一方で運用系エンティティ
+（`Cases.state` / `PsprRegistry.capability_state` / `BankAccounts.status` /
+`ReversalRecords.status`）は status 列を上書きするだけで遷移履歴が失われて
+いた。`EntityStateLog` は status 列を**現在状態の射影**として残しつつ、変更
+ごとに不変の事実（`state_from → state_to`）を 1 行追記する。**UPDATE/DELETE
+は一切しない。**
+
+```sql
+CREATE TABLE EntityStateLog (
+  log_id       TEXT    PRIMARY KEY,           -- 'ESL-<uuid>'
+  entity_type  TEXT    NOT NULL,              -- 'CASE'|'PSPR'|'BANK_ACCOUNT'|'REVERSAL'
+  entity_id    TEXT    NOT NULL,              -- エンティティ主キー値
+  event_type   TEXT    NOT NULL,              -- ドメインイベント名（'CaseOpened' 等）
+  state_from   TEXT,                          -- 直前状態（生成時 NULL）
+  state_to     TEXT    NOT NULL,              -- 新状態
+  reason_code  TEXT,                          -- 変更理由（任意）
+  actor        TEXT,                          -- 'ZC'|'OPS'|'BANK_{bankId}'|'SYSTEM'
+  payload_json TEXT,                          -- 追加コンテキスト JSON（任意）
+  occurred_at  TEXT    NOT NULL               -- RFC3339
+);
+CREATE INDEX idx_esl_entity   ON EntityStateLog(entity_type, entity_id, occurred_at);
+CREATE INDEX idx_esl_occurred ON EntityStateLog(occurred_at);
+```
+
+**書込み規範**: `src/shared/entity_state_log.ts#transitionEntityWithLog` が
+status 変更 UPDATE と `EntityStateLog` INSERT を 1 つの `db.batch()` で発行する。
+INSERT は直前 UPDATE の `changes() > 0` をガードに用いる条件付き形式のため、
+no-op（同一状態への再適用など）ではログを書かない。`FinalityLog` の
+`buildFinalityLogConditionalInsert` と同型。同一 `occurred_at` のタイ解決は
+INSERT 順（rowid 昇順）で行う。
 
 ### DnsCycles（DNSサイクル）
 ```sql

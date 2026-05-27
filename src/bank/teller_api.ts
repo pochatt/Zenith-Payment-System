@@ -16,6 +16,7 @@ import { json, jsonError } from "../zc/ingress";
 import { calcBalance as calcBalanceLedger } from "./ledger";
 import { insertJournalGroup } from "./ledger";
 import { newUUID } from "../shared/idempotency";
+import { transitionEntityWithLog } from "../shared/entity_state_log";
 
 function getTellerHeaders(req: Request): { bankId: string; tellerId: string } | null {
   const bankId = req.headers.get("X-Bank-Id");
@@ -456,19 +457,37 @@ export async function handleUpdateAccountStatus(
     return jsonError(400, "INVALID_STATUS", `status must be one of: ${allowedStatuses.join(", ")}`);
 
   const now = nowISO();
-  const result = await env.DB.prepare(
-    `UPDATE BankAccounts SET status=?, freeze_reason=?, closed_at=? WHERE account_id=? AND bank_id=?`
+  const cur = await env.DB.prepare(
+    `SELECT status FROM BankAccounts WHERE account_id=? AND bank_id=?`
   )
-    .bind(
-      body.status,
-      body.status === "NORMAL" ? null : (body.reason ?? null),
-      body.status === "CLOSED" ? now : null,
-      accountId,
-      bankId
-    )
-    .run();
+    .bind(accountId, bankId)
+    .first<{ status: string }>();
+  if (!cur) return jsonError(404, "NOT_FOUND", "account not found");
 
-  if ((result.meta.changes ?? 0) === 0) return jsonError(404, "NOT_FOUND", "account not found");
+  // CAS guard (status != target) so re-applying the same status is a no-op and
+  // does not append a spurious EntityStateLog fact.
+  await transitionEntityWithLog(env.DB, {
+    update: {
+      sql: `UPDATE BankAccounts SET status=?, freeze_reason=?, closed_at=? WHERE account_id=? AND bank_id=? AND status!=?`,
+      binds: [
+        body.status,
+        body.status === "NORMAL" ? null : (body.reason ?? null),
+        body.status === "CLOSED" ? now : null,
+        accountId,
+        bankId,
+        body.status,
+      ],
+    },
+    transition: {
+      entityType: "BANK_ACCOUNT",
+      entityId: accountId,
+      eventType: "AccountStatusChanged",
+      stateFrom: cur.status,
+      stateTo: body.status,
+      reasonCode: body.reason ?? null,
+      actor: `BANK_${bankId}`,
+    },
+  });
 
   return json(200, { result: "OK", account_id: accountId, status: body.status });
 }
