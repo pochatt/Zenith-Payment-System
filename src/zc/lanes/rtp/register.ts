@@ -25,7 +25,7 @@ export async function registerRtp(
       `INSERT OR IGNORE INTO RtpRequests
      (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, attempt_count, max_attempts,
       expires_at, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'REQUESTED', 0, 3, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, 'CREATED', 0, 3, ?, ?, ?)`
     )
     .bind(
       req.rtp_id,
@@ -42,16 +42,16 @@ export async function registerRtp(
     txid: null,
     event_type: "RtpRequested",
     state_from: null,
-    state_to: "REQUESTED",
+    state_to: "CREATED",
     payload_json: JSON.stringify({ rtp_id: req.rtp_id }),
     txid_or_gtid: req.rtp_id,
   });
 
-  return { result: "INGRESS_ACCEPTED", rtp_id: req.rtp_id, state: "REQUESTED" };
+  return { result: "INGRESS_ACCEPTED", rtp_id: req.rtp_id, state: "CREATED" };
 }
 
 /**
- * RTP Attempt実行: REQUESTED → ATTEMPTED
+ * RTP Attempt実行: CREATED/NOTIFIED → TX_CREATED
  * payer が振込を起こしたとき（POST /api/transfers で lane=RTP）に呼ばれる
  */
 export async function attemptRtp(rtpId: string, linkedTxid: string, env: Env): Promise<boolean> {
@@ -64,7 +64,7 @@ export async function attemptRtp(rtpId: string, linkedTxid: string, env: Env): P
     .first<RtpRequestRow>();
 
   if (!rtp) return false;
-  if (rtp.state !== "REQUESTED") return false;
+  if (rtp.state !== "CREATED" && rtp.state !== "NOTIFIED") return false;
   if (new Date(rtp.expires_at) <= new Date(now)) {
     await db
       .prepare(`UPDATE RtpRequests SET state='EXPIRED', updated_at=? WHERE rtp_id=?`)
@@ -82,7 +82,7 @@ export async function attemptRtp(rtpId: string, linkedTxid: string, env: Env): P
 
   await db
     .prepare(
-      `UPDATE RtpRequests SET state='ATTEMPTED', attempt_count=attempt_count+1, linked_txid=?, updated_at=? WHERE rtp_id=?`
+      `UPDATE RtpRequests SET state='TX_CREATED', attempt_count=attempt_count+1, linked_txid=?, updated_at=? WHERE rtp_id=?`
     )
     .bind(linkedTxid, now, rtpId)
     .run();
@@ -95,7 +95,7 @@ export async function attemptRtp(rtpId: string, linkedTxid: string, env: Env): P
  */
 export async function settleRtp(rtpId: string, db: D1Database): Promise<void> {
   await db
-    .prepare(`UPDATE RtpRequests SET state='SETTLED', updated_at=? WHERE rtp_id=?`)
+    .prepare(`UPDATE RtpRequests SET state='COMPLETED', updated_at=? WHERE rtp_id=?`)
     .bind(nowISO(), rtpId)
     .run();
 }
@@ -129,10 +129,10 @@ export async function registerRtpRequest(
   await db
     .prepare(`
     INSERT INTO RtpRequests
-      (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+      (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
        attempt_count, max_attempts, expires_at,
        payee_name, description, edi_ref, payee_account_hash, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'REQUESTED', 'CREATED', 0, 3, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, 'CREATED', 0, 3, ?, ?, ?, ?, ?, ?, ?)
   `)
     .bind(
       rtpId,
@@ -153,7 +153,7 @@ export async function registerRtpRequest(
     txid: null,
     event_type: "RtpRequested",
     state_from: null,
-    state_to: "REQUESTED",
+    state_to: "CREATED",
     payload_json: JSON.stringify({
       rtp_id: rtpId,
       payee_bank_id: payeeBankId,
@@ -175,8 +175,8 @@ export async function registerRtpRequest(
   if (notified) {
     await db
       .prepare(`
-      UPDATE RtpRequests SET rtp_status = 'NOTIFIED', notified_at = ?, updated_at = ?
-      WHERE rtp_id = ?
+      UPDATE RtpRequests SET state = 'NOTIFIED', notified_at = ?, updated_at = ?
+      WHERE rtp_id = ? AND state = 'CREATED'
     `)
       .bind(now, now, rtpId)
       .run();
@@ -186,43 +186,21 @@ export async function registerRtpRequest(
 }
 
 /**
- * 銀行の ZC Ingress API へ RTP 通知を送信する（D1 経由のモック実装）。
- * 本番では銀行 SSE / HTTP を呼ぶが、Workers のバンドル制約で動的 import が
- * 使えないため、ここでは RtpRequestRows に直接 INSERT して通知を表現する。
+ * 銀行への RTP 通知を行う。
+ *
+ * 本番では支払銀行の ZC Ingress (`/bank/{bankId}/zc-ingress/rtp-notify`) を
+ * HTTP/SSE で叩く想定だが、Workers バンドル制約で動的 import ができないため
+ * モックでは no-op として成功扱いを返す。受信側 (`bankRtpNotify`) は
+ * 統合後 RtpRequests を直接見るため、別テーブルへの複製は不要。
  */
 async function notifyBankOfRtp(
-  rtpId: string,
-  payerBankId: string,
-  payeeBankId: string,
-  amount: { value: number; currency: string },
-  expiresAt: string,
-  options: { payeeName?: string; description?: string },
-  env: Env
+  _rtpId: string,
+  _payerBankId: string,
+  _payeeBankId: string,
+  _amount: { value: number; currency: string },
+  _expiresAt: string,
+  _options: { payeeName?: string; description?: string },
+  _env: Env
 ): Promise<boolean> {
-  try {
-    const now = nowISO();
-    await env.DB.prepare(`
-      INSERT OR IGNORE INTO RtpRequestRows
-        (rtp_id, payee_bank_id, payer_bank_id, amount_value, rtp_status,
-         payee_name, description, expires_at, notified_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'NOTIFIED', ?, ?, ?, ?, ?, ?)
-    `)
-      .bind(
-        rtpId,
-        payeeBankId,
-        payerBankId,
-        amount.value,
-        options.payeeName ?? null,
-        options.description ?? null,
-        expiresAt,
-        now,
-        now,
-        now
-      )
-      .run();
-    return true;
-  } catch (err) {
-    console.error(`[rtp] notifyBankOfRtp error: bank=${payerBankId}`, err);
-    return false;
-  }
+  return true;
 }

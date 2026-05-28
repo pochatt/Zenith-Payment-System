@@ -1092,14 +1092,21 @@ async function bankRtpNotify(
 
   const now = nowISO();
 
-  // RtpRequestRows に格納（支払銀行側のローカルストレージ）
-  // INSERT OR IGNORE で冪等保証（rtp_id が PRIMARY KEY）
+  // 0025_rtp_consolidate.sql で RtpRequestRows を廃止し、ZC と payer 側の
+  // 通知ストレージを RtpRequests に一本化した。本ハンドラは支払銀行が ZC から
+  // rtp-notify を受信したことを表現するため、未登録なら INSERT、既登録なら
+  // CREATED → NOTIFIED に進める（冪等）。
   await db
     .prepare(`
-    INSERT OR IGNORE INTO RtpRequestRows
-      (rtp_id, payee_bank_id, payer_bank_id, amount_value, rtp_status,
-       payee_name, description, expires_at, notified_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, 'NOTIFIED', ?, ?, ?, ?, ?, ?)
+    INSERT INTO RtpRequests
+      (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
+       attempt_count, max_attempts, payee_name, description, expires_at,
+       notified_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'NOTIFIED', 0, 3, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(rtp_id) DO UPDATE SET
+      state = CASE WHEN RtpRequests.state = 'CREATED' THEN 'NOTIFIED' ELSE RtpRequests.state END,
+      notified_at = COALESCE(RtpRequests.notified_at, excluded.notified_at),
+      updated_at = excluded.updated_at
   `)
     .bind(
       req.rtp_id,
