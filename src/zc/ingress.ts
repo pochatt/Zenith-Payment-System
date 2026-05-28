@@ -626,7 +626,6 @@ export async function handleSeed(env: Env): Promise<Response> {
     "Vault",
     "PsprRegistry",
     "RtpRequests",
-    "RtpRequestRows",
     "GtidLegs",
     "GtidTransactions",
     "HtlcContracts",

@@ -89,12 +89,8 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     .run();
   swept += expiredVault.meta.changes ?? 0;
 
-  // 6. RTP 期限切れ（rtp_status・state を両方更新するモジュール関数を使用）
-  try {
-    swept += await expireRtpRequests(db);
-  } catch (e) {
-    console.error("[timeout_sweep] expireRtpRequests failed (schema mismatch?):", e);
-  }
+  // 6. RTP 期限切れ（state 列のみを更新）
+  swept += await expireRtpRequests(db);
 
   // 7. 未配信通知リトライ
   await retryPendingNotifications(db, env);

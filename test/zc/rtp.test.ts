@@ -1,20 +1,20 @@
 /**
  * @file RTP (Request-to-Pay) lane lifecycle tests.
  *
- * Covers:
+ * Covers (post 0025_rtp_consolidate.sql — 単一 state 列):
  * - registerRtpRequest: REGISTERED vs DUPLICATE
- * - registerRtpRequest: rtp_status transitions (CREATED → NOTIFIED)
- * - attemptRtp: REQUESTED → ATTEMPTED (happy path)
+ * - registerRtpRequest: state transitions (CREATED → NOTIFIED)
+ * - attemptRtp: NOTIFIED → TX_CREATED (happy path)
  * - attemptRtp: expired RTP → EXPIRED
  * - attemptRtp: max_attempts exceeded → FAILED
- * - attemptRtp: already non-REQUESTED state → false
+ * - attemptRtp: already non-CREATED/NOTIFIED state → false
  * - respondToRtp: ACCEPTED → TX_CREATED + linked transaction created
  * - respondToRtp: REJECTED → DECLINED
  * - respondToRtp: already responded → ALREADY_RESPONDED
  * - respondToRtp: expired → EXPIRED
- * - settleRtp: marks RTP as SETTLED
+ * - settleRtp: marks RTP as COMPLETED
  * - expireRtpRequests: cron-based batch expiration
- * - getRtpStatus: maps rtp_status to RtpFullStatus correctly
+ * - getRtpStatus: returns the canonical state directly
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb, type MockD1Database } from "../helpers/d1-mock";
@@ -131,7 +131,7 @@ describe("registerRtpRequest — REGISTERED vs DUPLICATE", () => {
     expect(second.result).toBe("DUPLICATE");
   });
 
-  it("creates RtpRequests row with REQUESTED state", async () => {
+  it("creates RtpRequests row with NOTIFIED state after bank notification", async () => {
     await registerRtpRequest(
       d1 as any,
       "RTP-ROW-001",
@@ -144,13 +144,13 @@ describe("registerRtpRequest — REGISTERED vs DUPLICATE", () => {
       makeEnv(d1)
     );
     const row = await d1
-      .prepare(`SELECT state, rtp_status FROM RtpRequests WHERE rtp_id=?`)
+      .prepare(`SELECT state FROM RtpRequests WHERE rtp_id=?`)
       .bind("RTP-ROW-001")
-      .first<{ state: string; rtp_status: string }>();
-    expect(row?.state).toBe("REQUESTED");
+      .first<{ state: string }>();
+    expect(row?.state).toBe("NOTIFIED");
   });
 
-  it("updates rtp_status to NOTIFIED after bank notification", async () => {
+  it("sets notified_at after bank notification", async () => {
     await registerRtpRequest(
       d1 as any,
       "RTP-NOTIF-001",
@@ -163,10 +163,11 @@ describe("registerRtpRequest — REGISTERED vs DUPLICATE", () => {
       makeEnv(d1)
     );
     const row = await d1
-      .prepare(`SELECT rtp_status FROM RtpRequests WHERE rtp_id=?`)
+      .prepare(`SELECT state, notified_at FROM RtpRequests WHERE rtp_id=?`)
       .bind("RTP-NOTIF-001")
-      .first<{ rtp_status: string }>();
-    expect(row?.rtp_status).toBe("NOTIFIED");
+      .first<{ state: string; notified_at: string | null }>();
+    expect(row?.state).toBe("NOTIFIED");
+    expect(row?.notified_at).toBeTruthy();
   });
 
   it("writes RtpRequested FinalityLog entry", async () => {
@@ -227,19 +228,19 @@ describe("registerRtpRequest — REGISTERED vs DUPLICATE", () => {
 // ---------------------------------------------------------------------------
 
 describe("attemptRtp", () => {
-  async function registerRtp(rtpId: string) {
+  async function seedNotifiedRtp(rtpId: string) {
     d1.prepare(
       `INSERT INTO RtpRequests
-       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
         attempt_count, max_attempts, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, 25000, 'REQUESTED', 'NOTIFIED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+       VALUES (?, ?, ?, 25000, 'NOTIFIED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
     )
       .bind(rtpId, PAYEE_BANK, PAYER_BANK, FUTURE_EXPIRY)
       ._runSync();
   }
 
-  it("returns true and transitions to ATTEMPTED", async () => {
-    await registerRtp("RTP-ATT-001");
+  it("returns true and transitions to TX_CREATED", async () => {
+    await seedNotifiedRtp("RTP-ATT-001");
     const ok = await attemptRtp("RTP-ATT-001", "TX-LINKED-001", makeEnv(d1));
     expect(ok).toBe(true);
 
@@ -247,7 +248,7 @@ describe("attemptRtp", () => {
       .prepare(`SELECT state, linked_txid, attempt_count FROM RtpRequests WHERE rtp_id=?`)
       .bind("RTP-ATT-001")
       .first<{ state: string; linked_txid: string; attempt_count: number }>();
-    expect(row?.state).toBe("ATTEMPTED");
+    expect(row?.state).toBe("TX_CREATED");
     expect(row?.linked_txid).toBe("TX-LINKED-001");
     expect(row?.attempt_count).toBe(1);
   });
@@ -260,9 +261,9 @@ describe("attemptRtp", () => {
   it("returns false and marks EXPIRED when RTP has passed expires_at", async () => {
     d1.prepare(
       `INSERT INTO RtpRequests
-       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
         attempt_count, max_attempts, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, 10000, 'REQUESTED', 'NOTIFIED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+       VALUES (?, ?, ?, 10000, 'NOTIFIED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
     )
       .bind("RTP-EXP-001", PAYEE_BANK, PAYER_BANK, PAST_EXPIRY)
       ._runSync();
@@ -280,9 +281,9 @@ describe("attemptRtp", () => {
   it("returns false and marks FAILED when max_attempts reached", async () => {
     d1.prepare(
       `INSERT INTO RtpRequests
-       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
         attempt_count, max_attempts, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, 10000, 'REQUESTED', 'NOTIFIED', 3, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+       VALUES (?, ?, ?, 10000, 'NOTIFIED', 3, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
     )
       .bind("RTP-MAX-001", PAYEE_BANK, PAYER_BANK, FUTURE_EXPIRY)
       ._runSync();
@@ -297,12 +298,12 @@ describe("attemptRtp", () => {
     expect(row?.state).toBe("FAILED");
   });
 
-  it("returns false when RTP is already in ATTEMPTED state", async () => {
+  it("returns false when RTP is already in TX_CREATED state", async () => {
     d1.prepare(
       `INSERT INTO RtpRequests
-       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
         attempt_count, max_attempts, expires_at, created_at, updated_at)
-       VALUES (?, ?, ?, 10000, 'ATTEMPTED', 'TX_CREATED', 1, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+       VALUES (?, ?, ?, 10000, 'TX_CREATED', 1, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
     )
       .bind("RTP-ATT-DUP-001", PAYEE_BANK, PAYER_BANK, FUTURE_EXPIRY)
       ._runSync();
@@ -373,11 +374,10 @@ describe("respondToRtp", () => {
     expect(result.result).toBe("ACCEPTED");
 
     const row = await d1
-      .prepare(`SELECT rtp_status, state FROM RtpRequests WHERE rtp_id=?`)
+      .prepare(`SELECT state FROM RtpRequests WHERE rtp_id=?`)
       .bind("RTP-RESP-ACC-002")
-      .first<{ rtp_status: string; state: string }>();
-    expect(row?.rtp_status).toBe("TX_CREATED");
-    expect(row?.state).toBe("ATTEMPTED");
+      .first<{ state: string }>();
+    expect(row?.state).toBe("TX_CREATED");
   });
 
   it("ACCEPTED: writes RtpAccepted FinalityLog entry", async () => {
@@ -399,7 +399,7 @@ describe("respondToRtp", () => {
     expect(log).not.toBeNull();
   });
 
-  it("REJECTED: returns DECLINED and sets rtp_status to DECLINED", async () => {
+  it("REJECTED: returns DECLINED and sets state to DECLINED", async () => {
     await registerRtp("RTP-RESP-REJ-001");
     const result = await respondToRtp(
       d1 as any,
@@ -415,11 +415,10 @@ describe("respondToRtp", () => {
     expect(result.result).toBe("DECLINED");
 
     const row = await d1
-      .prepare(`SELECT rtp_status, state FROM RtpRequests WHERE rtp_id=?`)
+      .prepare(`SELECT state FROM RtpRequests WHERE rtp_id=?`)
       .bind("RTP-RESP-REJ-001")
-      .first<{ rtp_status: string; state: string }>();
-    expect(row?.rtp_status).toBe("DECLINED");
-    expect(row?.state).toBe("FAILED");
+      .first<{ state: string }>();
+    expect(row?.state).toBe("DECLINED");
   });
 
   it("returns NOT_FOUND for unknown rtp_id", async () => {
@@ -483,12 +482,12 @@ describe("respondToRtp", () => {
 // ---------------------------------------------------------------------------
 
 describe("settleRtp", () => {
-  it("transitions RTP to SETTLED state", async () => {
+  it("transitions RTP to COMPLETED state", async () => {
     d1.prepare(
       `INSERT INTO RtpRequests
-       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
         attempt_count, max_attempts, expires_at, created_at, updated_at)
-       VALUES ('RTP-SETTLE-001', ?, ?, 10000, 'ATTEMPTED', 'TX_CREATED', 1, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+       VALUES ('RTP-SETTLE-001', ?, ?, 10000, 'TX_CREATED', 1, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
     )
       .bind(PAYEE_BANK, PAYER_BANK, FUTURE_EXPIRY)
       ._runSync();
@@ -499,7 +498,7 @@ describe("settleRtp", () => {
       .prepare(`SELECT state FROM RtpRequests WHERE rtp_id=?`)
       .bind("RTP-SETTLE-001")
       .first<{ state: string }>();
-    expect(row?.state).toBe("SETTLED");
+    expect(row?.state).toBe("COMPLETED");
   });
 });
 
@@ -513,9 +512,9 @@ describe("expireRtpRequests", () => {
     for (const rtpId of ["RTP-EXP-CRON-001", "RTP-EXP-CRON-002"]) {
       d1.prepare(
         `INSERT INTO RtpRequests
-         (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+         (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
           attempt_count, max_attempts, expires_at, created_at, updated_at)
-         VALUES (?, ?, ?, 5000, 'REQUESTED', 'NOTIFIED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+         VALUES (?, ?, ?, 5000, 'NOTIFIED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
       )
         .bind(rtpId, PAYEE_BANK, PAYER_BANK, PAST_EXPIRY)
         ._runSync();
@@ -523,9 +522,9 @@ describe("expireRtpRequests", () => {
     // One still-valid RTP
     d1.prepare(
       `INSERT INTO RtpRequests
-       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
         attempt_count, max_attempts, expires_at, created_at, updated_at)
-       VALUES ('RTP-VALID-001', ?, ?, 5000, 'REQUESTED', 'NOTIFIED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+       VALUES ('RTP-VALID-001', ?, ?, 5000, 'NOTIFIED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
     )
       .bind(PAYEE_BANK, PAYER_BANK, FUTURE_EXPIRY)
       ._runSync();
@@ -535,17 +534,16 @@ describe("expireRtpRequests", () => {
 
     for (const rtpId of ["RTP-EXP-CRON-001", "RTP-EXP-CRON-002"]) {
       const row = await d1
-        .prepare(`SELECT state, rtp_status FROM RtpRequests WHERE rtp_id=?`)
+        .prepare(`SELECT state FROM RtpRequests WHERE rtp_id=?`)
         .bind(rtpId)
-        .first<{ state: string; rtp_status: string }>();
+        .first<{ state: string }>();
       expect(row?.state).toBe("EXPIRED");
-      expect(row?.rtp_status).toBe("EXPIRED");
     }
 
     const valid = await d1
       .prepare(`SELECT state FROM RtpRequests WHERE rtp_id='RTP-VALID-001'`)
       .first<{ state: string }>();
-    expect(valid?.state).toBe("REQUESTED");
+    expect(valid?.state).toBe("NOTIFIED");
   });
 
   it("returns 0 when no RTPs need expiration", async () => {
@@ -564,12 +562,12 @@ describe("getRtpStatus", () => {
     expect(status).toBeNull();
   });
 
-  it("returns CREATED status for REQUESTED state without rtp_status", async () => {
+  it("returns CREATED status for CREATED state", async () => {
     d1.prepare(
       `INSERT INTO RtpRequests
        (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
         attempt_count, max_attempts, expires_at, created_at, updated_at)
-       VALUES ('RTP-STATUS-001', ?, ?, 10000, 'REQUESTED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+       VALUES ('RTP-STATUS-001', ?, ?, 10000, 'CREATED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
     )
       .bind(PAYEE_BANK, PAYER_BANK, FUTURE_EXPIRY)
       ._runSync();
@@ -580,12 +578,12 @@ describe("getRtpStatus", () => {
     expect(result!.status).toBe("CREATED");
   });
 
-  it("returns rtp_status directly when present", async () => {
+  it("returns TX_CREATED state directly", async () => {
     d1.prepare(
       `INSERT INTO RtpRequests
-       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
         attempt_count, max_attempts, expires_at, created_at, updated_at)
-       VALUES ('RTP-STATUS-002', ?, ?, 10000, 'ATTEMPTED', 'TX_CREATED', 1, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+       VALUES ('RTP-STATUS-002', ?, ?, 10000, 'TX_CREATED', 1, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
     )
       .bind(PAYEE_BANK, PAYER_BANK, FUTURE_EXPIRY)
       ._runSync();
@@ -594,12 +592,12 @@ describe("getRtpStatus", () => {
     expect(result!.status).toBe("TX_CREATED");
   });
 
-  it("returns EXPIRED status for EXPIRED rtp_status", async () => {
+  it("returns EXPIRED status for EXPIRED state", async () => {
     d1.prepare(
       `INSERT INTO RtpRequests
-       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state, rtp_status,
+       (rtp_id, payee_bank_id, payer_bank_id, amount_value, state,
         attempt_count, max_attempts, expires_at, created_at, updated_at)
-       VALUES ('RTP-STATUS-003', ?, ?, 10000, 'EXPIRED', 'EXPIRED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
+       VALUES ('RTP-STATUS-003', ?, ?, 10000, 'EXPIRED', 0, 3, ?, '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z')`
     )
       .bind(PAYEE_BANK, PAYER_BANK, PAST_EXPIRY)
       ._runSync();

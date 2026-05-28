@@ -565,12 +565,14 @@ async function handleZcApi(
 
     const payerBankId = account.slice(0, 3);
     const now = new Date().toISOString();
+    // 0025_rtp_consolidate.sql で RtpRequestRows を廃止したため、payer 側の受信
+    // 一覧も RtpRequests を直接参照する。
     const rows = await env.DB.prepare(`
-      SELECT rtp_id, payee_bank_id, payer_bank_id, amount_value, rtp_status,
+      SELECT rtp_id, payee_bank_id, payer_bank_id, amount_value, state AS rtp_status,
              payee_name, description, expires_at, notified_at, created_at
-      FROM RtpRequestRows
+      FROM RtpRequests
       WHERE payer_bank_id = ?
-        AND (rtp_status = 'NOTIFIED' OR rtp_status = 'CREATED')
+        AND state IN ('CREATED', 'NOTIFIED')
         AND expires_at > ?
       ORDER BY created_at DESC
       LIMIT 50

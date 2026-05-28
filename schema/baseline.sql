@@ -269,15 +269,15 @@ CREATE TABLE PsprRegistry (
 --   0006: rtp_status, payee_name, description, edi_ref, notified_at
 --   0007: payer_account_id, response_type, responded_at
 --   0008: payee_account_hash (needed for payee-lookup in respondToRtp)
+-- 0025 で state と rtp_status の二重持ちを統合: rtp_status の細粒度語彙を
+-- state に昇格し、旧 state 列は破棄。
 CREATE TABLE RtpRequests (
   rtp_id           TEXT    PRIMARY KEY,
   payee_bank_id    TEXT    NOT NULL,
   payer_bank_id    TEXT    NOT NULL,
   amount_value     INTEGER NOT NULL,
-  state            TEXT    NOT NULL DEFAULT 'REQUESTED', -- REQUESTED|ATTEMPTED|SETTLED|EXPIRED|FAILED
-  -- rtp_status tracks the notification/response lifecycle (different from state):
-  --   CREATED → NOTIFIED → ACCEPTED/REJECTED → TX_CREATED → COMPLETED/DECLINED/EXPIRED
-  rtp_status       TEXT    NOT NULL DEFAULT 'CREATED',
+  -- 唯一の状態列。CREATED|NOTIFIED|ACCEPTED|TX_CREATED|COMPLETED|DECLINED|EXPIRED|FAILED
+  state            TEXT    NOT NULL DEFAULT 'CREATED',
   attempt_count    INTEGER NOT NULL DEFAULT 0,
   max_attempts     INTEGER NOT NULL DEFAULT 3,
   linked_txid      TEXT,
