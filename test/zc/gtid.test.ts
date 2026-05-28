@@ -594,3 +594,53 @@ describe("advanceGtid — PAYER bank suspense released on cancel (B1 regression)
     expect(suspense).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// handleGetGtid — derived ready/settled counts (audit follow-up)
+// ---------------------------------------------------------------------------
+describe("handleGetGtid — derives leg counts from real leg states", async () => {
+  const { handleGetGtid } = await import("../../src/zc/query");
+
+  it("overrides snapshot counts with values derived from GtidLegs", async () => {
+    const { d1 } = createTestDb();
+    // GT row with stored snapshot counts deliberately wrong (0/0) — derivation
+    // should ignore them and report the actual leg-state counts.
+    d1.prepare(
+      `INSERT INTO GtidTransactions
+       (gtid, state, initiator_bank_id, total_amount, leg_count,
+        legs_ready_count, legs_settled_count, version, created_at, updated_at)
+       VALUES ('GTID-DRV-1', 'GT_DECIDED_TO_SETTLE', '001', 300, 3, 0, 0, 0, 't', 't')`
+    )._runSync();
+    d1.prepare(
+      `INSERT INTO GtidLegs
+       (leg_id, gtid, role, bank_id, account_hash, amount_value, state, version, created_at, updated_at)
+       VALUES
+       ('L1', 'GTID-DRV-1', 'PAYER', '001', '0010000001', 100, 'LEG_SETTLED',        0, 't', 't'),
+       ('L2', 'GTID-DRV-1', 'PAYER', '001', '0010000001', 100, 'LEG_READY_CHECKED',  0, 't', 't'),
+       ('L3', 'GTID-DRV-1', 'PAYEE', '002', '0020000001', 100, 'LEG_RECEIVED',       0, 't', 't')`
+    )._runSync();
+
+    const env = makeEnv(d1);
+    const res = await handleGetGtid("GTID-DRV-1", env);
+    const body = (await res.json()) as { legs_ready_count: number; legs_settled_count: number };
+    // ready = LEG_READY_CHECKED + LEG_SETTLED = 2; settled = LEG_SETTLED = 1.
+    expect(body.legs_ready_count).toBe(2);
+    expect(body.legs_settled_count).toBe(1);
+  });
+
+  it("falls back to stored counts for synthetic GTs with no legs", async () => {
+    const { d1 } = createTestDb();
+    d1.prepare(
+      `INSERT INTO GtidTransactions
+       (gtid, state, initiator_bank_id, total_amount, leg_count,
+        legs_ready_count, legs_settled_count, version, created_at, updated_at)
+       VALUES ('GTID-DNS-1', 'GT_SETTLED', 'ZC', 500, 2, 2, 2, 0, 't', 't')`
+    )._runSync();
+
+    const env = makeEnv(d1);
+    const res = await handleGetGtid("GTID-DNS-1", env);
+    const body = (await res.json()) as { legs_ready_count: number; legs_settled_count: number };
+    expect(body.legs_ready_count).toBe(2);
+    expect(body.legs_settled_count).toBe(2);
+  });
+});

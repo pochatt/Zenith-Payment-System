@@ -6,6 +6,10 @@
 import type { CaseState } from "../types";
 import { nowISO } from "../types";
 import { newUUID } from "../shared/idempotency";
+import {
+  buildEntityStateLogInsert,
+  transitionEntityWithLog,
+} from "../shared/entity_state_log";
 
 export interface OpenCaseInput {
   related_txid?: string;
@@ -22,23 +26,37 @@ export async function openCase(db: D1Database, input: OpenCaseInput): Promise<st
   const caseId = `CASE-${newUUID()}`;
   const now = nowISO();
 
-  await db
-    .prepare(
-      `INSERT INTO Cases
+  await db.batch([
+    db
+      .prepare(
+        `INSERT INTO Cases
      (case_id, related_txid, related_gtid, state, reason_code, description, opened_by, created_at, updated_at)
      VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?)`
-    )
-    .bind(
-      caseId,
-      input.related_txid ?? null,
-      input.related_gtid ?? null,
-      input.reason_code,
-      input.description ?? null,
-      input.opened_by,
-      now,
-      now
-    )
-    .run();
+      )
+      .bind(
+        caseId,
+        input.related_txid ?? null,
+        input.related_gtid ?? null,
+        input.reason_code,
+        input.description ?? null,
+        input.opened_by,
+        now,
+        now
+      ),
+    buildEntityStateLogInsert(db, {
+      entityType: "CASE",
+      entityId: caseId,
+      eventType: "CaseOpened",
+      stateFrom: null,
+      stateTo: "OPEN",
+      reasonCode: input.reason_code,
+      actor: input.opened_by,
+      payload: {
+        related_txid: input.related_txid ?? null,
+        related_gtid: input.related_gtid ?? null,
+      },
+    }),
+  ]);
 
   // Transactions に case_id を紐付け
   if (input.related_txid) {
@@ -61,12 +79,25 @@ export async function updateCase(
   resolvedAt?: string
 ): Promise<void> {
   const now = nowISO();
-  await db
-    .prepare(
-      `UPDATE Cases SET state=?, resolved_at=COALESCE(?, resolved_at), updated_at=? WHERE case_id=?`
-    )
-    .bind(newState, resolvedAt ?? null, now, caseId)
-    .run();
+  const cur = await db
+    .prepare(`SELECT state FROM Cases WHERE case_id = ?`)
+    .bind(caseId)
+    .first<{ state: string }>();
+  if (!cur || cur.state === newState) return;
+
+  await transitionEntityWithLog(db, {
+    update: {
+      sql: `UPDATE Cases SET state=?, resolved_at=COALESCE(?, resolved_at), updated_at=? WHERE case_id=? AND state=?`,
+      binds: [newState, resolvedAt ?? null, now, caseId, cur.state],
+    },
+    transition: {
+      entityType: "CASE",
+      entityId: caseId,
+      eventType: "CaseStateChanged",
+      stateFrom: cur.state,
+      stateTo: newState,
+    },
+  });
 }
 
 /**
