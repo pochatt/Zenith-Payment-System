@@ -146,9 +146,31 @@ export async function handleGetGtid(gtid: string, env: Env): Promise<Response> {
     .first<GtidTransactionRow>();
   if (!gt) return jsonError(404, "NOT_FOUND", `gtid ${gtid} not found`);
 
-  const legs = await db.prepare(`SELECT * FROM GtidLegs WHERE gtid = ?`).bind(gtid).all();
+  const legs = await db
+    .prepare(`SELECT * FROM GtidLegs WHERE gtid = ?`)
+    .bind(gtid)
+    .all<{ state: string }>();
 
-  return json(200, { ...gt, legs: legs.results });
+  // Derive the count fields from real leg states rather than trusting the
+  // snapshot columns on GtidTransactions (see GtidTransactionRow doc-comment).
+  // For DNS-synthetic GTs (`GTID-DNS-*`) that have no GtidLegs, fall back to
+  // the stored snapshot so the dashboard still reflects the settled state.
+  const hasLegs = (legs.results?.length ?? 0) > 0;
+  const legs_ready_count = hasLegs
+    ? legs.results.filter(
+        (l) => l.state === "LEG_READY_CHECKED" || l.state === "LEG_SETTLED"
+      ).length
+    : gt.legs_ready_count;
+  const legs_settled_count = hasLegs
+    ? legs.results.filter((l) => l.state === "LEG_SETTLED").length
+    : gt.legs_settled_count;
+
+  return json(200, {
+    ...gt,
+    legs_ready_count,
+    legs_settled_count,
+    legs: legs.results,
+  });
 }
 
 // ---------------------------------------------------------------------------

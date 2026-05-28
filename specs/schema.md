@@ -90,6 +90,19 @@ CREATE TABLE Participants (
 );
 ```
 
+> **`h_used` / `daily_amount_used` の設計意図**: これらは一見すると
+> `SUM(HReservations WHERE is_released=0)` や当日 `Transactions` の合計から
+> 導出できる冗長カラムに見えるが、**意図的に保持している実体化カウンタ**で
+> ある。`UPDATE Participants SET h_used = h_used + ? WHERE (h_used + ?)
+> <= h_limit` のような単文 UPDATE は、上限チェックと加算を 1 命令で済ませる
+> ことで同時実行下でも race-free に上限を強制できる。SUM して比較してから
+> INSERT する形に置き換えると、SUM と INSERT の間に TOCTOU 窓が開いて
+> 上限超過の二重予約が発生し得る。本リポジトリは「事実は追記、状態カラムは
+> 更新しない」を原則とするが、性能/同時実行のための materialization は
+> 例外として明示的に容認する（参照: `src/zc/h_model.ts#reserveH`、
+> `src/zc/ingress.ts` の `daily_amount_used` 加算）。整合性は `is_released=0`
+> な `HReservations` の合計との reconciliation で随時検証できる。
+
 ### Transactions（取引）
 ```sql
 CREATE TABLE Transactions (
@@ -291,6 +304,15 @@ CREATE TABLE HtlcContracts (
 ```
 
 ### GtidTransactions（GTID取引）
+
+> **`legs_ready_count` / `legs_settled_count` の位置付け**: GT の合流判定
+> （`checkAndFinalizeGtid`）は実 leg/tx state を JOIN して評価しており、
+> これらのカラムを参照していない。ダッシュボード表示用の denormalize 値で
+> あり、`GT_DECIDED_TO_SETTLE` / `GT_SETTLED` 遷移時に snapshot 書込みされる
+> ため終端状態では正確だが、原理的には drift し得る。単一 GTID 詳細 API
+> （`handleGetGtid`）は実 leg 状態から導出した値で上書きして返す。新規の
+> GT 合流ロジックは**実 leg state を参照**し、これらのカウンタに依存しない
+> こと（参照: `src/zc/orchestrator/gtid.ts#checkAndFinalizeGtid`）。
 ```sql
 CREATE TABLE GtidTransactions (
   gtid               TEXT    PRIMARY KEY,

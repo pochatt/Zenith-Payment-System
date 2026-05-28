@@ -70,7 +70,12 @@ export async function reserveH(
   const reservationId = `H-${newUUID()}`;
   const now = nowISO();
 
-  // Step 1: h_limit 超過チェック（UPDATE の changes=0 で判定）
+  // Atomic limit gate: the single UPDATE both reserves capacity and rejects
+  // overflow in one statement. h_used is intentionally kept as a materialized
+  // counter (rather than derived from SUM(HReservations)) because this guard
+  // form is race-free under concurrent reservations — a SUM-then-check would
+  // reopen a TOCTOU window where two callers each pass the check and over-
+  // reserve. Reconcilable with SUM(HReservations WHERE is_released=0) at rest.
   const upd = await db
     .prepare(
       `UPDATE Participants

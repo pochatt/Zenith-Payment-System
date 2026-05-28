@@ -46,6 +46,13 @@ export interface ParticipantRow {
   bank_name: string;
   ingress_base_url: string;
   h_limit: number;
+  /**
+   * Materialized counter — NOT careless denormalization. The atomic
+   * `UPDATE ... SET h_used = h_used + ? WHERE (h_used + ?) <= h_limit` form
+   * is how the H-limit is enforced race-free; deriving via SUM(HReservations
+   * WHERE is_released=0) would reopen a TOCTOU window between the SUM and the
+   * insert. Reconcilable with that SUM at rest. See src/zc/h_model.ts#reserveH.
+   */
   h_used: number;
   /** 1 = active participant, 0 = suspended. */
   is_active: number;
@@ -154,6 +161,15 @@ export interface GtidTransactionRow {
   initiator_bank_id: string;
   total_amount: number;
   leg_count: number;
+  /**
+   * Display-only denormalization of GtidLegs.state counts. The settle decision
+   * (`checkAndFinalizeGtid`) derives "all settled" from real leg/tx states, not
+   * these columns — they exist for dashboard rendering. Snapshot-written at
+   * GT_DECIDED_TO_SETTLE / GT_SETTLED, so stored values are accurate at
+   * terminal transitions but may lag mid-flight. The single-GTID API
+   * (`handleGetGtid`) overrides them with values derived from the loaded legs
+   * to avoid any drift in the detail view.
+   */
   legs_ready_count: number;
   legs_settled_count: number;
   expires_at: string | null;

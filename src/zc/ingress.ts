@@ -188,6 +188,11 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
   }
 
   if (participant?.daily_amount_limit != null) {
+    // Atomic limit gate (same shape as h_used in h_model.ts). daily_amount_used
+    // is intentionally kept as a materialized counter rather than derived from
+    // SUM(today's transactions) — a SUM-then-check would race under concurrent
+    // payments. Reset is handled in the EOD cron and the per-request first-of-
+    // day branch below.
     let success = false;
     try {
       const today = nowISO().slice(0, 10); // 'YYYY-MM-DD'
