@@ -1091,7 +1091,7 @@ async function handleBankApi(
     }
   }
 
-  // credit / incoming paymentapproval API（customer）
+  // credit / incoming payment approval API (customer)
   if (method === "GET" && sub === "/v1/me/approvals") {
     const url = new URL(req.url);
     const approvals = await listApprovalRequests(

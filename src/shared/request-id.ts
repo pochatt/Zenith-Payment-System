@@ -9,7 +9,7 @@
 // =============================================================================
 
 /**
- * Bank Ingress コマンドのプレフィックス定数。
+ * Bank Ingress コマンドのプレフィックスConstants。
  * ZcRequests tableの request_id カラムと対応する。
  */
 export const REQUEST_PREFIX = {

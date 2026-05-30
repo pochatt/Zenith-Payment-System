@@ -34,7 +34,7 @@ import type {
 import { bicToBankId, bankIdToBic } from "./routing";
 
 // ---------------------------------------------------------------------------
-// 定数
+// Constants
 // ---------------------------------------------------------------------------
 
 /** Zengin fixed-length record size (120 bytes per record). */
@@ -602,7 +602,7 @@ export function formatZenginRecord(record: ZenginFixedRecord): string {
 }
 
 // ---------------------------------------------------------------------------
-// 内部ユーティリティ（モジュール非公開）
+// Internal utilities (module-private)
 // ---------------------------------------------------------------------------
 
 /**

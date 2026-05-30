@@ -16,7 +16,7 @@ import { validateFatfR16, serializeFatfData } from "../shared/fatf_validator";
 import { buildPacs008 } from "../shared/iso20022";
 
 // ---------------------------------------------------------------------------
-// 定数
+// Constants
 // ---------------------------------------------------------------------------
 
 /** モック固定為替レート（外貨 → JPY）: constants.ts を正として統一使用 */

@@ -11,7 +11,7 @@ export interface TxEventParams {
   txid?: string | null;
   correlation_id?: string | null;
   actor: string; // 'ZC' | 'BANK_001' | 'CUSTOMER' | 'SYSTEM'
-  action: string; // アクション定数（下記参照）
+  action: string; // アクションConstants（下記参照）
   status: TxEventStatus; // 'OK' | 'NG' | 'PENDING'
   reason_code?: string | null;
   amount?: number | null;
