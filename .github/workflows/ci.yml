@@ -1,0 +1,41 @@
+name: CI
+
+# Gate every push and pull request on the two checks that must never regress:
+# `npm run type-check` (tsc --noEmit) and `npm run test` (vitest run). A broken
+# build reaching the branch — e.g. a duplicated route handler that fails tsc —
+# is exactly what this is here to stop. Make this a required status check in the
+# branch protection settings so a red run blocks merge.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Cancel superseded runs on the same ref so a quick succession of pushes does
+# not pile up redundant builds.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: type-check + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20" # LTS; satisfies the README's Node 18+ requirement
+          cache: npm
+
+      # `npm ci` builds better-sqlite3 (a native addon used by the D1 test mock)
+      # against the runner's Node, so the install step doubles as a compile check.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check
+        run: npm run type-check
+
+      - name: Test
+        run: npm run test

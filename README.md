@@ -187,6 +187,8 @@ npx vitest test/zc/express.test.ts    # 単一ファイル
 
 `better-sqlite3` を D1 のインメモリ・モックとして用い、本物のスキーマに対して並行処理・冪等再送・ゼロサム残高不変条件・サーキットブレーカ復帰・ハッシュチェーン監査などを統合的に検証します。`test/integration/balance_invariants.test.ts` では、各レーンで「payer Δ = −amount」「payee Δ = +amount」「行内ゼロサム」「BOJ 系の保存則」を仕訳まで往復で固定しています。
 
+CI（GitHub Actions, `.github/workflows/ci.yml`）は push / PR ごとに `npm run type-check` と `npm run test` を必須ゲートとして実行します。
+
 ### 文書地図
 
 **構想（読み物）→ 方式設計 → 制度・ガバナンス → インタフェース／データ** の四層：
