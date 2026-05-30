@@ -111,14 +111,14 @@ export async function onPayerExecConfirmed(
     state_from: tx.state,
     state_to: "PAYER_EXEC_CONFIRMED",
     // bankProofRefJson は呼び出し側で JSON.stringify 済み。parse→stringify を経由せず
-    // 文字列連結で payload を構築し、中間オブジェクト確保を回避する。
+    // 文字列連結で payload をconstructし、中間オブジェクト確保を回避する。
     payload_json: `{"payer_bank_proof_ref":${bankProofRefJson}}`,
     txid_or_gtid: txid,
   });
 
   await autoResolveCaseForTx(db, txid);
 
-  // HIGH_VALUE レーンは IGS コールバック（handleIgsCallback）が ZC_BANK_CREDIT を投入する
+  // HIGH_VALUE laneは IGS コールバック（handleIgsCallback）が ZC_BANK_CREDIT を投入する
   if (tx.lane !== "HIGH_VALUE") {
     await env.QUEUE.send({
       type: "ZC_BANK_CREDIT",
@@ -171,7 +171,7 @@ export async function onPayeeExecConfirmed(
 
   if (!isValidTransition(tx.state, "PAYEE_EXEC_CONFIRMED")) return;
 
-  // HIGH_VALUE 不変条件: external_settlement_status = 'SETTLED' でなければ b確認を拒否
+  // HIGH_VALUE 不変条件: external_settlement_status = 'SETTLED' でなければ bconfirmationをdenial
   // (spec: "PAYEE_EXEC_CONFIRMED(b)へ遷移してよいのは external_settlement_status == SETTLED の場合に限る")
   if (tx.lane === "HIGH_VALUE" && tx.external_settlement_status !== "SETTLED") {
     console.error(

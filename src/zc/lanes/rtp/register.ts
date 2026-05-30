@@ -52,7 +52,7 @@ export async function registerRtp(
 
 /**
  * RTP Attempt実行: CREATED/NOTIFIED → TX_CREATED
- * payer が振込を起こしたとき（POST /api/transfers で lane=RTP）に呼ばれる
+ * payer がbank transferを起こしたとき（POST /api/transfers で lane=RTP）に呼ばれる
  */
 export async function attemptRtp(rtpId: string, linkedTxid: string, env: Env): Promise<boolean> {
   const db = env.DB;
@@ -101,7 +101,7 @@ export async function settleRtp(rtpId: string, db: D1Database): Promise<void> {
 }
 
 /**
- * RTP請求登録（拡張版 — 銀行 SSE 通知付き）
+ * RTP請求登録（拡張版 — bank SSE 通知付き）
  */
 export async function registerRtpRequest(
   db: D1Database,
@@ -116,7 +116,7 @@ export async function registerRtpRequest(
 ): Promise<{ result: "REGISTERED" | "DUPLICATE"; rtpId: string }> {
   const now = nowISO();
 
-  // 冪等チェック: 既存レコードがあれば DUPLICATE を返す
+  // idempotentcheck: 既存レコードがあれば DUPLICATE をreturn
   const existing = await db
     .prepare(`SELECT rtp_id FROM RtpRequests WHERE rtp_id = ?`)
     .bind(rtpId)
@@ -186,12 +186,12 @@ export async function registerRtpRequest(
 }
 
 /**
- * 銀行への RTP 通知を行う。
+ * bankへの RTP 通知を行う。
  *
- * 本番では支払銀行の ZC Ingress (`/bank/{bankId}/zc-ingress/rtp-notify`) を
+ * 本番では支払bankの ZC Ingress (`/bank/{bankId}/zc-ingress/rtp-notify`) を
  * HTTP/SSE で叩く想定だが、Workers バンドル制約で動的 import ができないため
- * モックでは no-op として成功扱いを返す。受信側 (`bankRtpNotify`) は
- * 統合後 RtpRequests を直接見るため、別テーブルへの複製は不要。
+ * モックでは no-op として成功扱いをreturn。receive側 (`bankRtpNotify`) は
+ * 統合後 RtpRequests を直接見るため、別tableへの複製は不要。
  */
 async function notifyBankOfRtp(
   _rtpId: string,

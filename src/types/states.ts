@@ -93,12 +93,12 @@ export type CaseState = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "ESCALATED";
  * 旧 `state` (REQUESTED|ATTEMPTED|SETTLED|EXPIRED|FAILED) と
  * 旧 `rtp_status` (CREATED|NOTIFIED|...) を 0025_rtp_consolidate.sql で
  * 単一 `state` 列に統合した結果の唯一の状態集合。
- *  - CREATED      : RtpRequests 行作成、銀行未通知
- *  - NOTIFIED     : 支払銀行への rtp-notify 成功
- *  - ACCEPTED     : 支払人が承認（TX 作成前の過渡状態 — 通常は経由しない）
- *  - TX_CREATED   : 紐づき送金 Transaction 作成済み
- *  - COMPLETED    : 送金 SETTLED 確定
- *  - DECLINED     : 支払人が拒否
+ *  - CREATED      : RtpRequests 行create、bank未通知
+ *  - NOTIFIED     : 支払bankへの rtp-notify 成功
+ *  - ACCEPTED     : 支払人がapproval（TX create前の過渡状態 — 通常は経由しない）
+ *  - TX_CREATED   : 紐づきfund transfer Transaction create済み
+ *  - COMPLETED    : fund transfer SETTLED finalized
+ *  - DECLINED     : 支払人がdenial
  *  - EXPIRED      : expires_at 経過
  *  - FAILED       : max_attempts 超過などのその他失敗
  */

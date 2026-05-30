@@ -176,8 +176,8 @@ export async function handleBankIngressHttp(
     return errorResp(400, "INVALID_JSON");
   }
 
-  // HMAC署名検証: ZC_HMAC_SECRET が設定されている場合は X-ZC-Signature 必須
-  // 内部ルーティング（同一Worker内）は handleBankIngress を直接呼ぶため HTTP 経路を通らない
+  // HMAC signaturevalidation: ZC_HMAC_SECRET がsetされている場合は X-ZC-Signature 必須
+  // 内部routing（同一Worker内）は handleBankIngress を直接呼ぶため HTTP 経路を通らない
   if (env.ZC_HMAC_SECRET) {
     const signature = req.headers.get("X-ZC-Signature");
     if (!signature) return errorResp(401, "MISSING_SIGNATURE");
@@ -277,7 +277,7 @@ async function bankReserveFunds(
   const idempResult = await checkIdempotency(req.request_id, bankId, req.txid, "reserve-funds", db);
   if (idempResult.existing) return idempResult.response as ReserveFundsResponse;
 
-  // 口座検索
+  // account lookup
   const account = await getAccountByHash(bankId, req.account_hash, db);
   if (!account || account.status !== "NORMAL") {
     const resp: ReserveFundsResponse = { result: "ERROR", reason_code: "ACCOUNT_NOT_FOUND" };
@@ -295,7 +295,7 @@ async function bankReserveFunds(
     return resp;
   }
 
-  // 利用可能残高チェック
+  // available balancecheck
   const available = await getAvailableBalance(account.account_id, db);
   if (available < req.amount.value) {
     const resp: ReserveFundsResponse = { result: "ERROR", reason_code: "INSUFFICIENT_FUNDS" };
@@ -314,7 +314,7 @@ async function bankReserveFunds(
     return resp;
   }
 
-  // 別段預金（支払口）に隔離 + 仕訳
+  // segregated deposit（payment account）に隔離 + journal entry
   const suspenseId = await reserveSuspense(db, {
     bankId,
     accountId: account.account_id,
@@ -372,7 +372,7 @@ async function bankExecuteDebit(
   let accountId: string;
 
   if (isHV) {
-    // HVレーン: account_hash で口座を特定（reserve-funds を経由しないため直接渡す）
+    // HV (high-value)lane: account_hash でaccountを特定（reserve-funds を経由しないため直接渡す）
     const account = req.payer_account_hash
       ? await getAccountByHash(bankId, req.payer_account_hash, db)
       : await db
@@ -393,7 +393,7 @@ async function bankExecuteDebit(
       await saveResponse(req.request_id, resp, db);
       return resp;
     }
-    // HV は即時 RTGS 清算のため別段預金を経由せず直接 Customer(-) / ZCS(+) を仕訳
+    // HV (high-value) は即時 RTGS settlementのためsegregated depositを経由せず直接 Customer(-) / ZCS(+) をjournal entry
     await insertJournalGroup(db, {
       bankId,
       txGroupId: `HV-DEBIT-${req.txid}`,
@@ -416,7 +416,7 @@ async function bankExecuteDebit(
       valueDate: nowISO().slice(0, 10),
     });
   } else {
-    // 標準: RESERVED → EXECUTED に状態変更
+    // 標準: RESERVED → EXECUTED に状態change
     const suspense = await db
       .prepare(
         `SELECT suspense_id, account_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' LIMIT 1`
@@ -432,7 +432,7 @@ async function bankExecuteDebit(
     accountId = suspense.account_id;
   }
 
-  // a証憑生成
+  // avoucher generation
   const proofType = isHV ? ("PAYER_HV_ISOLATION_PROOF" as const) : ("PAYER_EXEC_PROOF" as const);
   const proof = await createProof(bankId, proofType, req.txid, req.amount.value);
   const resp: ExecuteDebitResponse = { result: "OK", bank_proof_ref: proof };
@@ -486,14 +486,14 @@ async function bankExecuteCredit(
   );
   if (idempResult.existing) return idempResult.response as ExecuteCreditResult;
 
-  // Payee 口座: リクエストの payee_account_hash を優先使用（Transactions 直参照を排除）
+  // Payee account: リクエストの payee_account_hash を優先使用（Transactions 直参照を排除）
   let account: BankAccountRow | null = null;
   const payeeHash = req.payee_account_hash;
   if (payeeHash) {
     account = await getAccountByHash(bankId, payeeHash, db);
   }
   if (!account) {
-    // フォールバック: txid から取得（シングルWorkerモックのみ許容）
+    // フォールバック: txid からget（シングルWorkerモックのみ許容）
     const tx = await db
       .prepare(`SELECT payee_account_hash FROM Transactions WHERE txid=?`)
       .bind(req.txid)
@@ -544,8 +544,8 @@ async function bankExecuteCredit(
     }
   }
 
-  // --- 着金フィルタ評価（正常口座の場合のみ）---
-  // 送金元情報を Transactions テーブルから取得
+  // --- credit filterevaluate（正常accountの場合のみ）---
+  // payerinformationを Transactions tableからget
   if (!isCustody) {
     const txInfo = await db
       .prepare(`SELECT payer_bank_id, payer_account_hash, purpose FROM Transactions WHERE txid=?`)
@@ -608,7 +608,7 @@ async function bankExecuteCredit(
     }
   }
 
-  // Hard Landing: 別段預金（受取口）に着金
+  // Hard Landing: segregated deposit（receipt口）にcredit / incoming payment
   const suspId = await landSuspense(db, {
     bankId,
     accountId: account.account_id,
@@ -620,7 +620,7 @@ async function bankExecuteCredit(
     custodyReason,
   });
 
-  // b証憑生成
+  // bvoucher generation
   const custodyDetail = isCustody
     ? { is_custody: true as const, reason_code: custodyReason, custody_account_ref: suspId }
     : undefined;
@@ -632,7 +632,7 @@ async function bankExecuteCredit(
     custodyDetail
   );
 
-  // RTP 取引の場合は請求元の description を摘要として使用する
+  // RTP transactionの場合は請求元の description を摘要として使用する
   const rtpRow = await db
     .prepare(`SELECT description FROM RtpRequests WHERE linked_txid_new = ? LIMIT 1`)
     .bind(req.txid)
@@ -641,7 +641,7 @@ async function bankExecuteCredit(
     ? `振込入金 ${rtpRow.description}`
     : "ZC着金 普通預金(+)";
 
-  // 正常口座の場合は即時着金（別段 → 普通預金）
+  // 正常accountの場合は即時credit / incoming payment（別段 → 普通預金）
   if (!isCustody) {
     await insertJournalGroup(db, {
       bankId,
@@ -664,7 +664,7 @@ async function bankExecuteCredit(
       ],
       valueDate: nowISO().slice(0, 10),
     });
-    // txid 全体ではなく landSuspense が生成した特定の suspense_id を対象にする
+    // txid 全体ではなく landSuspense がgenerateした特定の suspense_id を対象にする
     await db
       .prepare(
         `UPDATE SuspenseDetails SET status='SETTLED', settled_at=?, updated_at=? WHERE suspense_id=?`
@@ -719,7 +719,7 @@ async function bankReleaseReserve(
   );
   if (idempResult.existing) return idempResult.response as ReleaseReserveResponse;
 
-  // 別段預金を元口座に戻す
+  // segregated depositを元accountに戻す
   const suspense = await db
     .prepare(
       `SELECT * FROM SuspenseDetails WHERE suspense_id=? OR (txid=? AND bank_id=? AND status='RESERVED') LIMIT 1`
@@ -728,14 +728,14 @@ async function bankReleaseReserve(
     .first<{ suspense_id: string; account_id: string; amount: number }>();
 
   if (suspense) {
-    // キャンセル解放は 'RETURNED'（'SETTLED' ではない）
+    // cancelled解放は 'RETURNED'（'SETTLED' ではない）
     await db
       .prepare(
         `UPDATE SuspenseDetails SET status='RETURNED', settled_at=?, updated_at=? WHERE suspense_id=?`
       )
       .bind(nowISO(), nowISO(), suspense.suspense_id)
       .run();
-    // 普通預金に戻す仕訳: 別段預金(-) / 普通預金(+)
+    // 普通預金に戻すjournal entry: segregated deposit(-) / 普通預金(+)
     await insertJournalGroup(db, {
       bankId,
       txGroupId: `RELEASE-${req.txid}`,
@@ -792,8 +792,8 @@ async function bankLegReadyCheck(
     if (available < req.amount.value) {
       return { result: "NG", reason_code: "INSUFFICIENT_FUNDS" };
     }
-    // PAYER は別段預金への資金隔離を行う（reserve-funds と同等）
-    // txid は後から作成される TX-GT-{leg_id} を予測して使用
+    // PAYER はsegregated depositへの資金隔離を行う（reserve-funds と同等）
+    // txid は後からcreateされる TX-GT-{leg_id} を予測して使用
     const predictedTxid = `TX-GT-${req.leg_id}`;
     const suspenseId = await reserveSuspense(db, {
       bankId,
@@ -862,15 +862,15 @@ async function bankNameCheck(
   if (req.account_hash) {
     const account = await getAccountByHash(bankId, req.account_hash, db);
     if (!account) return { result: "MISMATCH", reason_code: "NAME_MISMATCH" };
-    // システム口座（別段預金・清算勘定・現金・BOJ）は振込不可
-    // SAVINGS（個人普通預金）・CURRENT（法人当座預金）は着金可
+    // システムaccount（segregated deposit・settlement勘定・現金・BOJ）はbank transfer不可
+    // SAVINGS（個人普通預金）・CURRENT（法人当座預金）はcredit / incoming payment可
     if (account.account_type !== "SAVINGS" && account.account_type !== "CURRENT") {
       return { result: "MISMATCH", reason_code: "ACCOUNT_NOT_TRANSFERABLE" };
     }
     return { result: "MATCH", customer_name: account.customer_name };
   }
-  // pspr_ref も account_hash も未指定の場合は名義照合不能
-  // 安全側に倒して MISMATCH を返す（仕様上、名義確認は必須ステップ）
+  // pspr_ref も account_hash も未指定の場合は名義match不能
+  // 安全側に倒して MISMATCH をreturn（specification上、名義confirmationは必須ステップ）
   return { result: "MISMATCH", reason_code: "NO_IDENTIFIER_PROVIDED" };
 }
 
@@ -942,7 +942,7 @@ async function bankAccountVerify(
 }> {
   const db = env.DB;
 
-  // 口座検索
+  // account lookup
   const account = await getAccountByHash(bankId, req.target_account_hash, db);
   if (!account || account.account_type !== "SAVINGS") {
     return {
@@ -953,7 +953,7 @@ async function bankAccountVerify(
     };
   }
 
-  // 名義未指定の場合は NOT_FOUND に準じず MATCHED（口座存在確認のみ）
+  // 名義未指定の場合は NOT_FOUND に準じず MATCHED（account存在confirmationのみ）
   if (!req.target_account_name) {
     return { result: "MATCHED", match_score: 1.0, name_provided: null, fraud_warning: false };
   }
@@ -978,12 +978,12 @@ async function bankAccountVerify(
  * 編集距離 (Levenshtein) が 1 以下かを O(n) 時間・O(1) 追加メモリで判定する。
  *
  * account-verify では「完全一致 or 1 文字差」しか判定に用いないため、
- * 全 DP 表を構築する必要がない。長さ差が 2 以上なら即 false、
+ * 全 DP 表をconstructする必要がない。長さ差が 2 以上なら即 false、
  * 長さ差が 0 または 1 のときのみ 1 回スキャンで判定する。
  *
  * 計算量:
- *   - 元の DP 実装: O(m*n) 時間、O((m+1)(n+1)) のヒープ確保
- *   - 本実装       : O(min(m,n)) 時間、確保ゼロ
+ *   - 元の DP implementation: O(m*n) 時間、O((m+1)(n+1)) のヒープ確保
+ *   - 本implementation       : O(min(m,n)) 時間、確保ゼロ
  *
  * @returns 編集距離が 1 以下なら true
  */
@@ -1004,7 +1004,7 @@ function isEditDistanceAtMostOne(a: string, b: string): boolean {
     return true;
   }
 
-  // 長さ差 1: 短い側が長い側の 1 文字削除サブシーケンスか判定
+  // 長さ差 1: 短い側が長い側の 1 文字deleteサブシーケンスか判定
   const longer = m > n ? a : b;
   const shorter = m > n ? b : a;
   const longLen = longer.length;
@@ -1053,9 +1053,9 @@ async function bankCreditNotify(
   if (idempResult.existing)
     return idempResult.response as { result: "DELIVERED"; notification_id: string };
 
-  // Payee 口座を存在確認のみ。SAVINGS でない場合はカストディ扱いの着金が
+  // Payee accountを存在confirmationのみ。SAVINGS でない場合はカストディ扱いのcredit / incoming paymentが
   // execute-credit 時点で別段に残っているはずなので、ERROR を返してZC側で
-  // 配信失敗として記録させる。
+  // 配信失敗としてrecordさせる。
   const account = await getAccountByHash(bankId, req.payee_account_hash, db);
   if (!account || account.account_type !== "SAVINGS") {
     const resp = { result: "ERROR" as const, reason_code: "ACCOUNT_NOT_FOUND" };
@@ -1079,7 +1079,7 @@ async function bankCreditNotify(
 }
 
 // ---------------------------------------------------------------------------
-// 10. rtp-notify  RTP請求通知（支払銀行側への通知格納）
+// 10. rtp-notify  RTP請求通知（支払bank側への通知格納）
 // ---------------------------------------------------------------------------
 async function bankRtpNotify(
   bankId: string,
@@ -1093,9 +1093,9 @@ async function bankRtpNotify(
   const now = nowISO();
 
   // 0025_rtp_consolidate.sql で RtpRequestRows を廃止し、ZC と payer 側の
-  // 通知ストレージを RtpRequests に一本化した。本ハンドラは支払銀行が ZC から
-  // rtp-notify を受信したことを表現するため、未登録なら INSERT、既登録なら
-  // CREATED → NOTIFIED に進める（冪等）。
+  // 通知ストレージを RtpRequests に一本化した。本ハンドラは支払bankが ZC から
+  // rtp-notify をreceiveしたことを表現するため、未登録なら INSERT、既登録なら
+  // CREATED → NOTIFIED に進める（idempotent）。
   await db
     .prepare(`
     INSERT INTO RtpRequests
@@ -1142,7 +1142,7 @@ async function bankRtpNotify(
 }
 
 // ---------------------------------------------------------------------------
-// 11. debit-settled  仕向銀行への決済完了通知（入金結果通知の対称）
+// 11. debit-settled  仕向bankへのpayment完了通知（deposit結果通知の対称）
 // ---------------------------------------------------------------------------
 
 /** Request body for the debit-settled ingress command. */
@@ -1158,12 +1158,12 @@ interface BankDebitSettledRequest {
  * **Command 11: debit-settled** — Settlement completion notification to payer bank.
  *
  * Called by ZC after the full transaction reaches SETTLED state. Confirms to
- * the payer (仕向銀行) that the payee credit has been delivered and the
+ * the payer (仕向bank) that the payee credit has been delivered and the
  * end-to-end settlement is final. Records an audit entry for traceability.
  *
- * This implements the "入金結果通知" (credit result notification) from the
+ * This implements the "deposit結果通知" (credit result notification) from the
  * payer side perspective, completing the bidirectional settlement confirmation
- * loop required by the Zengin Future Vision report (論点2: 入金結果通知機能).
+ * loop required by the Zengin Future Vision report (論点2: deposit結果通知機能).
  */
 async function bankDebitSettled(
   bankId: string,
@@ -1199,15 +1199,15 @@ interface BankInitializeRequest {
 /**
  * **Command 12: initialize-bank** — Bank-side account and journal initialization.
  *
- * ZC は参加行登録（Participants）のみ行い、銀行内部口座（BankAccounts）や
- * 仕訳（BankJournals）の初期化は銀行自身が責任を持つ（基本思想: 金融機関が既存責任を保持）。
- * このハンドラはその「銀行側初期化」を受け付けるエンドポイント。
+ * ZC はparticipating bank登録（Participants）のみ行い、bank内部account（BankAccounts）や
+ * journal entry（BankJournals）の初期化はbank自身が責任を持つ（基本思想: 金融機関が既存責任を保持）。
+ * このハンドラはその「bank側初期化」を受け付けるendpoint。
  *
- * 作成する口座:
- *   - 別段預金（SUSPENSE）: 送金中の資金を一時保管
- *   - ZC清算勘定（SETTLEMENT）: ZCとの清算
- *   - 現金口座（ASSET）: 自行現金
- *   - 日銀預け金口座（BOJ）: RTGS/HIGH_VALUE 用プレファンド
+ * createするaccount:
+ *   - segregated deposit（SUSPENSE）: fund transfer中の資金を一時save
+ *   - ZCsettlement勘定（SETTLEMENT）: ZCとのsettlement
+ *   - 現金account（ASSET）: 自行現金
+ *   - 日銀預け金account（BOJ）: RTGS/HIGH_VALUE 用プレファンド
  */
 async function bankInitialize(
   bankId: string,
@@ -1219,7 +1219,7 @@ async function bankInitialize(
   const today = now.slice(0, 10);
   const bojPrefund = req.boj_prefund ?? 100_000_000_000; // デフォルト1000億円
 
-  // 冪等チェック: 既に口座が存在する場合はスキップ
+  // idempotentcheck: 既にaccountが存在する場合はスキップ
   const existing = await db
     .prepare(
       `SELECT account_id FROM BankAccounts WHERE bank_id = ? AND account_type = 'SUSPENSE' LIMIT 1`
@@ -1230,7 +1230,7 @@ async function bankInitialize(
     return { result: "ALREADY_INITIALIZED", bank_id: bankId };
   }
 
-  // 銀行内部口座の作成（銀行の責任範囲: ZC は口座構造に関知しない）
+  // bank内部accountのcreate（bankの責任範囲: ZC はaccount構造に関知しない）
   await db.batch([
     db
       .prepare(
@@ -1312,8 +1312,8 @@ async function bankInitialize(
 /**
  * **Command 13: cleanup-bank** — Bank-side account and journal teardown.
  *
- * 銀行の登録解除時に、銀行内部データ（口座・仕訳・金利設定）を削除する。
- * ZC 側データ（Participants, ZcRequests, SuspenseDetails）は ZC が別途削除する。
+ * bankの登録解除時に、bank内部データ（account・journal entry・金利set）をdeleteする。
+ * ZC 側データ（Participants, ZcRequests, SuspenseDetails）は ZC がseparatelydeleteする。
  */
 async function bankCleanup(
   bankId: string,

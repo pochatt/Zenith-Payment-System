@@ -13,9 +13,9 @@ import { insertJournalGroup } from "../bank/ledger";
 // initiateIgsSettlement
 // ---------------------------------------------------------------------------
 /**
- * IgsRequests レコードを作成し、BOJ（モック）への決済依頼を送信する。
- * モックでは Queue に ZC_IGS_CALLBACK メッセージを 2 秒後相当で送信して自動確認させる。
- * Queue が利用不可の場合はフォールバックとして Promise ベースで非同期確認を試みる。
+ * IgsRequests レコードをcreateし、BOJ（モック）へのpayment依頼をsendする。
+ * モックでは Queue に ZC_IGS_CALLBACK messageを 2 秒後相当でsendして自動confirmationさせる。
+ * Queue が利用不可の場合はフォールバックとして Promise ベースで非同期confirmationを試みる。
  *
  * @returns ext_instruction_id
  */
@@ -40,7 +40,7 @@ export async function initiateIgsSettlement(
     .bind(extId, txid, payerBankId, payeeBankId, amount.value, amount.currency, now)
     .run();
 
-  // モック: BOJ確認をQueueで2秒後に自動発火
+  // モック: BOJconfirmationをQueueで2秒後に自動発火
   const callbackMsg = {
     type: "ZC_IGS_CALLBACK" as const,
     payload: {
@@ -54,10 +54,10 @@ export async function initiateIgsSettlement(
   };
 
   try {
-    // Cloudflare Queues: delaySeconds は将来対応のため直接送信
+    // Cloudflare Queues: delaySeconds は将来対応のため直接send
     await env.QUEUE.send(callbackMsg);
   } catch (err) {
-    // Queue 未設定環境では Promise 経由で非同期処理（テスト用フォールバック）
+    // Queue 未set環境では Promise 経由で非同期処理（for testingフォールバック）
     console.error("[IGS] Queue send failed, running inline fallback:", err);
     // Worker の実行コンテキストが続く限りコールバックを試みる
     Promise.resolve().then(async () => {
@@ -76,7 +76,7 @@ export async function initiateIgsSettlement(
 // handleIgsCallback
 // ---------------------------------------------------------------------------
 /**
- * BOJ からのコールバックを処理し、取引状態を前進させる。
+ * BOJ からのコールバックを処理し、transaction stateを前進させる。
  * SETTLED → payee execute-credit → Transactions.state = SETTLED
  * FAILED / HOLD → Transactions.state = SUSPENDED
  */
@@ -88,7 +88,7 @@ export async function handleIgsCallback(
   const { ext_instruction_id, result, boj_settle_ref, reason } = input;
   const now = nowISO();
 
-  // IgsRequests 取得
+  // IgsRequests get
   const igsRow = await db
     .prepare(`SELECT * FROM IgsRequests WHERE ext_instruction_id = ?`)
     .bind(ext_instruction_id)
@@ -99,12 +99,12 @@ export async function handleIgsCallback(
     return;
   }
   if (igsRow.status !== "REQUESTED") {
-    // 冪等: すでに処理済みなら無視
+    // idempotent: すでに処理済みなら無視
     return;
   }
 
   if (result === "SETTLED") {
-    // IgsRequests を SETTLED に更新
+    // IgsRequests を SETTLED にupdate
     await db
       .prepare(
         `UPDATE IgsRequests
@@ -114,7 +114,7 @@ export async function handleIgsCallback(
       .bind(boj_settle_ref ?? null, now, ext_instruction_id)
       .run();
 
-    // external_settlement_status を SETTLED に更新（Bug A fix）
+    // external_settlement_status を SETTLED にupdate（Bug A fix）
     await db
       .prepare(
         `UPDATE Transactions SET external_settlement_status = 'SETTLED', updated_at = ? WHERE txid = ?`
@@ -122,7 +122,7 @@ export async function handleIgsCallback(
       .bind(now, igsRow.txid)
       .run();
 
-    // Transactions 取得
+    // Transactions get
     const tx = await db
       .prepare(
         `SELECT state, payee_bank_id, amount_value, decision_proof_ref,
@@ -144,30 +144,30 @@ export async function handleIgsCallback(
       return;
     }
 
-    // 楽観的ロックで状態確認（PAYER_EXEC_CONFIRMED または A_EXEC_OK 相当の状態）
-    // HIGH_VALUE レーンでは ZC_BANK_DEBIT 完了後に PAYER_EXEC_CONFIRMED になる
+    // optimistic lockingで状態confirmation（PAYER_EXEC_CONFIRMED または A_EXEC_OK 相当の状態）
+    // HIGH_VALUE laneでは ZC_BANK_DEBIT 完了後に PAYER_EXEC_CONFIRMED になる
     if (tx.state !== "PAYER_EXEC_CONFIRMED") {
       console.error("[IGS] callback: unexpected state:", tx.state, "for txid:", igsRow.txid);
       return;
     }
 
     // ---------------------------------------------------------------------------
-    // BOJ決済仕訳（プレファンドRTGS: 即時グロス清算）
-    // DNS清算を経由せず、IGS確定時点でBOJ当座を直接振替
+    // BOJpaymentjournal entry（プレファンドRTGS: 即時グロスsettlement）
+    // DNSsettlementを経由せず、IGSfinalized時点でBOJ当座を直接振替
     //
     // 支払行: ZCS(-amount) / BOJ(+amount)  [ZCS積立義務解消、BOJ事前拠出残消費（|残|↓）]
-    // 受取行: ZCS(+amount) / BOJ(-amount)  [ZCS受取権計上、BOJ当座残回復（|残|↑）]
+    // receipt行: ZCS(+amount) / BOJ(-amount)  [ZCSreceipt権計上、BOJ当座残回復（|残|↑）]
     //
-    // ※ BOJ口座の符号規約: 事前拠出残 = 負値 で管理。
-    //   支払行 BOJ(+amount) → 負の残高が 0 に近づく → 事前拠出枠を消費。
-    //   受取行 BOJ(-amount) → 負の残高が増す     → 当座残高が回復。
+    // ※ BOJaccountの符号規約: 事前拠出残 = 負値 で管理。
+    //   支払行 BOJ(+amount) → 負のbalanceが 0 に近づく → 事前拠出枠を消費。
+    //   receipt行 BOJ(-amount) → 負のbalanceが増す     → 当座balanceが回復。
     //
-    // 各グループはゼロサム ✓ かつ bank_id が各行に対応
+    // 各groupはゼロサム ✓ かつ bank_id が各行に対応
     // ---------------------------------------------------------------------------
     const valueDate = now.slice(0, 10);
     const amount = igsRow.amount_value;
 
-    // 支払行（payer）BOJ決済仕訳
+    // 支払行（payer）BOJpaymentjournal entry
     await insertJournalGroup(db, {
       bankId: igsRow.payer_bank_id,
       txGroupId: `IGS-BOJ-PAY-${igsRow.txid}`,
@@ -190,7 +190,7 @@ export async function handleIgsCallback(
       valueDate,
     });
 
-    // 受取行（payee）BOJ決済仕訳
+    // receipt行（payee）BOJpaymentjournal entry
     await insertJournalGroup(db, {
       bankId: igsRow.payee_bank_id,
       txGroupId: `IGS-BOJ-RCV-${igsRow.txid}`,
@@ -222,7 +222,7 @@ export async function handleIgsCallback(
       txid_or_gtid: igsRow.txid,
     });
 
-    // payee execute-credit をキューに送信
+    // payee execute-credit をqueueにsend
     await env.QUEUE.send({
       type: "ZC_BANK_CREDIT",
       payload: {
@@ -250,7 +250,7 @@ export async function handleIgsCallback(
       .bind(newStatus, reason ?? result, ext_instruction_id)
       .run();
 
-    // external_settlement_status を FAILED/HOLD に更新（Bug A fix）
+    // external_settlement_status を FAILED/HOLD にupdate（Bug A fix）
     await db
       .prepare(
         `UPDATE Transactions SET external_settlement_status = ?, updated_at = ? WHERE txid = ?`
@@ -258,7 +258,7 @@ export async function handleIgsCallback(
       .bind(newStatus, now, igsRow.txid)
       .run();
 
-    // 取引を SUSPENDED に遷移
+    // transactionを SUSPENDED に遷移
     const upd = await db
       .prepare(
         `UPDATE Transactions
@@ -289,7 +289,7 @@ export async function handleIgsCallback(
 // retryFailedIgs
 // ---------------------------------------------------------------------------
 /**
- * cron から呼ばれる。FAILED または REQUESTED（タイムアウト相当）で retry_count < 3 の
+ * cron から呼ばれる。FAILED または REQUESTED（timeout相当）で retry_count < 3 の
  * IgsRequests を再試行する。
  */
 export async function retryFailedIgs(db: D1Database, env: Env): Promise<void> {
@@ -389,7 +389,7 @@ export async function retryFailedIgs(db: D1Database, env: Env): Promise<void> {
 // ---------------------------------------------------------------------------
 // getIgsStatus
 // ---------------------------------------------------------------------------
-/** txid に紐付く最新の IgsRequests レコードを返す。存在しない場合は null。 */
+/** txid に紐付く最新の IgsRequests レコードをreturn。存在しない場合は null。 */
 export async function getIgsStatus(db: D1Database, txid: string): Promise<IgsRequestRow | null> {
   return db
     .prepare(`SELECT * FROM IgsRequests WHERE txid = ? ORDER BY requested_at DESC LIMIT 1`)

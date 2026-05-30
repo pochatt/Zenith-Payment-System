@@ -17,7 +17,7 @@ import { nowISO } from "../types";
 import { newUUID } from "../shared/idempotency";
 
 // ---------------------------------------------------------------------------
-// H予約取得（楽観的ロック）
+// H-reservedget（optimistic locking）
 // ---------------------------------------------------------------------------
 
 /**
@@ -86,8 +86,8 @@ export async function reserveH(
     .run();
 
   if ((upd.meta.changes ?? 0) === 0) {
-    // changes=0 は (a) 参加行なし、(b) 非アクティブ、(c) h_limit 超過 のいずれか。
-    // 1 クエリで is_active と h_limit/h_used を取得して具体的な理由を返す。
+    // changes=0 は (a) participating bankなし、(b) 非アクティブ、(c) h_limit 超過 のいずれか。
+    // 1 queryで is_active と h_limit/h_used をgetして具体的な理由をreturn。
     const bankRow = await db
       .prepare(`SELECT is_active, h_limit, h_used FROM Participants WHERE bank_id = ?`)
       .bind(bankId)
@@ -105,7 +105,7 @@ export async function reserveH(
     };
   }
 
-  // Step 2: h_used 増加成功後に HReservations を作成
+  // Step 2: h_used 増加成功後に HReservations をcreate
   await db
     .prepare(
       `INSERT INTO HReservations
@@ -115,7 +115,7 @@ export async function reserveH(
     .bind(reservationId, txid, bankId, amount, now)
     .run();
 
-  // 成功時のスナップショット（h_used_after, h_limit）を 1 クエリで取得
+  // 成功時のスナップショット（h_used_after, h_limit）を 1 queryでget
   const after = await db
     .prepare(`SELECT h_used, h_limit FROM Participants WHERE bank_id = ?`)
     .bind(bankId)
@@ -159,7 +159,7 @@ export async function lockH(reservationId: string, db: D1Database): Promise<bool
  * @returns true if released, false if already released or not found
  */
 export async function releaseH(reservationId: string, db: D1Database): Promise<boolean> {
-  // TOCTOU防止: CASガード付きの単一バッチで実行
+  // TOCTOU (time-of-check-time-of-use)防止: CASガード付きの単一batchで実行
   // HReservations の is_released=0 ガードが二重解放を防ぎ、
   // Participants の h_used 減算はそのガードの成功に依存する
   const row = await db
@@ -170,10 +170,10 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
   if (!row || row.is_released === 1) return false;
 
   const now = nowISO();
-  // バッチ内で HReservations の CAS 更新と Participants の h_used 減算を同一トランザクションで実行
+  // batch内で HReservations の CAS updateと Participants の h_used 減算を同一transactionで実行
   // HReservations の UPDATE が changes=0 なら（既に is_released=1）、
-  // Participants の UPDATE も同じトランザクション内で実行されるが、
-  // 戻り値で changes=0 を検出して呼び出し元に false を返す
+  // Participants の UPDATE も同じtransaction内で実行されるが、
+  // 戻り値で changes=0 を検出して呼び出し元に false をreturn
   const stmts = [
     db
       .prepare(
@@ -182,9 +182,9 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
       )
       .bind(now, reservationId),
     // h_used 減算は HReservations の CAS が成功した場合のみ意味がある
-    // D1 batch はトランザクション内実行のため、CAS 失敗時は後続 stmt も含めて
+    // D1 batch はtransaction内実行のため、CAS 失敗時は後続 stmt も含めて
     // ロールバックされないが、changes=0 で呼び出し元が判定する
-    // 注: h_used < amount となる場合は会計不整合のため警告ログを出力する。
+    // 注: h_used < amount となる場合は会計不整合のためwarninglogを出力する。
     // MAX(0, ...) はフロア保護として維持するが、不整合の隠蔽を防ぐ。
     db
       .prepare(
@@ -209,8 +209,8 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
       .bind(row.bank_id)
       .first<{ h_used: number }>();
     if (p && p.h_used === 0) {
-      // 解放後 h_used=0 が期待通りでない可能性がある場合の警告
-      // (他の予約が存在するのに 0 になっていればフロア保護が作動した兆候)
+      // 解放後 h_used=0 が期待通りでない可能性がある場合のwarning
+      // (他のreservedが存在するのに 0 になっていればフロア保護が作動した兆候)
       const otherActive = await db
         .prepare(`SELECT COUNT(*) as cnt FROM HReservations WHERE bank_id = ? AND is_released = 0`)
         .bind(row.bank_id)

@@ -66,18 +66,18 @@ export async function handleGetTransaction(txid: string, env: Env): Promise<Resp
           : "WAIT";
 
   // ---------------------------------------------------------------------------
-  // 照会メタ情報（仕様書: 運用設計 > 照会メタ情報）
+  // inquiryメタinformation（specification書: 運用設計 > inquiryメタinformation）
   // ---------------------------------------------------------------------------
 
-  // watermark: この取引に関する FinalityLog の最新 event_seq
-  // 窓口が「どこまで反映された情報か」を確認できる
+  // watermark: このtransactionに関する FinalityLog の最新 event_seq
+  // 窓口が「どこまで反映されたinformationか」をconfirmationできる
   const watermarkRow = await db
     .prepare(`SELECT MAX(event_seq) AS wm FROM FinalityLog WHERE txid = ?`)
     .bind(txid)
     .first<{ wm: number | null }>();
   const watermark = watermarkRow?.wm ?? 0;
 
-  // next_retry_at: 次回照会推奨時刻（状態に応じて算出）
+  // next_retry_at: 次回inquiry推奨時刻（状態に応じて算出）
   // 終端状態は null（もう変わらない）、中間状態は 5-30秒後を推奨
   const now = new Date();
   let nextRetryAt: string | null = null;
@@ -93,7 +93,7 @@ export async function handleGetTransaction(txid: string, env: Env): Promise<Resp
     nextRetryAt = new Date(now.getTime() + 10_000).toISOString(); // 10s — default
   }
 
-  // freshness_level: GREEN=最新、YELLOW=少し古い、RED=大幅に遅延
+  // freshness_level: GREEN=最新、YELLOW=少し古い、RED=大幅にdelay
   const updatedAgo = now.getTime() - new Date(tx.updated_at).getTime();
   const freshness = updatedAgo < 10_000 ? "GREEN" : updatedAgo < 60_000 ? "YELLOW" : "RED";
 
@@ -216,7 +216,7 @@ export async function handleGetCase(caseId: string, env: Env): Promise<Response>
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/transactions  (一覧: ダッシュボード用)
+// GET /api/transactions  (一覧: dashboard用)
 // ---------------------------------------------------------------------------
 export async function handleListTransactions(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -281,7 +281,7 @@ export async function handleListTransactions(req: Request, env: Env): Promise<Re
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/htlc  (HTLC一覧: ダッシュボード用)
+// GET /api/htlc  (HTLC一覧: dashboard用)
 // ---------------------------------------------------------------------------
 export async function handleListHtlcs(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -307,7 +307,7 @@ export async function handleListHtlcs(req: Request, env: Env): Promise<Response>
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/gtid  (GTID一覧: ダッシュボード用)
+// GET /api/gtid  (GTID一覧: dashboard用)
 // ---------------------------------------------------------------------------
 export async function handleListGtids(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);

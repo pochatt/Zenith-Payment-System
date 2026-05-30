@@ -1,8 +1,8 @@
 // =============================================================================
-// src/shared/request-id.ts  決定論的リクエストID生成
+// src/shared/request-id.ts  決定論的リクエストIDgenerate
 // =============================================================================
 // ZC → Bank Ingress API 呼び出しで使用するリクエストIDを一元管理する。
-// 冪等制御のため、同一コマンド × 同一取引で常に同じIDを生成する必要がある。
+// idempotent制御のため、同一コマンド × 同一transactionで常に同じIDをgenerateする必要がある。
 //
 // 命名規則: {COMMAND_PREFIX}-{primary_key}
 //   - primary_key は通常 txid だが、GTID leg の場合は leg_id を使用する
@@ -10,37 +10,37 @@
 
 /**
  * Bank Ingress コマンドのプレフィックス定数。
- * ZcRequests テーブルの request_id カラムと対応する。
+ * ZcRequests tableの request_id カラムと対応する。
  */
 export const REQUEST_PREFIX = {
   /** AML/制裁スクリーニング */
   AUTHORITY_CHECK: "AUTH",
-  /** 名義確認 */
+  /** 名義confirmation */
   NAME_CHECK: "NAME",
-  /** 資金予約 */
+  /** 資金reserved */
   RESERVE_FUNDS: "RESERVE",
   /** 仕向実行 (a) */
   EXECUTE_DEBIT: "DEBIT",
   /** 被仕向実行 (b) */
   EXECUTE_CREDIT: "CREDIT",
-  /** 資金予約解放 */
+  /** 資金reserved解放 */
   RELEASE_RESERVE: "RELEASE",
   /** HTLC recheck */
   RECHECK: "RECHECK",
-  /** 送金取消 */
+  /** fund transfercancelled */
   CANCEL: "CANCEL",
-  /** 取消時の予約解放 */
+  /** cancelled時のreserved解放 */
   CANCEL_RELEASE: "CANCEL-RELEASE",
-  /** Credit 再開 (着金承認後) */
+  /** Credit 再開 (credit / incoming paymentapproval後) */
   CREDIT_RESUME: "CREDIT-RESUME",
-  /** GTID leg レディネス確認 */
+  /** GTID leg レディネスconfirmation */
   LEG_READY: "LEG-READY",
 } as const;
 
 export type RequestPrefix = (typeof REQUEST_PREFIX)[keyof typeof REQUEST_PREFIX];
 
 /**
- * 決定論的リクエストIDを生成する。
+ * 決定論的リクエストIDをgenerateする。
  *
  * @param prefix - コマンド種別プレフィックス ({@link REQUEST_PREFIX})
  * @param key    - 主キー (txid, leg_id 等)

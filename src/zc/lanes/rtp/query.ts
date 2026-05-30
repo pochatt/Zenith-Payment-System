@@ -6,9 +6,9 @@ import type { RtpRequestRow, RtpState } from "../../../types";
 import { nowISO } from "../../../types";
 
 /**
- * RTP照会
+ * RTPinquiry
  *
- * 0025_rtp_consolidate.sql 以降は state 列が唯一の状態源なので、そのまま返す。
+ * 0025_rtp_consolidate.sql 以降は state 列が唯一の状態源なので、そのままreturn。
  */
 export async function getRtpStatus(
   db: D1Database,
@@ -27,7 +27,7 @@ export async function getRtpStatus(
 }
 
 /**
- * RTPタイムアウト処理（cron用）
+ * RTPtimeout処理（cron用）
  *
  * expires_at < now かつ CREATED / NOTIFIED 状態の RTP を EXPIRED にする。
  */

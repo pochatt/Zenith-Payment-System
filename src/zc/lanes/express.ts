@@ -25,7 +25,7 @@ export interface ExpressResult {
 }
 
 /**
- * Expressレーン: 同期で Decision まで完結
+ * Expresslane: 同期で Decision まで完結
  * RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE
  */
 export async function processExpress(
@@ -54,7 +54,7 @@ export async function processExpress(
   }
 
   // 2. AML/Authority Check（payerBank）
-  // 決定論的 request_id（同一 txid なら同一 request_id を生成）
+  // 決定論的 request_id（同一 txid なら同一 request_id をgenerate）
   const authResult = await callBankAuthorityCheck(
     req.payer.bank_id,
     {
@@ -99,7 +99,7 @@ export async function processExpress(
     };
   }
 
-  // 4. H予約
+  // 4. H-reserved
   const hResult = await reserveH(req.payer.bank_id, txid, req.amount.value, db);
   if (!hResult.ok) {
     await cancelInFlightTx(db, { txid, reasonCode: hResult.reason });
@@ -151,10 +151,10 @@ export async function processExpress(
     };
   }
 
-  // 6. Decision 確定
+  // 6. Decision finalized
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();
-  // DECIDED_TO_SETTLE 時に dns_cycle_id を設定（H解放のために必要）
+  // DECIDED_TO_SETTLE 時に dns_cycle_id をset（H解放のために必要）
   const dnsCycleId = await getOrCreateDnsCycle(db, now);
   const decided = await transitionWithLog(db, {
     txid,
@@ -177,10 +177,10 @@ export async function processExpress(
     };
   }
 
-  // H予約を RESERVED → LOCKED に切り替え（DNS清算まで保持）
+  // H-reservedを RESERVED → LOCKED に切り替え（DNSsettlementまで保持）
   await lockH(reservationId, db);
 
-  // 7. 非同期で Execution をキューに投入
+  // 7. 非同期で Execution をqueueに投入
   await env.QUEUE.send({
     type: "ZC_BANK_DEBIT",
     payload: {

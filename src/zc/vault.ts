@@ -10,7 +10,7 @@ import { newUUID } from "../shared/idempotency";
 export type VaultDataType = "AML_EVAL" | "PII" | "RISK_HINT";
 
 /**
- * Vault に保存し vault_ref を返す
+ * Vault に保存し vault_ref をreturn
  */
 export async function storeVault(
   db: D1Database,
@@ -35,7 +35,7 @@ export async function storeVault(
 }
 
 /**
- * Vault から取得（TTL切れまたは evict済みは null）
+ * Vault からget（TTL切れまたは evict済みは null）
  */
 export async function fetchVault(db: D1Database, vaultRef: string): Promise<unknown | null> {
   const row = await db

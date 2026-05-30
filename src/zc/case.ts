@@ -70,7 +70,7 @@ export async function openCase(db: D1Database, input: OpenCaseInput): Promise<st
 }
 
 /**
- * CASE状態更新
+ * CASE状態update
  */
 export async function updateCase(
   db: D1Database,

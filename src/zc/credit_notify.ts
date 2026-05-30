@@ -11,7 +11,7 @@ import { newUUID } from "../shared/idempotency";
 // createCreditNotification
 // ---------------------------------------------------------------------------
 /**
- * CreditNotifications レコードを作成する。
+ * CreditNotifications レコードをcreateする。
  * status = PENDING、delivery_attempts = 0、max_attempts = 5。
  *
  * @returns notification_id
@@ -60,9 +60,9 @@ export async function createCreditNotification(
 // deliverNotification
 // ---------------------------------------------------------------------------
 /**
- * 指定された通知を payee 銀行の credit-notify エンドポイントに配信する。
+ * 指定された通知を payee bankの credit-notify endpointに配信する。
  * 成功: status = DELIVERED
- * 失敗: delivery_attempts < max_attempts なら RETRY に遷移し next_retry_at を設定
+ * 失敗: delivery_attempts < max_attempts なら RETRY に遷移し next_retry_at をset
  *       delivery_attempts >= max_attempts なら FAILED
  */
 export async function deliverNotification(
@@ -83,7 +83,7 @@ export async function deliverNotification(
   }
 
   if (notif.status === "DELIVERED" || notif.status === "FAILED") {
-    // 冪等: 終端状態ならスキップ
+    // idempotent: 終端状態ならスキップ
     return;
   }
 
@@ -136,7 +136,7 @@ export async function deliverNotification(
     return;
   }
 
-  // 配信失敗: 再試行スケジュール or FAILED
+  // 配信失敗: 再試行schedule or FAILED
   if (newAttempts >= notif.max_attempts) {
     await db
       .prepare(
@@ -192,7 +192,7 @@ export async function retryPendingNotifications(db: D1Database, env: Env): Promi
 // ---------------------------------------------------------------------------
 // getNotificationStatus
 // ---------------------------------------------------------------------------
-/** notification_id に紐付く CreditNotifications レコードを返す。 */
+/** notification_id に紐付く CreditNotifications レコードをreturn。 */
 export async function getNotificationStatus(
   db: D1Database,
   notificationId: string

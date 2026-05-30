@@ -22,8 +22,8 @@ export interface TxEventParams {
 }
 
 /**
- * TxEventLog にイベントを記録する（INSERT ONLY・失敗しても握りつぶす）
- * 監査ログの書き込み失敗が本処理をブロックしないよう try/catch で保護する。
+ * TxEventLog にeventをrecordする（INSERT ONLY・失敗しても握りつぶす）
+ * audit logの書き込み失敗が本処理をブlockしないよう try/catch で保護する。
  */
 export async function logTxEvent(db: D1Database, params: TxEventParams): Promise<void> {
   try {
@@ -52,13 +52,13 @@ export async function logTxEvent(db: D1Database, params: TxEventParams): Promise
       )
       .run();
   } catch (err) {
-    // ログ書き込み失敗は本処理に影響させない
+    // log書き込み失敗は本処理に影響させない
     console.error("[trace] TxEventLog write failed:", err);
   }
 }
 
 /**
- * ZC→Bank 呼び出しをラップし、自動的に TxEventLog を記録するヘルパー。
+ * ZC→Bank 呼び出しをラップし、自動的に TxEventLog をrecordするヘルパー。
  * duration_ms も自動計測する。
  */
 export async function tracedBankCall<T extends { result: string }>(
@@ -114,10 +114,10 @@ export async function tracedBankCall<T extends { result: string }>(
 }
 
 // ---------------------------------------------------------------------------
-// TxEventLog 照会
+// TxEventLog inquiry
 // ---------------------------------------------------------------------------
 
-/** 取引に紐付く全イベントを時系列で返す（TxEventLog + FinalityLog マージ） */
+/** transactionに紐付く全eventを時系列でreturn（TxEventLog + FinalityLog マージ） */
 export async function getTxEvents(txid: string, db: D1Database): Promise<unknown[]> {
   const [evRows, flRows] = await Promise.all([
     db
@@ -153,7 +153,7 @@ export async function getTxEvents(txid: string, db: D1Database): Promise<unknown
   return combined;
 }
 
-/** GTID に紐付く全 FinalityLog イベントを時系列で返す */
+/** GTID に紐付く全 FinalityLog eventを時系列でreturn */
 export async function getGtidEvents(gtid: string, db: D1Database): Promise<unknown[]> {
   const flRows = await db
     .prepare(
@@ -174,7 +174,7 @@ export async function getGtidEvents(gtid: string, db: D1Database): Promise<unkno
   return flRows.results;
 }
 
-/** 最近 N 件の全イベント（ダッシュボード用） */
+/** 最近 N 件の全event（dashboard用） */
 export async function getRecentEvents(db: D1Database, limit = 100, offset = 0): Promise<unknown[]> {
   const rows = await db
     .prepare(

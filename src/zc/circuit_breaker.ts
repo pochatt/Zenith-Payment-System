@@ -2,7 +2,7 @@
  * @file Circuit Breaker — participant bank health monitoring and request throttling.
  *
  * Implements the spec's Circuit Breaker requirement:
- *   "参加行疎通不能を検知→該当行への実行要求停止→段階的再開（再送嵐防止）"
+ *   "participating bank疎通不能を検知→該当行への実行要求停止→段階的再開（再送嵐防止）"
  *
  * States (per participant bank):
  *   CLOSED    — normal operation; all requests pass through

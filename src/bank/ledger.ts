@@ -23,8 +23,8 @@ export interface JournalGroupInput {
 }
 
 /**
- * 仕訳グループを一括 INSERT する。
- * ゼロサム検証: SUM(amount) が 0 でなければ例外
+ * journal entrygroupを一括 INSERT する。
+ * ゼロサムvalidation: SUM(amount) が 0 でなければ例外
  */
 export async function insertJournalGroup(db: D1Database, input: JournalGroupInput): Promise<void> {
   const sum = input.entries.reduce((s, e) => s + e.amount, 0);
@@ -58,7 +58,7 @@ export async function insertJournalGroup(db: D1Database, input: JournalGroupInpu
 }
 
 /**
- * 口座残高を計算する（仕訳の合計）
+ * accountbalanceを計算する（journal entryの合計）
  */
 export async function calcBalance(accountId: string, db: D1Database): Promise<number> {
   const row = await db
@@ -69,7 +69,7 @@ export async function calcBalance(accountId: string, db: D1Database): Promise<nu
 }
 
 /**
- * 日次残高スナップショットを保存
+ * 日次balanceスナップショットを保存
  */
 export async function snapshotDailyBalance(
   accountId: string,
@@ -87,7 +87,7 @@ export async function snapshotDailyBalance(
 }
 
 /**
- * 利息計算と仕訳（30/360）
+ * 利息計算とjournal entry（30/360）
  * annual_rate: 0.001 = 0.1%
  */
 export async function applyDailyInterest(
@@ -144,7 +144,7 @@ export async function applyDailyInterest(
 }
 
 /**
- * ゼロサム検証（全仕訳の合計）
+ * ゼロサムvalidation（全journal entryの合計）
  */
 export async function verifyZeroSum(bankId: string, db: D1Database): Promise<boolean> {
   const row = await db

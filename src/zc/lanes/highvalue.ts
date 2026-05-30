@@ -29,8 +29,8 @@ export function processHighValueIngress(req: PaymentInitiatedRequest) {
 
 /**
  * HIGH_VALUE 非同期処理:
- * RECEIVED → PRECHECKED → DECIDED_TO_SETTLE → (a_HV) → IGS待ち → b
- * （H_RESERVED はスキップ。中央銀行 RTGS = BOJ プレファンドで担保するため）
+ * RECEIVED → PRECHECKED → DECIDED_TO_SETTLE → (a_HV (high-value)) → IGS待ち → b
+ * （H_RESERVED はスキップ。中央bank RTGS = BOJ プレファンドで担保するため）
  */
 export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   const db = env.DB;
@@ -99,8 +99,8 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 4. BOJ残高チェック（プレファンドRTGS）
-  // BOJ 残高は負債会計のため負値。`bojBalance + amount > 0` で残高不足。
+  // 4. BOJbalancecheck（プレファンドRTGS）
+  // BOJ balanceは負債会計のため負値。`bojBalance + amount > 0` でbalance不足。
   const bojBalance = await calcBalance(`${tx.payer_bank_id}-BOJ`, db);
   if (bojBalance + tx.amount_value > 0) {
     await cancelInFlightTx(db, {
@@ -135,8 +135,8 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   if (!decided.applied) return;
 
   // 6. ExecuteDebit（a_HV: proof_type=PAYER_HV_ISOLATION_PROOF）
-  // payer_account_hash を渡す（HVは reserve-funds を経由しないため Bank 側で account を特定できない）
-  // IGS決済開始はデビット確認後（onPayerExecConfirmed）に行う。
+  // payer_account_hash を渡す（HV (high-value)は reserve-funds を経由しないため Bank 側で account を特定できない）
+  // IGSpayment開始はデビットconfirmation後（onPayerExecConfirmed）に行う。
   await env.QUEUE.send({
     type: "ZC_BANK_DEBIT",
     payload: {

@@ -1,44 +1,44 @@
 // =============================================================================
-// src/shared/constants.ts  システム定数・設定値
+// src/shared/constants.ts  System constants and configuration values
 // =============================================================================
-// マジックナンバーを排除し、保守性を向上させるために一元管理する。
-// 各モジュールはハードコードされた数値の代わりにここからインポートする。
+// Centrally managed to eliminate magic numbers and improve maintainability.
+// Each module imports constants from here instead of using hardcoded values.
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// タイムアウト定数 (秒)
+// Timeout constants (seconds)
 // ---------------------------------------------------------------------------
 
-/** T2: 仕向実行 → 被仕向実行 のタイムアウト (5分) */
+/** T2: Originating execution → Destination execution timeout (5 minutes) */
 export const TIMEOUT_T2_EXEC_SEC = 300;
 
-/** T3: 被仕向証憑待ちタイムアウト (5分) */
+/** T3: Destination proof waiting timeout (5 minutes) */
 export const TIMEOUT_T3_PAYEE_PROOF_SEC = 300;
 
-/** SUSPENDED 状態から FAILED_EXECUTION へ遷移するまでの猶予 (1時間) */
+/** Grace period from SUSPENDED state to FAILED_EXECUTION transition (1 hour) */
 export const TIMEOUT_SUSPENDED_TO_FAILED_SEC = 3600;
 
-/** GTID stalled recovery: GT_DECIDED_TO_SETTLE の滞留タイムアウト (10分) */
+/** GTID stalled recovery: GT_DECIDED_TO_SETTLE stall timeout (10 minutes) */
 export const TIMEOUT_GTID_STALLED_SEC = 600;
 
 // ---------------------------------------------------------------------------
-// 通知リトライ定数
+// Notification retry constants
 // ---------------------------------------------------------------------------
 
-/** 入金通知のリトライ間隔 (秒): 指数バックオフ */
+/** Credit notification retry interval (seconds): exponential backoff */
 export const NOTIFICATION_BACKOFF_SEC = [30, 120, 600, 3600] as const;
 
-/** 入金通知の最大リトライ回数 */
+/** Maximum retry attempts for credit notification */
 export const NOTIFICATION_MAX_ATTEMPTS = 5;
 
 // ---------------------------------------------------------------------------
-// FATF R.16 定数
+// FATF R.16 constants
 // ---------------------------------------------------------------------------
 
-/** FATF R.16 適用閾値 (JPY): 1,000 USD 相当 */
+/** FATF R.16 application threshold (JPY): equivalent to 1,000 USD */
 export const FATF_THRESHOLD_JPY = 150_000;
 
-/** 為替レート: 各通貨 → JPY 換算 */
+/** Exchange rate: each currency → JPY conversion */
 export const EXCHANGE_RATE_TO_JPY: Record<string, number> = {
   JPY: 1,
   USD: 150,
@@ -53,66 +53,66 @@ export const EXCHANGE_RATE_TO_JPY: Record<string, number> = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// 金額・件数制限
+// Amount and count limits
 // ---------------------------------------------------------------------------
 
-/** D1 batch の最大ステートメント数 */
+/** Maximum number of statements in D1 batch */
 export const D1_BATCH_MAX_STMTS = 100;
 
-/** クエリ結果のデフォルト LIMIT */
+/** Default LIMIT for query results */
 export const DEFAULT_QUERY_LIMIT = 50;
 
-/** 承認リクエスト有効期限 (ミリ秒): 24時間 */
+/** Approval request expiry (milliseconds): 24 hours */
 export const APPROVAL_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// Cron 定数
+// Cron constants
 // ---------------------------------------------------------------------------
 
-/** EOD バッチ cron 式 (07:30 UTC = 16:30 JST) */
+/** EOD batch cron expression (07:30 UTC = 16:30 JST) */
 export const CRON_EOD = "30 7 * * *";
 
-/** タイムアウト巡回 cron 式 (毎分) */
+/** Timeout sweep cron expression (every minute) */
 export const CRON_TIMEOUT_SWEEP = "* * * * *";
 
 // ---------------------------------------------------------------------------
-// ISO 20022 / 全銀定数
+// ISO 20022 / Zengin constants
 // ---------------------------------------------------------------------------
 
-/** 全銀固定長レコードサイズ (バイト) */
+/** Zengin fixed-length record size (bytes) */
 export const ZENGIN_RECORD_LENGTH = 120;
 
-/** BIC コードの標準長 (8桁 or 11桁) */
+/** Standard BIC code length (8 or 11 digits) */
 export const BIC_LENGTH_SHORT = 8;
 export const BIC_LENGTH_FULL = 11;
 
 // ---------------------------------------------------------------------------
-// リッチデータ定数
+// Rich data constants
 // ---------------------------------------------------------------------------
 
-/** R2 オフロード閾値 (バイト): 50KB 超のペイロードは R2 に格納 */
+/** R2 offload threshold (bytes): payloads exceeding 50KB are stored in R2 */
 export const R2_OFFLOAD_THRESHOLD = 50 * 1024;
 
-/** リッチデータのデフォルト保持日数 */
+/** Default retention days for rich data */
 export const RICHDATA_DEFAULT_RETENTION_DAYS = 365;
 
 // ---------------------------------------------------------------------------
-// QR コード定数
+// QR code constants
 // ---------------------------------------------------------------------------
 
-/** 動的 QR のデフォルト有効期限 (ミリ秒): 15分 */
+/** Dynamic QR default expiry (milliseconds): 15 minutes */
 export const QR_DYNAMIC_EXPIRY_MS = 15 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// DNS (Deferred Net Settlement) 定数
+// DNS (Deferred Net Settlement) constants
 // ---------------------------------------------------------------------------
 
-/** DNS サイクル ID プレフィックス */
+/** DNS cycle ID prefix */
 export const DNS_CYCLE_PREFIX = "DNS";
 
 // ---------------------------------------------------------------------------
-// BOJ プレファンド定数
+// BOJ prefund constants
 // ---------------------------------------------------------------------------
 
-/** 初期プレファンド額 (JPY): 1,000億円 */
+/** Initial prefund amount (JPY): 100 billion yen */
 export const BOJ_INITIAL_PREFUND = 100_000_000_000;

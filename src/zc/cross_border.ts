@@ -23,31 +23,31 @@ import { buildPacs008 } from "../shared/iso20022";
 import { EXCHANGE_RATE_TO_JPY as MOCK_EXCHANGE_RATES } from "../shared/constants";
 
 // ---------------------------------------------------------------------------
-// クロスボーダー送金開始
+// クロスボーダーfund transfer開始
 // ---------------------------------------------------------------------------
 
 /**
- * クロスボーダー送金を開始する。
+ * クロスボーダーfund transferを開始する。
  *
  * 処理順序:
- * 1. FATF R16 検証
- * 2. CrossBorderTransactions レコード作成
- * 3. 国内 Transactions レコード (DEFERRED lane) 作成
- * 4. pacs.008 メッセージ生成
- * 5. 外部 FPS へ送信 (モック: ログのみ)
+ * 1. FATF R16 validation
+ * 2. CrossBorderTransactions レコードcreate
+ * 3. 国内 Transactions レコード (DEFERRED lane) create
+ * 4. pacs.008 messagegenerate
+ * 5. 外部 FPS へsend (モック: logのみ)
  *
  * @param db  - D1 データベース
- * @param req - クロスボーダー送金リクエスト
+ * @param req - クロスボーダーfund transferリクエスト
  * @param env - 環境変数
  * @returns cb_txid, domestic_txid, pacs.008 メッセージ
- * @throws Error - FATF R16 検証失敗時
+ * @throws Error - FATF R16 validation失敗時
  */
 export async function initiateCrossBorderTransfer(
   db: D1Database,
   req: CrossBorderSendRequest,
   env: { FOREIGN_FPS_ENDPOINT?: string }
 ): Promise<{ cbTxid: string; domesticTxid: string; pacs008: Pacs008Message }> {
-  // 1. FATF R16 検証
+  // 1. FATF R16 validation
   const fatfResult = validateFatfR16(req.fatf_data);
   if (!fatfResult.valid) {
     throw new Error(`FATF R16 validation failed: ${fatfResult.errors.join("; ")}`);
@@ -63,7 +63,7 @@ export async function initiateCrossBorderTransfer(
 
   const fatfJson = serializeFatfData(req.fatf_data);
 
-  // 2. CrossBorderTransactions レコード作成
+  // 2. CrossBorderTransactions レコードcreate
   await db
     .prepare(`
     INSERT INTO CrossBorderTransactions
@@ -89,10 +89,10 @@ export async function initiateCrossBorderTransfer(
     )
     .run();
 
-  // 3. 国内 Transactions レコード (DEFERRED lane) 作成
-  // payee 側は外部 FPS の情報を設定する（空文字列だと execute-credit で口座特定不可）
+  // 3. 国内 Transactions レコード (DEFERRED lane) create
+  // payee 側は外部 FPS のinformationをsetする（空文字列だと execute-credit でaccount特定不可）
   // クロスボーダーでは foreign_bank_bic を payee_bank_id、foreign_account_id を
-  // payee_account_hash に格納し、着金処理で参照可能にする
+  // payee_account_hash に格納し、credit / incoming payment処理で参照可能にする
   await db
     .prepare(`
     INSERT OR IGNORE INTO Transactions
@@ -115,7 +115,7 @@ export async function initiateCrossBorderTransfer(
     )
     .run();
 
-  // 4. pacs.008 メッセージ生成
+  // 4. pacs.008 messagegenerate
   const pacs008 = buildPacs008({
     msgId: `MSG-${cbTxid}`,
     txid: cbTxid,
@@ -130,7 +130,7 @@ export async function initiateCrossBorderTransfer(
     fatf: req.fatf_data,
   });
 
-  // 5. 外部 FPS へ送信 (モック: ログのみ)
+  // 5. 外部 FPS へsend (モック: logのみ)
   if (env.FOREIGN_FPS_ENDPOINT) {
     console.log(
       `[cross_border] MOCK send to foreign FPS ${env.FOREIGN_FPS_ENDPOINT}`,
@@ -144,14 +144,14 @@ export async function initiateCrossBorderTransfer(
 }
 
 // ---------------------------------------------------------------------------
-// クロスボーダー送金状態更新
+// クロスボーダーfund transfer状態update
 // ---------------------------------------------------------------------------
 
 /**
- * 外部FPSコールバック受信時にクロスボーダー送金の状態を更新する。
+ * 外部FPSコールバックreceive時にクロスボーダーfund transferの状態をupdateする。
  *
  * @param db         - D1 データベース
- * @param cbTxid     - クロスボーダー取引ID
+ * @param cbTxid     - クロスボーダーtransaction ID
  * @param status     - 新しいステータス
  * @param foreignRef - 外部FPSの参照番号（オプション）
  */
@@ -185,14 +185,14 @@ export async function updateCrossBorderStatus(
 }
 
 // ---------------------------------------------------------------------------
-// クロスボーダー送金照会
+// クロスボーダーfund transferinquiry
 // ---------------------------------------------------------------------------
 
 /**
- * cb_txid でクロスボーダー取引を照会する。
+ * cb_txid でクロスボーダーtransactionをinquiryする。
  *
  * @param db     - D1 データベース
- * @param cbTxid - クロスボーダー取引ID
+ * @param cbTxid - クロスボーダーtransaction ID
  * @returns CrossBorderTransactionRow | null
  */
 export async function getCrossBorderTransaction(
@@ -208,14 +208,14 @@ export async function getCrossBorderTransaction(
 }
 
 // ---------------------------------------------------------------------------
-// domestic_txid からクロスボーダー情報を取得
+// domestic_txid からクロスボーダーinformationをget
 // ---------------------------------------------------------------------------
 
 /**
- * domestic_txid に紐づくクロスボーダー取引を取得する。
+ * domestic_txid に紐づくクロスボーダーtransactionをgetする。
  *
  * @param db          - D1 データベース
- * @param domesticTxid - 国内取引ID
+ * @param domesticTxid - 国内transaction ID
  * @returns CrossBorderTransactionRow | null
  */
 export async function getCrossBorderByDomesticTxid(

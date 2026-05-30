@@ -86,7 +86,7 @@ export async function storeRichData(
 }
 
 // ---------------------------------------------------------------------------
-// リッチデータ取得 (data_ref)
+// リッチデータget (data_ref)
 // ---------------------------------------------------------------------------
 export async function getRichData(
   db: D1Database,
@@ -118,7 +118,7 @@ export async function listRichDataByTxid(
 }
 
 // ---------------------------------------------------------------------------
-// コンテンツハッシュ計算 (SHA-256 of JSON)
+// コンテンツhash計算 (SHA-256 of JSON)
 // ---------------------------------------------------------------------------
 export async function computeContentHash(content: object): Promise<string> {
   const json = JSON.stringify(content);
@@ -128,7 +128,7 @@ export async function computeContentHash(content: object): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// 内部ヘルパー: R2保存時のD1サマリー生成
+// 内部ヘルパー: R2保存時のD1summarygenerate
 // ---------------------------------------------------------------------------
 function buildSummary(
   content: Record<string, unknown>,

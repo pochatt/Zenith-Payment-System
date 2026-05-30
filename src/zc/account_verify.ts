@@ -20,8 +20,8 @@ import { signPayload } from "../shared/hmac";
 // requestAccountVerification
 // ---------------------------------------------------------------------------
 /**
- * 口座確認リクエストを作成し、対象銀行の ZC Ingress API を呼ぶ。
- * キャッシュヒット時は銀行呼び出しをスキップする。
+ * accountconfirmationリクエストをcreateし、対象bankの ZC Ingress API を呼ぶ。
+ * cacheヒット時はbank呼び出しをスキップする。
  *
  * @returns verification_id
  */
@@ -32,17 +32,17 @@ export async function requestAccountVerification(
 ): Promise<string> {
   const now = nowISO();
 
-  // 冪等チェック: 同じ idempotency_key が存在すれば既存 ID を返す
+  // idempotentcheck: 同じ idempotency_key が存在すれば既存 ID をreturn
   const existing = await db
     .prepare(`SELECT verification_id FROM AccountVerifications WHERE idempotency_key = ?`)
     .bind(req.idempotency_key)
     .first<{ verification_id: string }>();
   if (existing) return existing.verification_id;
 
-  // アカウントハッシュ（account_id をそのままハッシュ相当として使用）
+  // アカウントhash（account_id をそのままhash相当として使用）
   const accountHash = req.target_account_id;
 
-  // キャッシュ確認: 同一 (target_bank_id, target_account_hash) で有効期限内のレコードを探す
+  // cacheconfirmation: 同一 (target_bank_id, target_account_hash) で有効deadline内のレコードを探す
   const cached = await db
     .prepare(
       `SELECT * FROM AccountVerifications
@@ -58,7 +58,7 @@ export async function requestAccountVerification(
     .first<AccountVerificationRow>();
 
   if (cached) {
-    // キャッシュヒット: 新しいレコードをキャッシュ結果でコピー作成
+    // cacheヒット: 新しいレコードをcache結果でコピーcreate
     const newId = req.verification_id;
     await db
       .prepare(
@@ -107,7 +107,7 @@ export async function requestAccountVerification(
     )
     .run();
 
-  // 対象銀行の ZC Ingress API を呼ぶ
+  // 対象bankの ZC Ingress API を呼ぶ
   const bankPayload: BankAccountVerifyRequest = {
     verification_id: req.verification_id,
     account_id: req.target_account_id,
@@ -161,7 +161,7 @@ export async function requestAccountVerification(
 // handleBankVerifyResponse
 // ---------------------------------------------------------------------------
 /**
- * 銀行からの口座確認レスポンスを AccountVerifications テーブルに反映する。
+ * bankからのaccountconfirmationレスポンスを AccountVerifications tableに反映する。
  */
 export async function handleBankVerifyResponse(
   db: D1Database,
@@ -174,7 +174,7 @@ export async function handleBankVerifyResponse(
   let targetAccountName: string | null = null;
   let matchScore: number | null = null;
   let fraudWarning = 0;
-  // キャッシュ有効期限: MATCHED/UNMATCHED は 24 時間、NOT_FOUND は 1 時間
+  // cache有効deadline: MATCHED/UNMATCHED は 24 時間、NOT_FOUND は 1 時間
   let cachedUntil: string | null = null;
 
   switch (response.result) {
@@ -227,7 +227,7 @@ export async function handleBankVerifyResponse(
 // ---------------------------------------------------------------------------
 // getVerificationResult
 // ---------------------------------------------------------------------------
-/** verification_id に紐付く AccountVerifications レコードを返す。 */
+/** verification_id に紐付く AccountVerifications レコードをreturn。 */
 export async function getVerificationResult(
   db: D1Database,
   verificationId: string
@@ -242,8 +242,8 @@ export async function getVerificationResult(
 // batchVerify
 // ---------------------------------------------------------------------------
 /**
- * 複数口座の確認を一括で実行する。
- * 各アイテムに対して requestAccountVerification を呼び、結果配列を返す。
+ * 複数accountのconfirmationを一括で実行する。
+ * 各アイテムに対して requestAccountVerification を呼び、結果arrayをreturn。
  */
 export async function batchVerify(
   db: D1Database,
@@ -289,7 +289,7 @@ export async function batchVerify(
 // ---------------------------------------------------------------------------
 // ヘルパー
 // ---------------------------------------------------------------------------
-/** ISO 文字列に秒数を加算して新しい ISO 文字列を返す */
+/** ISO 文字列に秒数を加算して新しい ISO 文字列をreturn */
 function addSeconds(isoStr: string, secs: number): string {
   return new Date(new Date(isoStr).getTime() + secs * 1000).toISOString();
 }

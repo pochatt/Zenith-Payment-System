@@ -110,37 +110,37 @@ export interface FatfR16Data {
 // Account Number Utilities
 // ---------------------------------------------------------------------------
 
-/** 口座番号から銀行コード (3桁) を取得 */
+/** account numberからbankコード (3桁) をget */
 export function bankCodeFromAccount(accountId: string): string {
   return accountId.slice(0, 3);
 }
 
-/** 銀行コードから別段預金口座番号を生成 */
+/** bankコードからsegregated depositaccount numberをgenerate */
 export function suspenseAccountId(bankCode: string): string {
   return `${bankCode}0000000`;
 }
 
-/** 銀行コードから ZC清算勘定口座番号を生成 */
+/** bankコードから ZCsettlement勘定account numberをgenerate */
 export function nostroAccountId(bankCode: string): string {
   return `${bankCode}-ZCS`;
 }
 
-/** 銀行コードから利益剰余金（Retained Earnings）口座番号を生成 */
+/** bankコードから利益剰余金（Retained Earnings）account numberをgenerate */
 export function retainedEarningsAccountId(bankCode: string): string {
   return `${bankCode}-RE`;
 }
 
-/** 銀行コードから現金（Cash）口座番号を生成 */
+/** bankコードから現金（Cash）account numberをgenerate */
 export function cashAccountId(bankCode: string): string {
   return `${bankCode}-CASH`;
 }
 
-/** 口座番号が別段預金かどうか */
+/** account numberがsegregated depositかどうか */
 export function isSuspenseAccount(accountId: string): boolean {
   return accountId.endsWith("0000000");
 }
 
-/** 次の口座番号を生成 */
+/** 次のaccount numberをgenerate */
 export function generateAccountId(bankCode: string, seq: number): string {
   return `${bankCode}${String(seq).padStart(7, "0")}`;
 }

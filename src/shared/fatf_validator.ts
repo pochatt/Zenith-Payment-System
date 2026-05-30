@@ -51,7 +51,7 @@ export function isFatfApplicable(
 }
 
 // ---------------------------------------------------------------------------
-// FATF R16 必須フィールド検証
+// FATF R16 必須フィールドvalidation
 // ---------------------------------------------------------------------------
 
 /**
@@ -71,23 +71,23 @@ export function isFatfApplicable(
 export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
-  // originator 検証
+  // originator validation
   const originatorErrors = validateOriginator(data.originator);
   errors.push(...originatorErrors);
 
-  // beneficiary 検証
+  // beneficiary validation
   const beneficiaryErrors = validateBeneficiary(data.beneficiary);
   errors.push(...beneficiaryErrors);
 
-  // ordering_institution 検証
+  // ordering_institution validation
   const orderingErrors = validateInstitution(data.ordering_institution);
   orderingErrors.forEach((e) => errors.push(`ordering_institution: ${e}`));
 
-  // beneficiary_institution 検証
+  // beneficiary_institution validation
   const beneficiaryInstErrors = validateInstitution(data.beneficiary_institution);
   beneficiaryInstErrors.forEach((e) => errors.push(`beneficiary_institution: ${e}`));
 
-  // 国をまたぐ取引であることの整合性確認
+  // 国をまたぐtransactionであることの整合性confirmation
   // NOTE: This validator checks consistency between fatf16_applicable and is_cross_border flags.
   // The fatf16_applicable flag should logically only be true when is_cross_border is true.
   // Amount threshold checking (JPY 150,000) occurs in ingress.ts, not here, so this validator
@@ -96,7 +96,7 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
     errors.push("fatf16_applicable=true だが is_cross_border=false: 矛盾した設定です");
   }
 
-  // intermediary が存在する場合の検証
+  // intermediary が存在する場合のvalidation
   if (data.intermediary) {
     if (!data.intermediary.name || data.intermediary.name.trim().length === 0) {
       errors.push("intermediary.name: 仲介機関名は必須です");
@@ -114,7 +114,7 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
 }
 
 // ---------------------------------------------------------------------------
-// originator (送金人) 情報検証
+// originator (fund transfer人) informationvalidation
 // ---------------------------------------------------------------------------
 
 /**
@@ -141,7 +141,7 @@ function validateOriginator(party: FatfParty): string[] {
     errors.push(`${prefix}.account_id: 送金人口座番号は必須です`);
   }
 
-  // 追加識別情報（住所 OR 国民識別番号 OR 生年月日+出生地）のいずれか必須
+  // 追加識別information（住所 OR 国民識別番号 OR 生年月日+出生地）のいずれか必須
   const hasAddress = Boolean(party.address?.trim());
   const hasNationalId = Boolean(party.national_id?.trim());
   const hasDob = Boolean(party.date_of_birth?.trim());
@@ -156,7 +156,7 @@ function validateOriginator(party: FatfParty): string[] {
     );
   }
 
-  // 生年月日フォーマット検証（YYYY-MM-DD）
+  // 生年月日フォーマットvalidation（YYYY-MM-DD）
   if (hasDob && party.date_of_birth) {
     if (!isValidDateFormat(party.date_of_birth)) {
       errors.push(`${prefix}.date_of_birth: YYYY-MM-DD 形式で入力してください (例: 1985-04-15)`);
@@ -167,7 +167,7 @@ function validateOriginator(party: FatfParty): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// beneficiary (受取人) 情報検証
+// beneficiary (payee) informationvalidation
 // ---------------------------------------------------------------------------
 
 /**
@@ -197,7 +197,7 @@ function validateBeneficiary(party: FatfParty): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// ordering/beneficiary institution 検証
+// ordering/beneficiary institution validation
 // ---------------------------------------------------------------------------
 
 /**
@@ -228,7 +228,7 @@ function validateInstitution(inst: FatfInstitution): string[] {
     );
   }
 
-  // BIC が存在する場合のフォーマット検証
+  // BIC が存在する場合のフォーマットvalidation
   if (inst.bic) {
     if (!isValidBicFormat(inst.bic)) {
       errors.push(`bic: 無効な BIC フォーマット '${inst.bic}' (8文字または11文字が必要)`);
@@ -345,7 +345,7 @@ export function createFatfDataSkeleton(params: {
 
 /** Validate ISO 3166-1 alpha-2 country code format (regex only in mock). */
 function isValidCountryCode(country: string): boolean {
-  // 大文字に正規化してから検証（小文字入力も受け入れるが正規化済みを前提とする）
+  // 大文字に正規化してからvalidation（小文字入力も受け入れるが正規化済みを前提とする）
   return /^[A-Z]{2}$/.test(country.toUpperCase());
 }
 

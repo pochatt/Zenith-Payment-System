@@ -7,7 +7,7 @@ import type { QrCodeRow, QrGenerateRequest, QrPayRequest } from "../types";
 import { signPayload, verifySignature } from "../shared/hmac";
 
 // ---------------------------------------------------------------------------
-// QRコード生成
+// QRコードgenerate
 // signatureは HMAC-SHA256(qr_ref + payee_bank_id + amount, QR_SECRET)
 // ---------------------------------------------------------------------------
 export async function generateQrCode(
@@ -66,7 +66,7 @@ export async function generateQrCode(
 }
 
 // ---------------------------------------------------------------------------
-// QR照会
+// QRinquiry
 // ---------------------------------------------------------------------------
 export async function getQrCode(db: D1Database, qrRef: string): Promise<QrCodeRow | null> {
   const row = await db
@@ -79,7 +79,7 @@ export async function getQrCode(db: D1Database, qrRef: string): Promise<QrCodeRo
 }
 
 // ---------------------------------------------------------------------------
-// QR決済実行 (署名検証 → 使用済みマーク → txid返却)
+// QRpayment実行 (signaturevalidation → 使用済みマーク → txidreturn)
 // ---------------------------------------------------------------------------
 export async function processQrPayment(
   db: D1Database,
@@ -91,7 +91,7 @@ export async function processQrPayment(
     return { valid: false, error: "QR_NOT_FOUND" };
   }
 
-  // 期限切れチェック
+  // expiredcheck
   if (qrRow.expires_at) {
     const expiresMs = new Date(qrRow.expires_at).getTime();
     if (expiresMs < Date.now()) {
@@ -99,19 +99,19 @@ export async function processQrPayment(
     }
   }
 
-  // 使用済みチェック (DYNAMIC QRは1回限り)
+  // 使用済みcheck (DYNAMIC QRは1回限り)
   if (qrRow.qr_type === "DYNAMIC" && qrRow.is_used === 1) {
     return { valid: false, error: "QR_ALREADY_USED" };
   }
 
-  // 金額検証: DYNAMIC QRは固定金額優先、なければreq.amount。STATIC QRはreq.amountが必須
+  // amountvalidation: DYNAMIC QRは固定amount優先、なければreq.amount。STATIC QRはreq.amountが必須
   const effectiveAmount =
     qrRow.qr_type === "DYNAMIC" ? (qrRow.amount_value ?? req.amount) : req.amount;
   if (effectiveAmount == null || effectiveAmount <= 0) {
     return { valid: false, error: "QR_AMOUNT_REQUIRED" };
   }
 
-  // 署名検証
+  // signaturevalidation
   const sigOk = await verifyQrSignature(
     qrRow.qr_ref,
     qrRow.payee_bank_id,
@@ -134,12 +134,12 @@ export async function processQrPayment(
     return { valid: true, qrRow: { ...qrRow, is_used: 1 }, effectiveAmount };
   }
 
-  // STATIC QRはそのまま返す (何度でも使用可能)
+  // STATIC QRはそのままreturn (何度でも使用可能)
   return { valid: true, qrRow, effectiveAmount };
 }
 
 // ---------------------------------------------------------------------------
-// QR署名検証
+// QRsignaturevalidation
 // ---------------------------------------------------------------------------
 export async function verifyQrSignature(
   qrRef: string,
@@ -153,7 +153,7 @@ export async function verifyQrSignature(
 }
 
 // ---------------------------------------------------------------------------
-// 内部ヘルパー: 署名ペイロード文字列構築
+// 内部ヘルパー: signatureペイロード文字列construct
 // ---------------------------------------------------------------------------
 function buildSigPayload(qrRef: string, payeeBankId: string, amountValue?: number): string {
   const amountStr = amountValue !== undefined ? String(amountValue) : "";

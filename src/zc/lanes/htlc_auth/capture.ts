@@ -9,8 +9,8 @@ import { logTxEvent } from "../../trace";
 import { claimHtlc, cancelHtlc } from "../htlc";
 
 /**
- * 受取側（加盟店）がキャプチャを実行する。
- * Vault から preimage を取得して内部的に claimHtlc を呼び出す。
+ * receipt側（加盟店）がキャプチャを実行する。
+ * Vault から preimage をgetして内部的に claimHtlc を呼び出す。
  * POST /api/htlc/:htlc_id/capture
  */
 export async function captureHtlcAuth(
@@ -31,7 +31,7 @@ export async function captureHtlcAuth(
     return { result: "ERROR", reason_code: "INVALID_AUTH_STATE" };
   }
 
-  // キャプチャ期限チェック
+  // キャプチャdeadlinecheck
   if (new Date(authReq.capture_expires_at) <= new Date(now)) {
     await db
       .prepare(`UPDATE HtlcAuthRequests SET status='EXPIRED', updated_at=? WHERE auth_id=?`)
@@ -40,7 +40,7 @@ export async function captureHtlcAuth(
     return { result: "ERROR", reason_code: "CAPTURE_EXPIRED" };
   }
 
-  // Vault から preimage を取得
+  // Vault から preimage をget
   const vault = await db
     .prepare(`SELECT payload_json FROM Vault WHERE vault_ref=? AND is_evicted=0`)
     .bind(authReq.vault_ref)
@@ -67,7 +67,7 @@ export async function captureHtlcAuth(
   // Vault の preimage を使用済みにする
   await db.prepare(`UPDATE Vault SET is_evicted=1 WHERE vault_ref=?`).bind(authReq.vault_ref).run();
 
-  // HtlcAuthRequests を CAPTURED に更新
+  // HtlcAuthRequests を CAPTURED にupdate
   await db
     .prepare(
       `UPDATE HtlcAuthRequests
@@ -91,7 +91,7 @@ export async function captureHtlcAuth(
 }
 
 /**
- * 受取側または送金側がオーソリを取り消す。
+ * receipt側またはfund transfer側がオーソリを取り消す。
  * POST /api/htlc/:htlc_id/void
  */
 export async function voidHtlcAuth(
@@ -112,8 +112,8 @@ export async function voidHtlcAuth(
     return { result: "ERROR", reason_code: "INVALID_AUTH_STATE" };
   }
 
-  // cancelHtlc を内部呼び出し（H 解放 + 銀行側別段解放）
-  // env を渡して callBankReleaseReserve を実行し、承認済み別段預金を解放する
+  // cancelHtlc を内部呼び出し（H 解放 + bank側別段解放）
+  // env を渡して callBankReleaseReserve を実行し、approval済みsegregated depositを解放する
   await cancelHtlc(htlcId, authReq.txid!, req.reason ?? "VOID_REQUESTED", db, env);
 
   // Vault の preimage を無効化
@@ -124,7 +124,7 @@ export async function voidHtlcAuth(
       .run();
   }
 
-  // HtlcAuthRequests を VOIDED に更新
+  // HtlcAuthRequests を VOIDED にupdate
   await db
     .prepare(
       `UPDATE HtlcAuthRequests

@@ -27,13 +27,13 @@ import { logTxEvent } from "../../trace";
 import { transitionWithLog, insertTxWithLog } from "../_helpers";
 
 /**
- * 送金側（顧客）がオーソリを承認する。
+ * fund transfer側（customer）がオーソリをapprovalする。
  * POST /api/htlc/auth/:auth_id/approve
- *   1. preimage + hashlock を生成して Vault に保管
- *   2. 送金側銀行に資金予約をかける
+ *   1. preimage + hashlock をgenerateして Vault にsave
+ *   2. fund transfer側bankに資金reservedをかける
  *   3. Transactions を RECEIVED で INSERT（canonical entry）
  *   4. RECEIVED → HTLC_LOCKED へ `transitionWithLog` で遷移
- *      （ALLOWED_TRANSITIONS チェック + FinalityLog 同時記録）
+ *      （ALLOWED_TRANSITIONS check + FinalityLog 同時record）
  */
 export async function approveAuthRequest(
   authId: string,
@@ -58,7 +58,7 @@ export async function approveAuthRequest(
     return { result: "ERROR", reason_code: "INVALID_AUTH_STATE" };
   }
 
-  // 承認期限チェック
+  // approval deadlinecheck
   if (new Date(authReq.auth_expires_at) <= new Date(now)) {
     await db
       .prepare(`UPDATE HtlcAuthRequests SET status='EXPIRED', updated_at=? WHERE auth_id=?`)
@@ -67,7 +67,7 @@ export async function approveAuthRequest(
     return { result: "ERROR", reason_code: "AUTH_EXPIRED" };
   }
 
-  // preimage 生成 → Vault に保管
+  // preimage generate → Vault にsave
   const buf = new Uint8Array(32);
   crypto.getRandomValues(buf);
   const preimage = Array.from(buf)
@@ -87,7 +87,7 @@ export async function approveAuthRequest(
     .bind(vaultRef, JSON.stringify({ preimage, auth_id: authId }), vaultExpiresAt, now)
     .run();
 
-  // 送金側銀行に資金予約
+  // fund transfer側bankに資金reserved
   const htlcId = `HAUTH-${authId}`;
   const txid = `TX-HAUTH-${authId}`;
   const requestId = `RESERVE-AUTH-${authId}`;
@@ -138,7 +138,7 @@ export async function approveAuthRequest(
     payload: { txid, lane: "HTLC", flow: "HTLC_AUTH", auth_id: authId },
     sideUpdates: [
       {
-        // HtlcContracts は HTLC_LOCKED で作成しておき、Step 2 の Transactions
+        // HtlcContracts は HTLC_LOCKED でcreateしておき、Step 2 の Transactions
         // 遷移 (RECEIVED → HTLC_LOCKED) と整合させる。claimHtlc がリードする
         // hashlock/timelock を確実に提供するため Transactions より先に存在させる。
         sql: `INSERT OR IGNORE INTO HtlcContracts
@@ -177,7 +177,7 @@ export async function approveAuthRequest(
     return { result: "ERROR", reason_code: "INVALID_AUTH_STATE" };
   }
 
-  // HtlcAuthRequests を AUTH_APPROVED に更新
+  // HtlcAuthRequests を AUTH_APPROVED にupdate
   await db
     .prepare(
       `UPDATE HtlcAuthRequests

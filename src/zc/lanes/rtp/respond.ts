@@ -9,7 +9,7 @@ import { insertTxWithLog } from "../_helpers";
 /**
  * RTP応答処理（ACCEPTED / REJECTED）
  *
- * 支払人が承認した場合、RTP 紐づき送金取引を自動生成して ZC に投入する。
+ * 支払人がapprovalした場合、RTP 紐づきfund transfertransactionを自動generateして ZC に投入する。
  */
 export async function respondToRtp(
   db: D1Database,
@@ -50,7 +50,7 @@ export async function respondToRtp(
     return { result: "ALREADY_RESPONDED", txid: rtp.linked_txid ?? undefined };
   }
 
-  // 期限チェック
+  // deadlinecheck
   if (new Date(rtp.expires_at) <= new Date(now)) {
     await db
       .prepare(`
@@ -75,14 +75,14 @@ export async function respondToRtp(
     return { result: "DECLINED" };
   }
 
-  // ACCEPTED: 送金取引を自動生成
+  // ACCEPTED: fund transfertransactionを自動generate
   const linkedTxid = `TX-${crypto.randomUUID()}`;
 
-  // 送金 Transaction 作成 + FinalityLog + RtpRequests の TX_CREATED 化を
-  // 1 つの db.batch() に統合する。旧実装は INSERT/UPDATE をバッチ、FinalityLog を別 await
-  // していたため「Transactions 行はあるが RtpAccepted ログが残らない」窓が存在した。
+  // fund transfer Transaction create + FinalityLog + RtpRequests の TX_CREATED 化を
+  // 1 つの db.batch() に統合する。旧implementationは INSERT/UPDATE をbatch、FinalityLog を別 await
+  // していたため「Transactions 行はあるが RtpAccepted logが残らない」窓が存在した。
   // insertTxWithLog は ALLOWED_ENTRY_STATES = ['RECEIVED', ...] を強制するので、
-  // RTP は canonical な RECEIVED 入口で他レーンと合流する。
+  // RTP は canonical な RECEIVED 入口で他laneと合流する。
   await insertTxWithLog(db, {
     txid: linkedTxid,
     lane: "RTP",
@@ -108,7 +108,7 @@ export async function respondToRtp(
     ],
   });
 
-  // オーケストレーターへ送信（STANDARD フローで精算処理を進める）
+  // オーケストレーターへsend（STANDARD フローで精算処理を進める）
   await env.QUEUE.send({
     type: "ZC_STATE_ADVANCE",
     payload: { txid: linkedTxid, action: "ADVANCE_STANDARD" },

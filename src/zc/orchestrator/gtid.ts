@@ -55,7 +55,7 @@ export async function checkAndFinalizeGtid(gtid: string, db: D1Database): Promis
     return;
   }
 
-  // null txid レグは PAYER Transaction の着金フローで実質的に完了済みとみなす
+  // null txid レグは PAYER Transaction のcredit / incoming paymentフローで実質的に完了済みとみなす
   const allSettled = legs.results.every((l) => l.tx_state === "SETTLED" || l.txid === null);
   if (!allSettled) return;
 

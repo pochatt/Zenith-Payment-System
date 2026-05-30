@@ -49,7 +49,7 @@ export async function registerPspr(
 }
 
 /**
- * PSPR 照会
+ * PSPR inquiry
  */
 export async function lookupPspr(db: D1Database, psprRef: string): Promise<PsprRegistryRow | null> {
   const row = await db

@@ -48,7 +48,7 @@ const ZENGIN_ACCOUNT_TYPE_LABEL: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// pacs.008 生成
+// pacs.008 generate
 // ---------------------------------------------------------------------------
 
 /**
@@ -123,7 +123,7 @@ export function buildPacs008(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pacs.002 生成
+// pacs.002 generate
 // ---------------------------------------------------------------------------
 
 /**
@@ -160,7 +160,7 @@ export function buildPacs002(params: {
 }
 
 // ---------------------------------------------------------------------------
-// acmt.023 生成
+// acmt.023 generate
 // ---------------------------------------------------------------------------
 
 /**
@@ -196,7 +196,7 @@ export function buildAcmt023(params: {
 }
 
 // ---------------------------------------------------------------------------
-// acmt.024 生成
+// acmt.024 generate
 // ---------------------------------------------------------------------------
 
 /**
@@ -240,7 +240,7 @@ export function buildAcmt024(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pacs.004 生成
+// pacs.004 generate
 // ---------------------------------------------------------------------------
 
 /**
@@ -287,7 +287,7 @@ export function buildPacs004(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pacs.028 生成
+// pacs.028 generate
 // ---------------------------------------------------------------------------
 
 /**
@@ -314,7 +314,7 @@ export function buildPacs028(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pain.013 生成
+// pain.013 generate
 // ---------------------------------------------------------------------------
 
 /**
@@ -358,7 +358,7 @@ export function buildPain013(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pain.014 生成
+// pain.014 generate
 // ---------------------------------------------------------------------------
 
 /**
@@ -406,8 +406,8 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
   const now = new Date().toISOString();
   const msgId = `ZG-${record.originator_bank_code}-${Date.now()}`;
 
-  // 全銀の口座番号を内部形式に変換
-  // 全銀: 4桁金融機関コード + 3桁支店コード + 7桁口座番号
+  // 全銀のaccount numberを内部形式に変換
+  // 全銀: 4桁金融機関コード + 3桁支店コード + 7桁account number
   const payeeAccountId = `${record.bank_code}${record.account_number.replace(/\s/g, "").padStart(7, "0")}`;
   const payerAccountId = `${record.originator_bank_code}0000000`; // 送金元は別段預金口座
 
@@ -463,15 +463,15 @@ export function iso20022ToZengin(msg: Pacs008Message): ZenginFixedRecord {
   const payeeBankId = msg.creditor.bank_id;
   const payerBankId = msg.debtor.bank_id;
 
-  // 口座番号を全銀形式に変換（7桁固定）
-  // 内部口座形式: bankCode + 7桁seq → 末尾7桁を口座番号として取る
+  // account numberを全銀形式に変換（7桁固定）
+  // 内部account形式: bankCode + 7桁seq → 末尾7桁をaccount numberとして取る
   const rawAccountId = msg.creditor.account_id;
   const accountNumber =
     rawAccountId.length >= 7
       ? rawAccountId.slice(-7).padStart(7, "0")
       : rawAccountId.padStart(7, "0");
 
-  // remittance_info の unstructured から支店コード・口座種別を復元（可能な場合）
+  // remittance_info の unstructured から支店コード・account種別を復元（可能な場合）
   let branchCode = "000";
   let accountType: "1" | "2" | "4" = "1";
 
@@ -565,7 +565,7 @@ export function parseZenginRecord(line: string): ZenginFixedRecord {
 }
 
 // ---------------------------------------------------------------------------
-// 全銀固定長テキスト生成
+// 全銀固定長テキストgenerate
 // ---------------------------------------------------------------------------
 
 /**

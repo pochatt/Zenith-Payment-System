@@ -8,15 +8,15 @@ import type { EventStreamRow, StreamEventType } from "../types";
 import { nowISO } from "../types";
 
 // ---------------------------------------------------------------------------
-// イベント発行
+// event発行
 // ---------------------------------------------------------------------------
 
 /**
- * EventStream テーブルへイベントを INSERT し event_id を返す。
+ * EventStream tableへeventを INSERT し event_id をreturn。
  *
  * @param db           - D1 データベース
- * @param targetBankId - 配信先銀行ID
- * @param eventType    - イベント種別
+ * @param targetBankId - 配信先bank ID
+ * @param eventType    - event種別
  * @param payload      - ペイロードオブジェクト（JSON シリアライズされる）
  * @returns event_id (UUID)
  */
@@ -42,16 +42,16 @@ export async function publishEvent(
 }
 
 // ---------------------------------------------------------------------------
-// 未配信イベント取得
+// 未配信eventget
 // ---------------------------------------------------------------------------
 
 /**
- * 未配信イベントをポーリング用に取得する。
- * afterEventId が指定された場合、そのイベント以降（created_at 昇順）の未配信を返す。
+ * 未配信eventをポーリング用にgetする。
+ * afterEventId が指定された場合、そのevent以降（created_at 昇順）の未配信をreturn。
  *
  * @param db           - D1 データベース
- * @param targetBankId - 配信先銀行ID
- * @param afterEventId - このイベントID以降を取得（オプション）
+ * @param targetBankId - 配信先bank ID
+ * @param afterEventId - このeventID以降をget（オプション）
  * @returns EventStreamRow[]
  */
 export async function getPendingEvents(
@@ -60,7 +60,7 @@ export async function getPendingEvents(
   afterEventId?: string
 ): Promise<EventStreamRow[]> {
   if (afterEventId) {
-    // afterEventId の created_at を取得してカーソルとして使う
+    // afterEventId の created_at をgetしてカーソルとして使う
     const cursor = await db
       .prepare(`
       SELECT created_at FROM EventStream WHERE event_id = ?
@@ -96,14 +96,14 @@ export async function getPendingEvents(
 }
 
 // ---------------------------------------------------------------------------
-// イベント配信済みマーク（単一）
+// event配信済みマーク（単一）
 // ---------------------------------------------------------------------------
 
 /**
- * 単一イベントを配信済みにする。
+ * 単一eventを配信済みにする。
  *
  * @param db      - D1 データベース
- * @param eventId - イベントID
+ * @param eventId - eventID
  */
 export async function markEventDelivered(db: D1Database, eventId: string): Promise<void> {
   await db
@@ -115,15 +115,15 @@ export async function markEventDelivered(db: D1Database, eventId: string): Promi
 }
 
 // ---------------------------------------------------------------------------
-// イベント配信済みマーク（バッチ）
+// event配信済みマーク（batch）
 // ---------------------------------------------------------------------------
 
 /**
- * 複数イベントを一括で配信済みにする。
+ * 複数eventを一括で配信済みにする。
  * D1 の batch API を使用して 1 ラウンドトリップで完結させる。
  *
  * @param db       - D1 データベース
- * @param eventIds - イベントIDの配列
+ * @param eventIds - eventIDのarray
  */
 export async function markEventsDelivered(db: D1Database, eventIds: string[]): Promise<void> {
   if (eventIds.length === 0) return;
@@ -136,20 +136,20 @@ export async function markEventsDelivered(db: D1Database, eventIds: string[]): P
 }
 
 // ---------------------------------------------------------------------------
-// SSE Response 生成
+// SSE Response generate
 // ---------------------------------------------------------------------------
 
 /**
- * Cloudflare Workers ReadableStream を使って SSE レスポンスを生成する。
+ * Cloudflare Workers ReadableStream を使って SSE レスポンスをgenerateする。
  *
  * 動作:
- * 1. ReadableStream を生成
+ * 1. ReadableStream をgenerate
  * 2. getPendingEvents を 2 秒ごとにポーリング
- * 3. 各イベントを SSE フォーマット (`data: {...}\n\n`) でエンキュー
- * 4. 送信後に配信済みマーク
+ * 3. 各eventを SSE フォーマット (`data: {...}\n\n`) でエンqueue
+ * 4. send後に配信済みマーク
  *
  * @param db           - D1 データベース
- * @param targetBankId - 配信先銀行ID
+ * @param targetBankId - 配信先bank ID
  * @returns SSE レスポンス
  */
 export function createSseResponse(db: D1Database, targetBankId: string): Response {
@@ -162,7 +162,7 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
       const connectMsg = `data: ${JSON.stringify({ type: "CONNECTED", bank_id: targetBankId })}\n\n`;
       controller.enqueue(new TextEncoder().encode(connectMsg));
 
-      // ポーリングループ（2 秒間隔）
+      // ポーリンgroup（2 秒間隔）
       const poll = async () => {
         try {
           const events = await getPendingEvents(db, targetBankId, lastEventId);
@@ -182,13 +182,13 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
           }
         } catch (err) {
           console.error("[stream] SSE poll error:", err);
-          // エラーをクライアントへ通知してもストリームは継続
+          // errorをクライアントへ通知してもストリームは継続
           const errMsg = `data: ${JSON.stringify({ type: "ERROR", message: "poll failed" })}\n\n`;
           try {
             controller.enqueue(new TextEncoder().encode(errMsg));
           } catch {
             // コントローラが既にクローズされている場合は無視
-            // ストリーム破棄 → タイマー停止
+            // ストリーム破棄 → timer停止
             if (timerId) {
               clearInterval(timerId);
               timerId = null;
@@ -197,11 +197,11 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
         }
       };
 
-      // 2 秒ごとのポーリング（Workers のイベントループ内で動作）
+      // 2 秒ごとのポーリング（Workers のeventループ内で動作）
       timerId = setInterval(poll, 2000);
     },
     cancel() {
-      // クライアント切断時にタイマーを停止（リソースリーク＆誤配信済みマーク防止）
+      // クライアント切断時にtimerを停止（リソースリーク＆誤配信済みマーク防止）
       if (timerId) {
         clearInterval(timerId);
         timerId = null;
@@ -220,11 +220,11 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
 }
 
 // ---------------------------------------------------------------------------
-// 古い配信済みイベント削除
+// 古い配信済みeventdelete
 // ---------------------------------------------------------------------------
 
 /**
- * 24 時間以上経過した配信済みイベントを削除する（cron 用）。
+ * 24 時間以上経過した配信済みeventをdeleteする（cron 用）。
  *
  * @param db - D1 データベース
  * @returns 削除件数
@@ -250,7 +250,7 @@ export async function pruneDeliveredEvents(db: D1Database): Promise<number> {
 /**
  * EventStreamRow を SSE フォーマット文字列に変換する。
  *
- * @param ev - イベント行
+ * @param ev - event行
  * @returns SSE フォーマット文字列 (`id: ...\ndata: ...\n\n`)
  */
 function formatSseEvent(ev: EventStreamRow): string {
