@@ -15,7 +15,7 @@ export function processBulkIngress(req: PaymentInitiatedRequest) {
 }
 
 /**
- * Bulkバッチ処理: RECEIVED → PRECHECKED → H_RESERVED (H-reserve funds are held) (H-reserve funds are held) → DECIDED_TO_SETTLE
+ * Bulkバッチ処理: RECEIVED → PRECHECKED → H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) → DECIDED_TO_SETTLE
  * EODバッチまたはウィンドウ締切Cronから呼ばれる
  */
 export async function advanceBulk(txid: string, env: Env): Promise<void> {
@@ -56,7 +56,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   const reserved = await transitionWithLog(db, {
     txid,
     fromState: "PRECHECKED",
-    toState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)",
+    toState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)",
     eventType: "HReserved",
     payload: { reservation_id: reservationId },
     setColumns: { h_reservation_id: reservationId },
@@ -79,7 +79,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
     await cancelInFlightTx(db, {
       txid,
       reasonCode: reserveResult.reason_code ?? "RESERVE_FAILED",
-      fromStates: ["H_RESERVED (H-reserve funds are held) (H-reserve funds are held)"],
+      fromStates: ["H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)"],
     });
     return;
   }
@@ -90,7 +90,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   const finalityLogRef = newFinalityLogRef();
   const decided = await transitionWithLog(db, {
     txid,
-    fromState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)",
+    fromState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)",
     toState: "DECIDED_TO_SETTLE",
     eventType: "DecidedToSettle",
     payload: { decision_proof_ref: decisionProofRef },
@@ -101,7 +101,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   });
   if (!decided.applied) return;
 
-  // DECIDED_TO_SETTLE で lockH（H_RESERVED (H-reserve funds are held) (H-reserve funds are held) → LOCKED）
+  // DECIDED_TO_SETTLE で lockH（H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) → LOCKED）
   await lockH(reservationId, db);
 
   // DNS Execution はEOD時に一括実行（キューには積まない）

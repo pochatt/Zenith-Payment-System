@@ -530,7 +530,7 @@ export async function handlePostCancel(req: Request, txid: string, env: Env): Pr
 
   if (!tx) return jsonError(404, "NOT_FOUND", `txid ${txid} not found`);
 
-  const cancelableStates = ["RECEIVED", "PRECHECKED", "PRECHECKED_SUSPENDED", "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)"];
+  const cancelableStates = ["RECEIVED", "PRECHECKED", "PRECHECKED_SUSPENDED", "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)"];
   if (!cancelableStates.includes(tx.state)) {
     return jsonError(409, "INVALID_STATE", `Cannot cancel tx in state ${tx.state}`);
   }

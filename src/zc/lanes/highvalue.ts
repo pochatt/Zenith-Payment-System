@@ -3,7 +3,7 @@
  *       checks and IGS settlement.
  *
  * Lane characteristics:
- *   - Bypasses H_RESERVED (H-reserve funds are held) (H-reserve funds are held) entirely (`PRECHECKED → DECIDED_TO_SETTLE` directly).
+ *   - Bypasses H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) entirely (`PRECHECKED → DECIDED_TO_SETTLE` directly).
  *     This is the central-bank RTGS path: liquidity is checked against the
  *     payer bank's BOJ current-account balance, so H-limit accounting is not
  *     applicable. The state-machine table explicitly permits this edge
@@ -30,7 +30,7 @@ export function processHighValueIngress(req: PaymentInitiatedRequest) {
 /**
  * HIGH_VALUE 非同期処理:
  * RECEIVED → PRECHECKED → DECIDED_TO_SETTLE → (a_HV) → IGS待ち → b
- * （H_RESERVED (H-reserve funds are held) (H-reserve funds are held) はスキップ。中央銀行 RTGS = BOJ プレファンドで担保するため）
+ * （H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) はスキップ。中央銀行 RTGS = BOJ プレファンドで担保するため）
  */
 export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   const db = env.DB;
@@ -117,7 +117,7 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 5. PRECHECKED → DECIDED_TO_SETTLE（H_RESERVED (H-reserve funds are held) (H-reserve funds are held) をスキップ）
+  // 5. PRECHECKED → DECIDED_TO_SETTLE（H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) をスキップ）
   // この直行遷移は ALLOWED_TRANSITIONS.PRECHECKED に明示的に列挙されている。
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();

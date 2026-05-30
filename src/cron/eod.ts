@@ -54,7 +54,7 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
       .all<{ htlc_id: string; txid: string }>();
 
     for (const htlc of expiredHtlcs.results) {
-      // env を渡して銀行側サスペンスの解放通知も行う（Hash-Time-Locked Contract_LOCKED 時は reserve-funds が実行済み）
+      // Pass env to also send bank-side suspense release notification (reserve-funds already executed when Hash-Time-Locked Contract is in _LOCKED state)
       await cancelHtlc(htlc.htlc_id, htlc.txid, "TIMELOCK_EXPIRED", db, env);
       log.push(`Hash-Time-Locked Contract expired: ${htlc.htlc_id}`);
     }

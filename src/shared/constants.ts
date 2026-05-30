@@ -6,7 +6,7 @@
 // =============================================================================
 
 // ---------------------------------------------------------------------------
-// タイムアウト定数 (秒)
+// Timeout constant (seconds)
 // ---------------------------------------------------------------------------
 
 /** T2: Timeout for sending-bank execution → receiving-bank execution (5 minutes) */
@@ -22,7 +22,7 @@ export const TIMEOUT_SUSPENDED_TO_FAILED_SEC = 3600;
 export const TIMEOUT_GTID_STALLED_SEC = 600;
 
 // ---------------------------------------------------------------------------
-// 通知リトライ定数
+// Notification retry constant
 // ---------------------------------------------------------------------------
 
 /** Credit notification retry interval (seconds): exponential backoff */
@@ -32,13 +32,13 @@ export const NOTIFICATION_BACKOFF_SEC = [30, 120, 600, 3600] as const;
 export const NOTIFICATION_MAX_ATTEMPTS = 5;
 
 // ---------------------------------------------------------------------------
-// FATF R.16 定数
+// FATF R.16 constant
 // ---------------------------------------------------------------------------
 
-/** FATF R.16 適用閾値 (JPY): 1,000 USD 相当 */
+/** FATF R.16 application threshold (JPY): equivalent to 1,000 USD */
 export const FATF_THRESHOLD_JPY = 150_000;
 
-/** 為替レート: 各通貨 → JPY 換算 */
+/** Exchange rate: conversion from each currency to JPY */
 export const EXCHANGE_RATE_TO_JPY: Record<string, number> = {
   JPY: 1,
   USD: 150,
@@ -56,10 +56,10 @@ export const EXCHANGE_RATE_TO_JPY: Record<string, number> = {
 // 金額・件数制限
 // ---------------------------------------------------------------------------
 
-/** D1 batch の最大ステートメント数 */
+/** Maximum statement count per D1 batch */
 export const D1_BATCH_MAX_STMTS = 100;
 
-/** クエリ結果のデフォルト LIMIT */
+/** Default LIMIT for query results */
 export const DEFAULT_QUERY_LIMIT = 50;
 
 /** 承認リクエスト有効期限 (ミリ秒): 24時間 */
@@ -82,7 +82,7 @@ export const CRON_TIMEOUT_SWEEP = "* * * * *";
 /** 全銀固定長レコードサイズ (バイト) */
 export const ZENGIN_RECORD_LENGTH = 120;
 
-/** BIC コードの標準長 (8桁 or 11桁) */
+/** Standard length of BIC code (8 or 11 digits) */
 export const BIC_LENGTH_SHORT = 8;
 export const BIC_LENGTH_FULL = 11;
 
@@ -90,17 +90,17 @@ export const BIC_LENGTH_FULL = 11;
 // リッチデータ定数
 // ---------------------------------------------------------------------------
 
-/** R2 オフロード閾値 (バイト): 50KB 超のペイロードは R2 に格納 */
+/** R2 offload threshold (bytes): payloads exceeding 50KB are stored in R2 */
 export const R2_OFFLOAD_THRESHOLD = 50 * 1024;
 
-/** リッチデータのデフォルト保持日数 */
+/** Default retention days for rich data */
 export const RICHDATA_DEFAULT_RETENTION_DAYS = 365;
 
 // ---------------------------------------------------------------------------
 // QR コード定数
 // ---------------------------------------------------------------------------
 
-/** 動的 QR のデフォルト有効期限 (ミリ秒): 15分 */
+/** Default validity period for dynamic QR (milliseconds): 15 minutes */
 export const QR_DYNAMIC_EXPIRY_MS = 15 * 60 * 1000;
 
 // ---------------------------------------------------------------------------

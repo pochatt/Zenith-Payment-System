@@ -23,9 +23,9 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
   const now = new Date();
   let swept = 0;
 
-  // 1. T2_exec タイムアウト: DECIDED_TO_SETTLE が 5分以上
-  // BULK/DEFERRED は EOD まで DECIDED_TO_SETTLE で待機する設計のため除外
-  // Hash-Time-Locked Contract は timelock で独立管理されるため除外（claimHtlc は同期 debit で完結）
+  // 1. T2_exec timeout: DECIDED_TO_SETTLE exceeds 5 minutes
+  // BULK/DEFERRED are excluded because they are designed to wait in DECIDED_TO_SETTLE state until EOD
+  // Hash-Time-Locked Contract is excluded because it is independently managed by timelock (claimHtlc completes as synchronous debit)
   const t2Deadline = new Date(now.getTime() - T2_EXEC_TIMEOUT_SEC * 1000).toISOString();
   const decidedOld = await db
     .prepare(
@@ -39,7 +39,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     swept++;
   }
 
-  // 2. T3_payee_proof タイムアウト: PAYER_EXEC_CONFIRMED が 5分以上
+  // 2. T3_payee_proof timeout: PAYER_EXEC_CONFIRMED exceeds 5 minutes
   const t3Deadline = new Date(now.getTime() - T3_PAYEE_TIMEOUT_SEC * 1000).toISOString();
   const payerConfOld = await db
     .prepare(`SELECT txid FROM Transactions WHERE state='PAYER_EXEC_CONFIRMED' AND updated_at < ?`)
@@ -51,7 +51,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     swept++;
   }
 
-  // 3. FAILED_EXECUTION 遷移: SUSPENDED が expires_at を超えた場合
+  // 3. FAILED_EXECUTION transition: when SUSPENDED exceeds expires_at
   const failedOld = await db
     .prepare(
       `SELECT txid FROM Transactions WHERE state='SUSPENDED' AND expires_at IS NOT NULL AND expires_at < ?`
@@ -77,7 +77,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     if (applied) swept++;
   }
 
-  // 4. Hash-Time-Locked Contract timelock 期限切れ
+  // 4. Hash-Time-Locked Contract timelock expiration
   const expiredHtlcs = await db
     .prepare(
       `SELECT htlc_id, txid FROM HtlcContracts WHERE state IN ('Hash-Time-Locked Contract_RECEIVED','Hash-Time-Locked Contract_LOCKED') AND timelock < ?`
@@ -86,26 +86,26 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     .all<{ htlc_id: string; txid: string }>();
 
   for (const htlc of expiredHtlcs.results) {
-    // env を渡して銀行側サスペンスの解放通知も行う（Hash-Time-Locked Contract_LOCKED 時は reserve-funds が実行済み）
+    // Pass env to also send bank-side suspense release notification (reserve-funds already executed when Hash-Time-Locked Contract is in _LOCKED state)
     await cancelHtlc(htlc.htlc_id, htlc.txid, "TIMELOCK_EXPIRED", db, env);
     swept++;
   }
 
-  // 5. Vault TTL 切れ（論理削除）
+  // 5. Vault TTL expiration (logical deletion)
   const expiredVault = await db
     .prepare(`UPDATE Vault SET is_evicted=1 WHERE is_evicted=0 AND expires_at < ?`)
     .bind(now.toISOString())
     .run();
   swept += expiredVault.meta.changes ?? 0;
 
-  // 6. RTP 期限切れ（state 列のみを更新）
+  // 6. RTP expiration (update state column only)
   swept += await expireRtpRequests(db);
 
   // 7. 未配信通知リトライ
   await retryPendingNotifications(db, env);
 
-  // 8. GT_DECIDED_TO_SETTLE スタック GTID 回収（10分以上更新なし）
-  // leg 実行失敗や 0-legs で checkAndFinalizeGtid が呼ばれなかった GTID を救済
+  // 8. GT_DECIDED_TO_SETTLE stuck GTID recovery (no updates for 10+ minutes)
+  // Rescue GTIDs where checkAndFinalizeGtid was not called due to leg execution failure or 0-legs
   const gtStuckDeadline = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
   const stuckGtids = await db
     .prepare(
@@ -119,7 +119,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     swept++;
   }
 
-  // 9. GT_SETTLED 済みなのに GtidLegs.state が未更新のレコードを一括修正
+  // 9. Batch fix records where GT_SETTLED is complete but GtidLegs.state is not updated
   const legFixResult = await db
     .prepare(`
     UPDATE GtidLegs SET state='LEG_SETTLED', updated_at=?

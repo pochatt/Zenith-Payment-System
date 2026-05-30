@@ -16,13 +16,13 @@
  * | 全銀フォーマット    | 4桁  | `0001` |
  * | zenith-mock DB     | 3桁  | `001`  |
  *
- * zenith-mock の `Participants.bank_id` は実際の全銀銀行コードと1桁異なる。
+ * zenith-mock's `Participants.bank_id` differs by 1 digit from actual Zenginkyo bank codes.
  * 変換時は `zenginCodeToMockBankId` / `mockBankIdToZenginCode` を必ず使うこと。
  *
  * ### 支店コード
  * 全銀フォーマットは仕向・被仕向ともに3桁支店コードを持つ。
- * zenith-mock には支店概念がなく、`BankAccounts` は支店なしの口座IDのみ管理する。
- * よって支店コードは変換時に「情報として保持するが、DB照合には使わない」として扱う。
+ * zenith-mock has no branch concept; `BankAccounts` manages only account IDs without branch information.
+ * Therefore, branch codes are treated as "retained as information but not used for DB matching" during conversion.
  *
  * ### 口座識別子
  * | 系統               | 形式                    | 例                    |
@@ -104,26 +104,26 @@ export function isUnresolvedAccountRef(accountHash: string): boolean {
 /**
  * Legacy Zengin電文フォーマット: 振込電文（内国為替取引）
  * 固定長フォーマットを JSON に射影した構造体。
- * フィールド名は全銀協フォーマット仕様書の項目名に準拠。
+ * Field names comply with item names in the Zenginkyo format specification document.
  *
  * 銀行コードは4桁（全銀標準）、支店コードは3桁。
  */
 export interface LegacyZenginTransfer {
   /** 仕向銀行コード（全銀4桁: '0001'〜'9999'） */
   shimukeKinko: string;
-  /** 仕向支店コード（3桁: '001'〜'999'）。zenith-mock では DB 照合に不使用 */
+  /** Originating branch code (3 digits: '001' to '999'). Not used for DB matching in zenith-mock */
   shimukeSiten: string;
   /** 被仕向銀行コード（全銀4桁: '0001'〜'9999'） */
   hishimukeKinko: string;
-  /** 被仕向支店コード（3桁: '001'〜'999'）。zenith-mock では DB 照合に不使用 */
+  /** Receiving branch code (3 digits: '001' to '999'). Not used for DB matching in zenith-mock */
   hishimukeSiten: string;
   /** 科目 ('1'=普通, '2'=当座, '4'=貯蓄) */
   kamoku: "1" | "2" | "4";
-  /** 口座番号（7桁数字）。zenith-mock の account_hash とは別体系 */
+  /** Account number (7-digit numeral). Separate system from zenith-mock's account_hash */
   kozaBango: string;
   /** 受取人名（カタカナ半角, 最大48文字） */
   uketorininMei: string;
-  /** 金額（円, 正の整数, 最大10桁） */
+  /** Amount (yen, positive integer, maximum 10 digits) */
   kingaku: number;
   /** 振込指定日 'YYYYMMDD' */
   furikomiShiteibi: string;
@@ -157,7 +157,7 @@ export interface ConvertedPaymentRequest {
   txid: string;
   lane: "STANDARD" | "EXPRESS";
   amount: { value: number; currency: "JPY" };
-  /** bank_id は zenith-mock 3桁形式 */
+  /** bank_id is in zenith-mock 3-digit format */
   payer: { bank_id: string; account_hash: string };
   /**
    * bank_id は zenith-mock 3桁形式。

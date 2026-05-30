@@ -35,7 +35,7 @@ export function processStandardIngress(req: PaymentInitiatedRequest): StandardIn
 }
 
 /**
- * Standard非同期処理: RECEIVED → PRECHECKED → (PRECHECKED_SUSPENDED) → H_RESERVED (H-reserve funds are held) (H-reserve funds are held) → DECIDED_TO_SETTLE
+ * Standard非同期処理: RECEIVED → PRECHECKED → (PRECHECKED_SUSPENDED) → H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) → DECIDED_TO_SETTLE
  * Queueコンシューマーから呼ばれる
  */
 export async function advanceStandard(txid: string, env: Env): Promise<void> {
@@ -123,7 +123,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
   const reserved = await transitionWithLog(db, {
     txid,
     fromState: "PRECHECKED",
-    toState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)",
+    toState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)",
     eventType: "HReserved",
     payload: { reservation_id: reservationId },
     setColumns: { h_reservation_id: reservationId },
@@ -145,7 +145,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     await cancelInFlightTx(db, {
       txid,
       reasonCode: reserveResult.reason_code ?? "RESERVE_FAILED",
-      fromStates: ["H_RESERVED (H-reserve funds are held) (H-reserve funds are held)"],
+      fromStates: ["H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)"],
     });
     return;
   }
@@ -153,7 +153,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
   // 6. 支払人最終認可待ち（Standard固有）
   // REFUND purpose（Reversal TX）は OPS 起点で自然な承認者が存在しないため自動認可する。
   // その他の取引は送金行（または顧客）が POST /api/transfers/:txid/authorize を
-  // 呼び出すまで H_RESERVED (H-reserve funds are held) (H-reserve funds are held) 状態で待機する。
+  // 呼び出すまで H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) 状態で待機する。
   // 基本思想: ZC は決定主体ではなく状態の中継者。送金の最終認可は送金行に委ねる。
   if (tx.purpose === "REFUND") {
     await authorizeStandard(txid, true, env);
@@ -161,7 +161,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
 }
 
 /**
- * /authorize エンドポイントから呼ばれる: H_RESERVED (H-reserve funds are held) (H-reserve funds are held) → DECIDED_TO_SETTLE
+ * /authorize エンドポイントから呼ばれる: H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) → DECIDED_TO_SETTLE
  */
 export async function authorizeStandard(
   txid: string,
@@ -184,11 +184,11 @@ export async function authorizeStandard(
       h_reservation_id: string | null;
       version: number;
     }>();
-  if (!tx || tx.state !== "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)") return { ok: false, state: tx?.state ?? "NOT_FOUND" };
+  if (!tx || tx.state !== "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)") return { ok: false, state: tx?.state ?? "NOT_FOUND" };
 
   if (!authorized) {
-    await cancelInFlightTx(db, { txid, reasonCode: "CANCEL_BY_PAYER", fromStates: ["H_RESERVED (H-reserve funds are held) (H-reserve funds are held)"] });
-    // H_RESERVED (H-reserve funds are held) (H-reserve funds are held) キャンセル時は reserve-funds 成功済みのため銀行の別段預金を解放する
+    await cancelInFlightTx(db, { txid, reasonCode: "CANCEL_BY_PAYER", fromStates: ["H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)"] });
+    // H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) キャンセル時は reserve-funds 成功済みのため銀行の別段預金を解放する
     const suspense = await db
       .prepare(
         `SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' AND direction='PAY' LIMIT 1`
@@ -215,7 +215,7 @@ export async function authorizeStandard(
 
   const decided = await transitionWithLog(db, {
     txid,
-    fromState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)",
+    fromState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)",
     toState: "DECIDED_TO_SETTLE",
     eventType: "DecidedToSettle",
     payload: { decision_proof_ref: decisionProofRef },
@@ -252,7 +252,7 @@ export async function authorizeStandard(
 }
 
 /**
- * 名義不一致サスペンド後の再開: PRECHECKED_SUSPENDED → PRECHECKED → H_RESERVED (H-reserve funds are held) (H-reserve funds are held)
+ * 名義不一致サスペンド後の再開: PRECHECKED_SUSPENDED → PRECHECKED → H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)
  * 送金行が顧客確認を経て /resume-namecheck を呼び出した際に実行される。
  */
 export async function resumeFromNameCheckSuspended(
@@ -296,7 +296,7 @@ export async function resumeFromNameCheckSuspended(
   const reserved = await transitionWithLog(db, {
     txid,
     fromState: "PRECHECKED",
-    toState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)",
+    toState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)",
     eventType: "HReserved",
     payload: { reservation_id: reservationId },
     setColumns: { h_reservation_id: reservationId },
@@ -318,10 +318,10 @@ export async function resumeFromNameCheckSuspended(
     await cancelInFlightTx(db, {
       txid,
       reasonCode: reserveResult.reason_code ?? "RESERVE_FAILED",
-      fromStates: ["H_RESERVED (H-reserve funds are held) (H-reserve funds are held)"],
+      fromStates: ["H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)"],
     });
     return { ok: true, state: "DECIDED_CANCEL" };
   }
 
-  return { ok: true, state: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)" };
+  return { ok: true, state: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)" };
 }
