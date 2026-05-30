@@ -308,7 +308,10 @@ export type FinalityEventType =
   | "HtlcAuthApproved"
   | "HtlcAuthDeclined"
   | "HtlcCaptured"
-  | "HtlcVoided";
+  | "HtlcVoided"
+  | "FinalityChainAuditFailed"
+  | "NoDebitRecordedProofSubmitted"
+  | "HUnlockAuthorized";
 
 // ---------------------------------------------------------------------------
 // Common error response
