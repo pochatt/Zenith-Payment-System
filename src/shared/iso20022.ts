@@ -390,7 +390,7 @@ export function buildPain014(params: {
 }
 
 // ---------------------------------------------------------------------------
-// 全銀 → ISO 20022
+// Zengin → ISO 20022
 // ---------------------------------------------------------------------------
 
 /**
@@ -406,10 +406,10 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
   const now = new Date().toISOString();
   const msgId = `ZG-${record.originator_bank_code}-${Date.now()}`;
 
-  // 全銀のaccount numberを内部形式に変換
-  // 全銀: 4桁金融機関コード + 3桁支店コード + 7桁account number
+  // Convert Zengin account number to internal format
+  // Zengin: 4-digit institution code + 3-digit branch code + 7-digit account number
   const payeeAccountId = `${record.bank_code}${record.account_number.replace(/\s/g, "").padStart(7, "0")}`;
-  const payerAccountId = `${record.originator_bank_code}0000000`; // 送金元は別段預金口座
+  const payerAccountId = `${record.originator_bank_code}0000000`; // Originating account is suspense account
 
   const payerBic = bankIdToBicLocal(record.originator_bank_code);
   const payeeBic = bankIdToBicLocal(record.bank_code);
@@ -444,7 +444,7 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
 }
 
 // ---------------------------------------------------------------------------
-// ISO 20022 → 全銀
+// ISO 20022 → Zengin
 // ---------------------------------------------------------------------------
 
 /**
@@ -504,7 +504,7 @@ export function iso20022ToZengin(msg: Pacs008Message): ZenginFixedRecord {
 }
 
 // ---------------------------------------------------------------------------
-// 全銀固定長テキスト解析
+// Zengin fixed-length text parsing
 // ---------------------------------------------------------------------------
 
 /**
@@ -565,7 +565,7 @@ export function parseZenginRecord(line: string): ZenginFixedRecord {
 }
 
 // ---------------------------------------------------------------------------
-// 全銀固定長テキストgenerate
+// Zengin fixed-length text generation
 // ---------------------------------------------------------------------------
 
 /**

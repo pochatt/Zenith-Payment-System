@@ -133,7 +133,7 @@ export async function handleGetAccountTransactions(
     }>();
 
   // txid → Transactions（fund transfer人・payee information）をbatch lookup
-  // map().filter() のintermediate array allocationを避け、Set constructとarray化を 1 passで行う
+  // Avoid intermediate array allocation in map().filter(), construct Set and convert to array in 1 pass
   const txidSet = new Set<string>();
   for (const j of journals.results) {
     if (j.txid) txidSet.add(j.txid);
@@ -193,7 +193,7 @@ export async function handleGetAccountTransactions(
     );
     let counterparty: string | null = null;
     if (j.txid && txInfo) {
-      // withdrawal（マイナス）はcounterparty account＝payee、deposit（プラス）はcounterparty account＝payer
+      // Withdrawal (negative) counterparty account = payee, deposit (positive) counterparty account = payer
       const cpId = j.amount < 0 ? (txInfo.payee_account_hash ?? "") : txInfo.payer_account_hash;
       counterparty = acctNameMap.get(cpId) ?? null;
     }

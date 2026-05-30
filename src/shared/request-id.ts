@@ -1,23 +1,23 @@
 // =============================================================================
 // src/shared/request-id.ts  Deterministic request ID generation
 // =============================================================================
-// ZC → Bank Ingress API 呼び出しで使用するリクエストIDを一元管理する。
-// idempotent制御のため、同一コマンド × 同一transactionで常に同じIDをgenerateする必要がある。
+// Centrally manage request IDs used in ZC → Bank Ingress API calls.
+// For idempotency control, must always generate the same ID for the same command × same transaction.
 //
 // Naming convention: {COMMAND_PREFIX}-{primary_key}
 //   - primary_key is usually txid, but use leg_id for GTID legs
 // =============================================================================
 
 /**
- * Bank Ingress コマンドのプレフィックスConstants。
- * ZcRequests tableの request_id カラムと対応する。
+ * Bank Ingress command prefix constants.
+ * Corresponds to the request_id column in the ZcRequests table.
  */
 export const REQUEST_PREFIX = {
-  /** AML/制裁スクリーニング */
+  /** AML/sanctions screening */
   AUTHORITY_CHECK: "AUTH",
-  /** 名義confirmation */
+  /** Account name confirmation */
   NAME_CHECK: "NAME",
-  /** 資金reserved */
+  /** Funds reserved */
   RESERVE_FUNDS: "RESERVE",
   /** 仕向実行 (a) */
   EXECUTE_DEBIT: "DEBIT",

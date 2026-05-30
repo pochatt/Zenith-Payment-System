@@ -125,7 +125,7 @@ export interface LegacyZenginTransfer {
   uketorininMei: string;
   /** amount（円, 正の整数, 最大10桁） */
   kingaku: number;
-  /** bank transfer指定日 'YYYYMMDD' */
+  /** Bank transfer specified date 'YYYYMMDD' */
   furikomiShiteibi: string;
   /** 依頼人コード（省略可） */
   iraininCode?: string;
@@ -223,11 +223,11 @@ export function convertLegacyToNew(
   txid: string,
   payerAccountHash: string
 ): ConvertedPaymentRequest {
-  // bankコード: Zengin 4-digit code → zenith-mock 3桁
+  // Bank code: Zengin 4-digit code → zenith-mock 3-digit
   const payerBankId = zenginCodeToMockBankId(legacy.shimukeKinko);
   const payeeBankId = zenginCodeToMockBankId(legacy.hishimukeKinko);
 
-  // 被仕向account: 全銀account numberはそのまま account_hash にできない。
+  // Destination account: Zengin account number cannot be used directly as account_hash.
   // Generate unresolved identifier; caller resolves via account-verify
   const payeeAccountHash = buildUnresolvedAccountRef(
     legacy.hishimukeKinko,
@@ -263,24 +263,24 @@ export function convertLegacyToNew(
 }
 
 // ---------------------------------------------------------------------------
-// Converter: New format → Legacy Zengin（逆変換: 現行全銀システム連携用）
+// Converter: New format → Legacy Zengin (reverse conversion: for current Zengin system integration)
 // ---------------------------------------------------------------------------
 
 /**
- * Zenith Coordinator のtransactioninformationを全銀フォーマット互換のmessageに逆変換する。
- * 現行全銀システムとの併存期間中のフォールバックsend・audit用途に使用する。
+ * Reverse convert Zenith Coordinator transaction information to Zengin format compatible message.
+ * Used for fallback send and audit purposes during coexistence period with current Zengin system.
  *
- * ## caution事項
- * - 支店コード: zenith-mock に支店概念がないため、`hishimukeSiten` / `shimukeSiten`
- *   は呼び出し元がbank側のaccountマスタからgetして渡す必要がある。
- * - account number: account_hash から逆引き不可のため `payeeKozaBango` を外部から受け取る。
+ * ## Caution items
+ * - Branch code: Since zenith-mock has no branch concept, `hishimukeSiten` / `shimukeSiten`
+ *   must be obtained from bank-side account master and passed by the caller.
+ * - account number: Since reverse lookup from account_hash is not possible, `payeeKozaBango` is received from outside.
  *
  * @param converted        - Zenith Coordinator 形式のtransactioninformation
- * @param payeeKozaBango   - 被仕向account number（7桁, bank側でget済み）
- * @param uketorininMei    - payee名（カタカナ）
- * @param furikomiShiteibi - bank transfer指定日 'YYYYMMDD'
- * @param payeeSitenCode   - 被仕向支店コード（3桁, 省略時 '000'）
- * @param shimukeSitenCode - 仕向支店コード（3桁, 省略時 '000'）
+ * @param payeeKozaBango   - Destination account number (7 digits, already obtained on bank side)
+ * @param uketorininMei    - Payee name (in katakana)
+ * @param furikomiShiteibi - Bank transfer specified date 'YYYYMMDD'
+ * @param payeeSitenCode   - Destination branch code (3 digits, default '000')
+ * @param shimukeSitenCode - Originating branch code (3 digits, default '000')
  */
 export function convertNewToLegacy(
   converted: Pick<ConvertedPaymentRequest, "payer" | "payee" | "amount">,
@@ -308,10 +308,10 @@ export function convertNewToLegacy(
 // ---------------------------------------------------------------------------
 
 /**
- * 全銀フォーマットmessageの基本Validation。
+ * Basic validation of Zengin format message.
  *
- * bankコードは全銀標準の4桁、支店コードは3桁を期待する。
- * zenith-mock の DB 側コード（3桁）とは異なることにcaution。
+ * Bank code is expected to be 4 digits per Zengin standard, branch code 3 digits.
+ * Note: differs from zenith-mock DB-side code (3 digits).
  */
 export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
   ok: boolean;

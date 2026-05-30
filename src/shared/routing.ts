@@ -52,28 +52,28 @@ const BIC_TO_BANK_ID: Record<string, string> = {
   HSBCHKHH: "HSBC-HK", // HSBC Hong Kong
 };
 
-/** bank_id → BIC mappingtable（BIC_TO_BANK_ID の逆引き） */
+/** bank_id → BIC mapping table (reverse lookup of BIC_TO_BANK_ID) */
 const BANK_ID_TO_BIC: Record<string, string> = Object.fromEntries(
   Object.entries(BIC_TO_BANK_ID).map(([bic, id]) => [id, bic])
 );
 
 // ---------------------------------------------------------------------------
-// lane → messageフォーマット選択
+// lane → message format selection
 // ---------------------------------------------------------------------------
 
 /**
- * laneタイプとクロスボーダー有無からmessageフォーマットを選択する。
+ * Select message format based on lane type and cross-border status.
  *
- * 選択ルール:
- * - クロスボーダーtransactionは常に ISO20022 (pacs.008)
- * - HIGH_VALUE laneは ISO20022 (大口資金payment規制対応)
- * - EXPRESS / RTP は ZENITH_NATIVE (低レイテンシ優先)
- * - STANDARD は ZENITH_NATIVE
- * - BULK / DEFERRED は ZENGIN_FIXED (全銀協batch互換)
- * - HTLC は ZENITH_NATIVE (hashlockinformationをネイティブで運搬)
+ * Selection rules:
+ * - Cross-border transaction always uses ISO20022 (pacs.008)
+ * - HIGH_VALUE lane uses ISO20022 (large-value fund payment regulation compliance)
+ * - EXPRESS / RTP use ZENITH_NATIVE (low-latency priority)
+ * - STANDARD uses ZENITH_NATIVE
+ * - BULK / DEFERRED use ZENGIN_FIXED (Zengin batch compatible)
+ * - HTLC uses ZENITH_NATIVE (carries hashlock information natively)
  *
- * @param lane - laneタイプ
- * @param isCrossBorder - クロスボーダーtransactionかどうか
+ * @param lane - lane type
+ * @param isCrossBorder - whether it is a cross-border transaction
  * @returns MessageFormat
  */
 export function selectMessageFormat(lane: LaneType, isCrossBorder: boolean): MessageFormat {
@@ -99,62 +99,62 @@ export function selectMessageFormat(lane: LaneType, isCrossBorder: boolean): Mes
 }
 
 // ---------------------------------------------------------------------------
-// BIC ↔ bank_id 変換
+// BIC ↔ bank_id conversion
 // ---------------------------------------------------------------------------
 
 /**
- * BIC コードから内部 bank_id をreturn。
- * mappingに存在しない場合は null をreturn。
+ * Return internal bank_id from BIC code.
+ * Return null if not found in mapping.
  *
- * @param bic - SWIFT BIC コード (8文字または11文字)
- * @returns 内部 bank_id または null
+ * @param bic - SWIFT BIC code (8 or 11 characters)
+ * @returns internal bank_id or null
  */
 export function bicToBankId(bic: string): string | null {
   if (!bic) return null;
-  // 11文字BIC（支店コード付き）は8文字に正規化して検索
+  // 11-character BIC (with branch code) is normalized to 8 characters for lookup
   const normalizedBic = bic.length === 11 ? bic.substring(0, 8) : bic;
   return BIC_TO_BANK_ID[normalizedBic.toUpperCase()] ?? null;
 }
 
 /**
- * 内部 bank_id から BIC コードをreturn。
- * mappingに存在しない場合はダミー BIC をgenerateしてreturn。
+ * Return BIC code from internal bank_id.
+ * Generate and return dummy BIC if not found in mapping.
  *
- * @param bankId - 内部 bank_id (例: '001', '002')
- * @returns SWIFT BIC コード (8文字)
+ * @param bankId - internal bank_id (e.g., '001', '002')
+ * @returns SWIFT BIC code (8 characters)
  */
 export function bankIdToBic(bankId: string): string {
   if (!bankId) return "UNKNJPJT";
   const bic = BANK_ID_TO_BIC[bankId];
   if (bic) return bic;
-  // 未登録の場合: ZXXXXXXT 形式でダミーBICをgenerate
-  // X = bankId の数字を埋め込む（最大4文字）
+  // If not registered: generate dummy BIC in ZXXXXXXT format
+  // X = embed digits of bankId (up to 4 characters)
   const paddedId = bankId.slice(0, 4).padStart(4, "0");
   return `Z${paddedId}JPJT`;
 }
 
 // ---------------------------------------------------------------------------
-// 国内/クロスボーダー判定
+// Domestic / cross-border determination
 // ---------------------------------------------------------------------------
 
 /**
- * payerとfund transfer先の bank_id からクロスボーダーtransactionか判定する。
+ * Determine if transaction is cross-border from payer and payee bank_id.
  *
- * 判定ルール:
- * - 両方が 3桁以下の数値 bank_id → 国内transaction (false)
- * - いずれか一方が "-" を含む（例: JPMC-US, DEUT-DE）→ クロスボーダー (true)
- * - 一方が空文字または未登録 → 保守的にクロスボーダーと判定 (true)
+ * Determination rules:
+ * - Both are numeric bank_id with 3 or fewer digits → domestic transaction (false)
+ * - Either contains "-" (e.g., JPMC-US, DEUT-DE) → cross-border (true)
+ * - One is empty or unregistered → conservatively determine as cross-border (true)
  *
  * @param payerBankId - payer bank_id
- * @param payeeBankId - fund transfer先 bank_id
- * @returns クロスボーダーなら true
+ * @param payeeBankId - payee bank_id
+ * @returns true if cross-border
  */
 export function isCrossBorderTransfer(payerBankId: string, payeeBankId: string): boolean {
   if (!payerBankId || !payeeBankId) return true;
 
   const isDomestic = (id: string): boolean => /^\d{1,3}$/.test(id);
 
-  // 両方が国内 bank_id（1〜3桁の数字）の場合のみ国内
+  // Domestic only if both are domestic bank_id (1-3 digit numbers)
   if (isDomestic(payerBankId) && isDomestic(payeeBankId)) {
     return false;
   }
@@ -167,13 +167,13 @@ export function isCrossBorderTransfer(payerBankId: string, payeeBankId: string):
 // ---------------------------------------------------------------------------
 
 /**
- * プロキシ解paymentみアカウントinformationを SHA-256 でhash化する。
- * Web Crypto API (globalThis.crypto) を使用。
+ * Hash resolved account information with SHA-256.
+ * Uses Web Crypto API (globalThis.crypto).
  *
- * 用途: account numberを平文で保持せず、hash値で比較・参照する。
+ * Purpose: avoid storing account number in plain text, compare and reference by hash value.
  *
- * @param accountId - 平文のaccount number（例: '0010001234'）
- * @returns SHA-256 ハッシュの16進数文字列 (64文字)
+ * @param accountId - plain text account number (e.g., '0010001234')
+ * @returns SHA-256 hash as hexadecimal string (64 characters)
  */
 export async function hashAccountId(accountId: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -184,15 +184,15 @@ export async function hashAccountId(accountId: string): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// 追加ユーティリティ
+// Additional utilities
 // ---------------------------------------------------------------------------
 
 /**
- * bank_id の一覧から各行の BIC mappingをreturn。
- * 管理画面やfor debugging途。
+ * Return BIC mapping for each bank_id in the list.
+ * For admin screen and debugging purposes.
  *
- * @param bankIds - bank_id のarray
- * @returns bank_id → BIC のマッピングオブジェクト
+ * @param bankIds - array of bank_id
+ * @returns bank_id → BIC mapping object
  */
 export function resolveBicsForBanks(bankIds: string[]): Record<string, string> {
   const result: Record<string, string> = {};
@@ -203,9 +203,9 @@ export function resolveBicsForBanks(bankIds: string[]): Record<string, string> {
 }
 
 /**
- * 登録済み BIC 一覧をreturn（test・シミュレーター用）。
+ * Return list of registered BICs (for test and simulator).
  *
- * @returns BIC コードの配列
+ * @returns array of BIC codes
  */
 export function getRegisteredBics(): string[] {
   return Object.keys(BIC_TO_BANK_ID);
