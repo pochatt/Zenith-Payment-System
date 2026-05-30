@@ -12,14 +12,14 @@
 /**
  * Transaction state machine for the Zenith Coordinator.
  *
- * Lifecycle: RECEIVED -> PRECHECKED -> H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) -> DECIDED_TO_SETTLE
+ * Lifecycle: RECEIVED -> PRECHECKED -> H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) -> DECIDED_TO_SETTLE
  *   -> PAYER_EXEC_CONFIRMED -> PAYEE_EXEC_CONFIRMED -> SETTLED
  */
 export type TxState =
   | "RECEIVED"
   | "PRECHECKED"
   | "PRECHECKED_SUSPENDED"
-  | "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)"
+  | "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)"
   | "Hash-Time-Locked Contract_LOCKED"
   | "Hash-Time-Locked Contract_FULFILL_REQUESTED"
   | "DECIDED_TO_SETTLE"

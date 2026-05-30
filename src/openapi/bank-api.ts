@@ -61,7 +61,7 @@ paths:
   /bank/{bankId}/zc-ingress/reserve-funds:
     post:
       tags: [zc-ingress]
-      summary: 資金予約（H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)確保要求）
+      summary: 資金予約（H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)確保要求）
       description: |
         Create RESERVED record in SuspenseDetails for the customer account,
         available_balance を減少させる。冪等キーは request_id。

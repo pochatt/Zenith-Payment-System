@@ -125,7 +125,7 @@ paths:
       tags: [transfers]
       summary: Cancel transfer (pre-Decision only)
       description: |
-        Cancellable states: RECEIVED / PRECHECKED / PRECHECKED_SUSPENDED / H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held).
+        Cancellable states: RECEIVED / PRECHECKED / PRECHECKED_SUSPENDED / H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held).
         Atomically releases H-reservation, bank suspense, and transitions to CANCELLED.
       parameters:
         - \$ref: '#/components/parameters/txid'

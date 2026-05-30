@@ -6,7 +6,7 @@
  * the Zenith Coordinator (ZC). Each command corresponds to a specific stage in
  * the payment lifecycle:
  *
- *   1. reserve-funds     — Reserve payer funds in suspense (H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held))
+ *   1. reserve-funds     — Reserve payer funds in suspense (H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held))
  *   2. execute-debit     — Finalize payer debit (a-proof generation)
  *   3. execute-credit    — Credit payee account (b-proof, hard landing)
  *   4. release-reserve   — Release reserved funds on cancel/timeout
@@ -252,7 +252,7 @@ async function saveResponse(requestId: string, response: unknown, db: D1Database
 }
 
 /**
- * **Command 1: reserve-funds** — Reserve payer funds (H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)).
+ * **Command 1: reserve-funds** — Reserve payer funds (H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)).
  *
  * Isolates the transfer amount from the payer's savings account into a
  * suspense account via double-entry journals:
@@ -1201,7 +1201,7 @@ interface BankInitializeRequest {
  *
  * ZC は参加行登録（Participants）のみ行い、銀行内部口座（BankAccounts）や
  * 仕訳（BankJournals）の初期化は銀行自身が責任を持つ（基本思想: 金融機関が既存責任を保持）。
- * このハンドラはその「銀行側初期化」を受け付けるエンドポイント。
+ * This handler is an endpoint that accepts the "bank-side initialization".
  *
  * 作成する口座:
  *   - 別段預金（SUSPENSE）: 送金中の資金を一時保管

@@ -100,7 +100,7 @@ const STATE_JP: Record<string, string> = {
   RECEIVED: "受付",
   PRECHECKED: "事前検証済",
   PRECHECKED_SUSPENDED: "事前検証保留",
-  H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held): "H 予約済",
+  H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held): "H 予約済",
   DECIDED_TO_SETTLE: "確定判断後",
   DECIDED_CANCEL: "中止判断後",
   PAYER_EXEC_CONFIRMED: "出金確認済",

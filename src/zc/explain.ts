@@ -101,7 +101,7 @@ const EVENT_REASONS: Record<string, { reason: string; actors: string[] }> = {
 const STATE_SUMMARIES: Record<string, string> = {
   RECEIVED: "Immediately after the transaction was received",
   PRECHECKED: "Pre-validation passed; awaiting next processing step",
-  H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held): "Funds are secured at the payer's bank",
+  H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held): "Funds are secured at the payer's bank",
   DECIDED_TO_SETTLE: "Decision to finalize settlement済みで、銀行での入出金処理中です",
   DECIDED_CANCEL: "決済Decision to abort済みで、後処理中です",
   SETTLED: "Payment has been finalized successfully",

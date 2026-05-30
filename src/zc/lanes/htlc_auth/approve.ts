@@ -122,7 +122,7 @@ export async function approveAuthRequest(
   // Step 1: canonical entry — INSERT Transactions at RECEIVED, write the
   // PaymentInitiated audit event, and create the HtlcContracts row in one
   // atomic batch. The H reservation is already held by the bank's suspense
-  // account (reserve-funds above), so ZC does not allocate an H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) row;
+  // account (reserve-funds above), so ZC does not allocate an H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) row;
   // the lane goes RECEIVED → Hash-Time-Locked Contract_LOCKED directly per ALLOWED_TRANSITIONS.
   await insertTxWithLog(db, {
     txid,

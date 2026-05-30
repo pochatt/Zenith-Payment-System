@@ -187,6 +187,11 @@ const translations = {
   "zenith-mock の `Participants.bank_id` は実際の全銀銀行コードと1桁異なる。": "zenith-mock's `Participants.bank_id` differs by 1 digit from actual Zenginkyo bank codes.",
   "よって支店コードは変換時に「情報として保持するが、DB照合には使わない」として扱う。": "Therefore, branch codes are treated as \"retained as information but not used for DB matching\" during conversion.",
   "フィールド名は全銀協フォーマット仕様書の項目名に準拠。": "Field names comply with item names in the Zenginkyo format specification document.",
+
+  // Final batch translations
+  "// HTTP fetch ハンドラー": "// HTTP fetch handler",
+  "* このハンドラはその「銀行側初期化」を受け付けるエンドポイント。": "* This handler is an endpoint that accepts the \"bank-side initialization\".",
+  "* この識別子は DB の `account_hash` ではなく、銀行 `account-verify` エンドポイントへの": "* This identifier is not the DB's `account_hash`, but rather for the bank's `account-verify` endpoint",
 };
 
 const srcDir = '/home/user/Zenith-Payment-System/src';

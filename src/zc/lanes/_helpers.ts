@@ -421,7 +421,7 @@ export async function cancelInFlightTx(db: D1Database, req: CancelRequest): Prom
     "RECEIVED",
     "PRECHECKED",
     "PRECHECKED_SUSPENDED",
-    "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)",
+    "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)",
   ];
   const placeholders = fromStates.map(() => "?").join(",");
 

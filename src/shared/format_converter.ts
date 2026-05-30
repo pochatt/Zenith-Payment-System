@@ -75,7 +75,7 @@ export function mockBankIdToZenginCode(bankId: string): string {
 /**
  * 全銀口座番号（7桁数字）と支店コードから「未解決口座識別子」を生成する。
  *
- * この識別子は DB の `account_hash` ではなく、銀行 `account-verify` エンドポイントへの
+ * This identifier is not the DB's `account_hash`, but rather for the bank's `account-verify` endpoint
  * 照会入力として使用するための一時的なプレースホルダー。
  * 呼び出し元が `account-verify` で解決した後、返却された `account_hash` を使用する。
  *

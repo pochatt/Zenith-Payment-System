@@ -202,7 +202,7 @@ function withCors(resp: Response): Response {
 
 export default {
   // =========================================================================
-  // HTTP fetch ハンドラー
+  // HTTP fetch handler
   // =========================================================================
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);

@@ -143,7 +143,7 @@ const NEXT_EXPECTED: Record<string, string[]> = {
   RECEIVED: ["PreCheckPassed", "PreCheckFailed", "HtlcLocked"],
   PRECHECKED: ["HReserved", "DecidedToSettle", "DecidedCancel"],
   PRECHECKED_SUSPENDED: ["PreCheckPassed", "DecidedCancel"],
-  H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held): ["DecidedToSettle", "DecidedCancel"],
+  H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held): ["DecidedToSettle", "DecidedCancel"],
   DECIDED_TO_SETTLE: ["PayerExecConfirmed", "PayeeExecConfirmed", "Suspended"],
   DECIDED_CANCEL: ["Cancelled"],
   PAYER_EXEC_CONFIRMED: ["PayeeExecConfirmed", "Suspended"],
@@ -241,7 +241,7 @@ function stateToVerb(state: string): string {
       return "失敗";
     case "SUSPENDED":
       return "保留中";
-    case "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)":
+    case "H_RESERVED (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held) (H-reserve funds are held)":
       return "H 予約済み";
     case "DECIDED_TO_SETTLE":
       return "Bank processing in progress after finalization decision";
