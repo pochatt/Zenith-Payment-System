@@ -45,7 +45,7 @@ import {
   handleAccountNameLookup,
   handleSimSetup,
   handleSimSetupOneBank,
-  // HTLC Auth（receipt側起点オーソリ型）
+  // HTLC Auth (payee-initiated authorization type)
   handleHtlcAuthRequest,
   handleHtlcAuthApprove,
   handleHtlcAuthDecline,
@@ -884,7 +884,7 @@ async function handleZcApi(
     const result = await processQrPayment(env.DB, body, env);
     if (!result.valid) return jsonError(400, "QR_INVALID", result.error ?? "QR payment failed");
 
-    // QRvalidationOK → 実際のbank transfer処理を起動
+    // QR validation OK → trigger actual bank transfer processing
     const qr = result.qrRow!;
     const txid = `TX-${newUUID()}`;
     const zcReq = new Request("http://internal/api/transfers", {
@@ -1025,7 +1025,7 @@ async function handleBankApi(
   if (method === "GET" && txStatusMatch)
     return handleGetTransferStatus(req, bankId, txStatusMatch[1]!, env);
 
-  // 行員API
+  // Teller API
   if (method === "POST" && sub === "/v1/teller/cash/deposit")
     return handleCashDeposit(req, bankId, env);
 
@@ -1059,7 +1059,7 @@ async function handleBankApi(
   if (method === "GET" && sub === "/v1/teller/batch/status")
     return handleBatchStatus(req, bankId, env);
 
-  // credit filter管理 API
+  // Credit filter management API
   if (sub === "/v1/filters") {
     if (method === "GET") {
       const url = new URL(req.url);
@@ -1111,9 +1111,9 @@ async function handleBankApi(
     const result = await respondToApproval(bankId, approvalRespondMatch[1]!, body, env.DB);
     if (!result.ok) return jsonError(400, result.reason ?? "ERROR", result.reason ?? "failed");
 
-    // approvalされた場合: ZC に resume_credit を通知（Queue 経由）
+    // If approval: notify ZC to resume_credit (via Queue)
     if (body.approved && result.txid) {
-      // 対象transactionの payee informationをget
+      // Get target transaction's payee information
       const txInfo = await env.DB.prepare(
         `SELECT payee_bank_id, payee_account_hash FROM Transactions WHERE txid=?`
       )
@@ -1136,7 +1136,7 @@ async function handleBankApi(
     return json(200, { result: body.approved ? "APPROVED" : "REJECTED", txid: result.txid });
   }
 
-  // BankAuditLog inquiry（行員）
+  // BankAuditLog inquiry (teller)
   if (method === "GET" && sub === "/v1/teller/audit-log") {
     const url = new URL(req.url);
     const txid = url.searchParams.get("txid");

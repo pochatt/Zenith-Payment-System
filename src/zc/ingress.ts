@@ -1303,7 +1303,7 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
 }
 
 // ---------------------------------------------------------------------------
-// HTLC Auth（receipt側起点オーソリ型）ハンドラ群
+// HTLC Auth (payee-initiated authorization type)ハンドラ群
 // ---------------------------------------------------------------------------
 
 /** POST /api/htlc/auth-request  receipt側がオーソリリクエストをsend */

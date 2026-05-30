@@ -26,7 +26,7 @@ import { insertJournalGroup, calcBalance } from "../bank/ledger";
 import { releaseH } from "./h_model";
 
 // ---------------------------------------------------------------------------
-// DNS Kick: 当日サイクルを OPEN → KICKED
+// DNS Kick: Today's cycle OPEN → KICKED
 // ---------------------------------------------------------------------------
 export async function kickDns(
   businessDate: string,
@@ -39,7 +39,7 @@ export async function kickDns(
   const db = env.DB;
   const now = nowISO();
 
-  // 当日 OPEN サイクルをget（後着サイクル含む）。なければ新規create
+  // Get today's OPEN cycle (including late-arriving). If none, create new
   let cycle = await db
     .prepare(
       `SELECT * FROM DnsCycles WHERE business_date = ? AND state = 'OPEN' ORDER BY created_at ASC LIMIT 1`
@@ -63,7 +63,7 @@ export async function kickDns(
       .bind(businessDate)
       .first<DnsCycleRow>();
     if (!cycle) {
-      // 当日サイクルは既に KICKED か SETTLED → early return
+      // Today's cycle already KICKED or SETTLED → early return
       const existing = await db
         .prepare(`SELECT * FROM DnsCycles WHERE business_date = ? ORDER BY created_at DESC LIMIT 1`)
         .bind(businessDate)
@@ -74,10 +74,10 @@ export async function kickDns(
     }
   }
 
-  // 未割当TX を先にサイクルに紐付け → その後ネットポジション計算
-  // HIGH_VALUE は即時 RTGS settlementのため DNS Kick の対象外とする
-  // DATE filter廃止: dns_cycle_id=NULL の全未決TX（前日繰越分を含む）を収容する
-  //   advanceBulk は dns_cycle_id をsetしないため、kickDns が唯一の割当機関
+  // Assign unallocated TXs to cycle first → then calculate net positions
+  // HIGH_VALUE is excluded from DNS Kick as it uses immediate RTGS settlement
+  // DATE filter removed: accommodate all unsettled TXs with dns_cycle_id=NULL (including prior-day carryover)
+  //   advanceBulk does not set dns_cycle_id, so kickDns is the sole allocation mechanism
   await db
     .prepare(
       `UPDATE Transactions SET dns_cycle_id = ?
@@ -88,7 +88,7 @@ export async function kickDns(
     .bind(cycle.cycle_id)
     .run();
 
-  // ネットポジション計算（割当後の全TX対象）
+  // Net position calculation (all TXs after allocation)
   const txRows = await db
     .prepare(
       `SELECT payer_bank_id, payee_bank_id, amount_value
@@ -98,8 +98,8 @@ export async function kickDns(
     .bind(cycle.cycle_id)
     .all<{ payer_bank_id: string; payee_bank_id: string; amount_value: number }>();
 
-  // 単一passで net / grossSend / grossReceive を同時集計（O(n) / O(participants)）。
-  // 以前は filter+reduce で O(n*participants) かつ中間arrayを毎回確保していた。
+  // Aggregate net/grossSend/grossReceive in single pass (O(n) time / O(participants) space).
+  // Previously was O(n*participants) with filter+reduce and intermediate array allocation each time.
   const netPositions: Record<string, number> = {};
   const grossSendByBank: Record<string, number> = {};
   const grossReceiveByBank: Record<string, number> = {};
@@ -113,7 +113,7 @@ export async function kickDns(
     grossReceiveByBank[payee] = (grossReceiveByBank[payee] ?? 0) + amt;
   }
 
-  // DnsNetPositions に保存
+  // Store in DnsNetPositions
   const netStmts: ReturnType<typeof db.prepare>[] = [];
   for (const bankId in netPositions) {
     netStmts.push(
@@ -158,7 +158,7 @@ export async function kickDns(
 }
 
 // ---------------------------------------------------------------------------
-// DNS settlement完了: KICKED → SETTLED
+// DNS settlement complete: KICKED → SETTLED
 // ---------------------------------------------------------------------------
 export async function settleDns(cycleId: string, env: Env): Promise<void> {
   const db = env.DB;
@@ -171,9 +171,9 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
   if (!cycle || cycle.state !== "KICKED") return;
 
   // ---------------------------------------------------------------------------
-  // 事前BOJbalance充足confirmation: ネット支払超行の BOJ balanceをvalidation（プレファンドRTGS要件）
-  // 報告書「論点7: 資金settlement・paymentのあり方」—プレファンドRTGS方式では
-  // settlement前に各participating bankの事前拠出balanceが支払超額をカバーできるかconfirmationする
+  // Pre-settlement BOJ balance verification: validate BOJ balance for net payer banks (prefunded RTGS requirement)
+  // White paper 'Issue 7: How to handle fund settlement and payments' — In prefunded RTGS approach:
+  // Before settlement, confirm that each participating bank's advance funding balance covers its net payable amount
   // ---------------------------------------------------------------------------
   const debitPositions = await db
     .prepare(
@@ -187,11 +187,11 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
     const bojBalance = await calcBalance(`${row.bank_id}-BOJ`, db);
     const requiredDebit = -row.net_position; // net_position < 0 なので正の値
 
-    // NOTE: BOJbalancecheckロジック（偽陽性検査済み）
-    // 符号規則: bojBalance は負値で表現される（負債会計: 日銀当座預金は負資産）
-    //   例: 預金balance 100万円 → bojBalance = -1,000,000
-    // 不足判定: bojBalance + requiredDebit > 0
-    //   例1: bojBalance=-1,000,000, requiredDebit=900,000 → -100,000 ≤ 0 → OK
+    // NOTE: BOJ balance check logic (false positive tested)
+    // Sign convention: bojBalance is expressed as negative (debt accounting: BOJ current account deposit is negative asset)
+    //   Example: deposit balance 1,000,000 yen → bojBalance = -1,000,000
+    // Insufficiency check: bojBalance + requiredDebit > 0
+    //   Example 1: bojBalance=-1,000,000, requiredDebit=900,000 → -100,000 ≤ 0 → OK
     //   例2: bojBalance=-100,000, requiredDebit=900,000 → 800,000 > 0 → 不足 ✓
     // このロジックは正しい。算出結果が直感的でないため、明示的に記述。
     if (bojBalance + requiredDebit > 0) {
