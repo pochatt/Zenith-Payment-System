@@ -9,6 +9,7 @@
 import type { Env } from "../types";
 import { nowISO } from "../types";
 import { suspendTx, checkAndFinalizeGtid } from "../zc/orchestrator";
+import { transitionWithLog } from "../zc/lanes/_helpers";
 import { cancelHtlc } from "../zc/lanes/htlc";
 import { expireRtpRequests } from "../zc/rtp";
 import { retryPendingNotifications } from "../zc/credit_notify";
@@ -59,13 +60,21 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     .all<{ txid: string }>();
 
   for (const tx of failedOld.results) {
-    await db
-      .prepare(
-        `UPDATE Transactions SET state='FAILED_EXECUTION', reason_code='FAILED_EXEC_TIMEOUT', updated_at=?, version=version+1 WHERE txid=? AND state='SUSPENDED'`
-      )
-      .bind(nowISO(), tx.txid)
-      .run();
-    swept++;
+    // Route through transitionWithLog so the SUSPENDED → FAILED_EXECUTION
+    // advance writes its paired FinalityLog entry atomically. A raw UPDATE
+    // here moved a transaction to a *terminal* state with no audit record —
+    // exactly the "state advanced without evidence" window the system forbids
+    // (design principle #1). FAILED_EXECUTION is terminal, so a missing log is
+    // unrecoverable after the fact.
+    const { applied } = await transitionWithLog(db, {
+      txid: tx.txid,
+      fromState: "SUSPENDED",
+      toState: "FAILED_EXECUTION",
+      eventType: "FailedExecution",
+      setColumns: { reason_code: "FAILED_EXEC_TIMEOUT" },
+      payload: { txid: tx.txid, reason_code: "FAILED_EXEC_TIMEOUT" },
+    });
+    if (applied) swept++;
   }
 
   // 4. HTLC timelock 期限切れ
