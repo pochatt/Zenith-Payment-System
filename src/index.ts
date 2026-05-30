@@ -645,6 +645,53 @@ async function handleZcApi(
     return json(result.ok ? 200 : 422, result);
   }
 
+  // POST /api/transfers/:txid/no-debit-proof  H_locked 自動解放（未実行証明・§8.4.1）
+  // 銀行 ingress と同じく X-ZC-Signature を検証する（PayerBank 発の署名付き証明）。
+  const noDebitMatch = path.match(/^\/api\/transfers\/([^/]+)\/no-debit-proof$/);
+  if (method === "POST" && noDebitMatch) {
+    const body = (await req.json().catch(() => null)) as {
+      proof_ref?: string;
+      bank_id?: string;
+    } | null;
+    if (!body || !body.proof_ref)
+      return jsonError(400, "PROOF_REF_REQUIRED", "proof_ref is required");
+    if (env.ZC_HMAC_SECRET) {
+      const signature = req.headers.get("X-ZC-Signature");
+      if (!signature) return jsonError(401, "MISSING_SIGNATURE", "X-ZC-Signature required");
+      const { verifySignature } = await import("./shared/hmac");
+      if (!(await verifySignature(body, signature, env.ZC_HMAC_SECRET)))
+        return jsonError(401, "INVALID_SIGNATURE", "signature verification failed");
+    }
+    const { submitNoDebitProof } = await import("./zc/h_unlock");
+    const result = await submitNoDebitProof(env.DB, noDebitMatch[1]!, {
+      proof_ref: body.proof_ref,
+      bank_id: body.bank_id ?? "UNKNOWN",
+    });
+    return json(result.ok ? 200 : 422, result);
+  }
+
+  // POST /api/transfers/:txid/h-unlock-authorize  H_locked 運用解放（4 眼・§8.4.1）
+  const hUnlockMatch = path.match(/^\/api\/transfers\/([^/]+)\/h-unlock-authorize$/);
+  if (method === "POST" && hUnlockMatch) {
+    const body = (await req.json().catch(() => null)) as {
+      approver_1?: string;
+      approver_2?: string;
+      evidence_type?: string;
+      evidence_ref?: string;
+      case_id?: string;
+    } | null;
+    if (!body) return jsonError(400, "INVALID_JSON", "invalid body");
+    const { authorizeHUnlock } = await import("./zc/h_unlock");
+    const result = await authorizeHUnlock(env.DB, hUnlockMatch[1]!, {
+      approver_1: body.approver_1 ?? "",
+      approver_2: body.approver_2 ?? "",
+      evidence_type: body.evidence_type ?? "",
+      evidence_ref: body.evidence_ref ?? "",
+      case_id: body.case_id,
+    });
+    return json(result.ok ? 200 : 422, result);
+  }
+
   // GET /api/transactions (list)
   if (method === "GET" && path === "/api/transactions") return handleListTransactions(req, env);
 

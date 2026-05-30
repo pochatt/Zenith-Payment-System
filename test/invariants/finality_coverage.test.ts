@@ -88,7 +88,10 @@ describe("invariant: raw state-mutating UPDATE Transactions is confined to the c
     // Guards against the allowlist rotting into a stale set that silently grants
     // exemptions to files that no longer need them.
     for (const rel of STATE_UPDATE_ALLOWLIST) {
-      expect(hasStateMutatingUpdate(readFileSync(rel, "utf8")), `${rel} is allowlisted but has no state-mutating UPDATE`).toBe(true);
+      expect(
+        hasStateMutatingUpdate(readFileSync(rel, "utf8")),
+        `${rel} is allowlisted but has no state-mutating UPDATE`
+      ).toBe(true);
     }
   });
 });
@@ -126,7 +129,12 @@ function seedParticipant(db: MockD1Database, bankId: string) {
 }
 
 /** Seed a transaction at `state` together with a FinalityLog entry recording it. */
-async function seedLoggedTx(db: MockD1Database, txid: string, state: string, expiresAt: string | null) {
+async function seedLoggedTx(
+  db: MockD1Database,
+  txid: string,
+  state: string,
+  expiresAt: string | null
+) {
   db.prepare(
     `INSERT INTO Transactions
      (txid, lane, state, amount_value, amount_currency,
