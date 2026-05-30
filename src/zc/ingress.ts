@@ -4,8 +4,8 @@
  * This module is the primary entry point for all external payment requests
  * into the Zenith Coordinator. It handles:
  *  - Payment initiation (all lanes: EXPRESS, STANDARD, BULK, HIGH_VALUE, etc.)
- *  - HTLC creation and claim (hash time-locked contracts)
- *  - HTLC Auth (payee-initiated authorization flow)
+ *  - Hash-Time-Locked Contract creation and claim (hash time-locked contracts)
+ *  - Hash-Time-Locked Contract Auth (payee-initiated authorization flow)
  *  - GTID registration (coordinated multi-leg transactions)
  *  - RTP request (Request-to-Pay)
  *  - Transfer authorization and cancellation
@@ -222,7 +222,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
           success = upd2.meta.changes > 0;
         }
       } else {
-        // アトミックに加算し、超過時は rows=0 になる
+        // Atomically increment, returning rows=0 on overflow
         const upd = await db
           .prepare(
             `UPDATE Participants SET daily_amount_used = daily_amount_used + ?
@@ -234,7 +234,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       }
     } catch (e: any) {
       if (e.message && e.message.includes("no such column")) {
-        // スキーマ不完全時: 警告をログして制限なしとして続行（開発環境での利便性のため）
+        // If schema is incomplete: log a warning and continue without limits (for convenience in development environment)
         console.error(
           `[ingress] Schema incomplete: daily_amount_used column missing. Migration 0010+ may not have been applied. Daily limits will be ignored. Error: ${e.message}`
         );
@@ -365,17 +365,17 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
         enqueued_at: now,
       });
       break;
-    case "HTLC":
-      // HTLC は専用エンドポイント POST /api/htlc/create を使用する
+    case "Hash-Time-Locked Contract":
+      // Hash-Time-Locked Contract は専用エンドポイント POST /api/htlc/create を使用する
       await completeIdempotency(
         idempKey,
-        { result: "REJECTED", reason_code: "USE_HTLC_ENDPOINT" },
+        { result: "REJECTED", reason_code: "USE_Hash-Time-Locked Contract_ENDPOINT" },
         db
       );
       return jsonError(
         422,
-        "USE_HTLC_ENDPOINT",
-        "HTLC lane must use POST /api/htlc/create endpoint"
+        "USE_Hash-Time-Locked Contract_ENDPOINT",
+        "Hash-Time-Locked Contract lane must use POST /api/htlc/create endpoint"
       );
     default:
       result = { result: "INGRESS_ACCEPTED", txid: body.txid, state: "RECEIVED" };
@@ -530,7 +530,7 @@ export async function handlePostCancel(req: Request, txid: string, env: Env): Pr
 
   if (!tx) return jsonError(404, "NOT_FOUND", `txid ${txid} not found`);
 
-  const cancelableStates = ["RECEIVED", "PRECHECKED", "PRECHECKED_SUSPENDED", "H_RESERVED"];
+  const cancelableStates = ["RECEIVED", "PRECHECKED", "PRECHECKED_SUSPENDED", "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)"];
   if (!cancelableStates.includes(tx.state)) {
     return jsonError(409, "INVALID_STATE", `Cannot cancel tx in state ${tx.state}`);
   }
@@ -939,7 +939,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
       db
         .prepare(
           `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
-         VALUES (?, ?, 'BOJ', '日本銀行（預け金勘定）', 'BOJ', 'NORMAL', ?)`
+         VALUES (?, ?, 'BOJ', 'Bank of Japan (Deposit Account)', 'BOJ', 'NORMAL', ?)`
         )
         .bind(`${nextCode}-BOJ`, nextCode, now),
       db
@@ -1163,7 +1163,7 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
     db
       .prepare(
         `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
-       VALUES (?, ?, 'BOJ', '日本銀行（預け金勘定）', 'BOJ', 'NORMAL', ?)`
+       VALUES (?, ?, 'BOJ', 'Bank of Japan (Deposit Account)', 'BOJ', 'NORMAL', ?)`
       )
       .bind(`${nextCode}-BOJ`, nextCode, now),
     db
@@ -1303,7 +1303,7 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
 }
 
 // ---------------------------------------------------------------------------
-// HTLC Auth（受取側起点オーソリ型）ハンドラ群
+// Hash-Time-Locked Contract Auth（受取側起点オーソリ型）ハンドラ群
 // ---------------------------------------------------------------------------
 
 /** POST /api/htlc/auth-request  受取側がオーソリリクエストを送信 */

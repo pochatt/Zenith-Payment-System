@@ -281,7 +281,7 @@ export async function handleListTransactions(req: Request, env: Env): Promise<Re
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/htlc  (HTLC一覧: ダッシュボード用)
+// GET /api/htlc  (Hash-Time-Locked Contract一覧: ダッシュボード用)
 // ---------------------------------------------------------------------------
 export async function handleListHtlcs(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);

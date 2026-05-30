@@ -70,7 +70,7 @@ const BANK_ID_TO_BIC: Record<string, string> = Object.fromEntries(
  * - EXPRESS / RTP は ZENITH_NATIVE (低レイテンシ優先)
  * - STANDARD は ZENITH_NATIVE
  * - BULK / DEFERRED は ZENGIN_FIXED (全銀協バッチ互換)
- * - HTLC は ZENITH_NATIVE (ハッシュロック情報をネイティブで運搬)
+ * - Hash-Time-Locked Contract は ZENITH_NATIVE (ハッシュロック情報をネイティブで運搬)
  *
  * @param lane - レーンタイプ
  * @param isCrossBorder - クロスボーダー取引かどうか
@@ -92,7 +92,7 @@ export function selectMessageFormat(lane: LaneType, isCrossBorder: boolean): Mes
     case "EXPRESS":
     case "STANDARD":
     case "RTP":
-    case "HTLC":
+    case "Hash-Time-Locked Contract":
     default:
       return "ZENITH_NATIVE";
   }

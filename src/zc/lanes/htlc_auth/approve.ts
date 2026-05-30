@@ -1,19 +1,19 @@
 /**
- * @file HTLC Auth approval (payer-side accept). Reserves funds, mints preimage,
- *       and creates the HTLC contract + transaction via the canonical state
- *       machine entry path (RECEIVED → HTLC_LOCKED).
+ * @file Hash-Time-Locked Contract Auth approval (payer-side accept). Reserves funds, mints preimage,
+ *       and creates the Hash-Time-Locked Contract contract + transaction via the canonical state
+ *       machine entry path (RECEIVED → Hash-Time-Locked Contract_LOCKED).
  *
- * Earlier revisions inserted Transactions directly at `HTLC_LOCKED`, which
+ * Earlier revisions inserted Transactions directly at `Hash-Time-Locked Contract_LOCKED`, which
  * bypassed the canonical `RECEIVED` entry, skipped ALLOWED_TRANSITIONS
  * validation, and lost the `PaymentInitiated` audit event. Capture (claimHtlc)
- * later CAS-updates `WHERE state='HTLC_LOCKED'`, so any drift in the entry
+ * later CAS-updates `WHERE state='Hash-Time-Locked Contract_LOCKED'`, so any drift in the entry
  * state produced silent payee non-credit (regression fixed in
  * `test/integration/balance_invariants.test.ts`).
  *
  * This implementation:
  *   1. INSERTs the Transactions row at `RECEIVED` and writes the
  *      `PaymentInitiated` audit event.
- *   2. Uses `transitionWithLog` to advance `RECEIVED → HTLC_LOCKED` so the
+ *   2. Uses `transitionWithLog` to advance `RECEIVED → Hash-Time-Locked Contract_LOCKED` so the
  *      ALLOWED_TRANSITIONS table is enforced and CAS+log are atomic.
  *
  * @module zc/lanes/htlc_auth/approve
@@ -32,7 +32,7 @@ import { transitionWithLog, insertTxWithLog } from "../_helpers";
  *   1. preimage + hashlock を生成して Vault に保管
  *   2. 送金側銀行に資金予約をかける
  *   3. Transactions を RECEIVED で INSERT（canonical entry）
- *   4. RECEIVED → HTLC_LOCKED へ `transitionWithLog` で遷移
+ *   4. RECEIVED → Hash-Time-Locked Contract_LOCKED へ `transitionWithLog` で遷移
  *      （ALLOWED_TRANSITIONS チェック + FinalityLog 同時記録）
  */
 export async function approveAuthRequest(
@@ -82,7 +82,7 @@ export async function approveAuthRequest(
   await db
     .prepare(
       `INSERT INTO Vault (vault_ref, txid, data_type, payload_json, expires_at, is_evicted, created_at)
-     VALUES (?, NULL, 'HTLC_PREIMAGE', ?, ?, 0, ?)`
+     VALUES (?, NULL, 'Hash-Time-Locked Contract_PREIMAGE', ?, ?, 0, ?)`
     )
     .bind(vaultRef, JSON.stringify({ preimage, auth_id: authId }), vaultExpiresAt, now)
     .run();
@@ -122,11 +122,11 @@ export async function approveAuthRequest(
   // Step 1: canonical entry — INSERT Transactions at RECEIVED, write the
   // PaymentInitiated audit event, and create the HtlcContracts row in one
   // atomic batch. The H reservation is already held by the bank's suspense
-  // account (reserve-funds above), so ZC does not allocate an H_RESERVED row;
-  // the lane goes RECEIVED → HTLC_LOCKED directly per ALLOWED_TRANSITIONS.
+  // account (reserve-funds above), so ZC does not allocate an H_RESERVED (H-reserve funds are held) (H-reserve funds are held) row;
+  // the lane goes RECEIVED → Hash-Time-Locked Contract_LOCKED directly per ALLOWED_TRANSITIONS.
   await insertTxWithLog(db, {
     txid,
-    lane: "HTLC",
+    lane: "Hash-Time-Locked Contract",
     initialState: "RECEIVED",
     amount: { value: authReq.amount_value, currency: "JPY" },
     payerBankId: authReq.payer_bank_id,
@@ -135,17 +135,17 @@ export async function approveAuthRequest(
     payeeAccountHash: authReq.payee_account_hash,
     idempotencyKey: req.idempotency_key,
     eventType: "PaymentInitiated",
-    payload: { txid, lane: "HTLC", flow: "HTLC_AUTH", auth_id: authId },
+    payload: { txid, lane: "Hash-Time-Locked Contract", flow: "Hash-Time-Locked Contract_AUTH", auth_id: authId },
     sideUpdates: [
       {
-        // HtlcContracts は HTLC_LOCKED で作成しておき、Step 2 の Transactions
-        // 遷移 (RECEIVED → HTLC_LOCKED) と整合させる。claimHtlc がリードする
-        // hashlock/timelock を確実に提供するため Transactions より先に存在させる。
+        // HtlcContracts are created with Hash-Time-Locked Contract_LOCKED status, and Transactions in Step 2
+        // Align with transition (RECEIVED → Hash-Time-Locked Contract_LOCKED). claimHtlc leads
+        // exist before Transactions to ensure reliable provision of hashlock/timelock.
         sql: `INSERT OR IGNORE INTO HtlcContracts
             (htlc_id, txid, state, hashlock, timelock, amount_value,
              payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
              version, created_at, updated_at)
-            VALUES (?, ?, 'HTLC_LOCKED', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`,
+            VALUES (?, ?, 'Hash-Time-Locked Contract_LOCKED', ?, ?, ?, ?, ?, 0, 0, 0, ?, ?)`,
         binds: [
           htlcId,
           txid,
@@ -161,13 +161,13 @@ export async function approveAuthRequest(
     ],
   });
 
-  // Step 2: RECEIVED → HTLC_LOCKED via the canonical helper.
-  // ALLOWED_TRANSITIONS contains this edge (state_machine.ts: RECEIVED → HTLC_LOCKED),
+  // Step 2: RECEIVED → Hash-Time-Locked Contract_LOCKED via the canonical helper.
+  // ALLOWED_TRANSITIONS contains this edge (state_machine.ts: RECEIVED → Hash-Time-Locked Contract_LOCKED),
   // so the validator allows it and the CAS+log batch is atomic.
   const transition = await transitionWithLog(db, {
     txid,
     fromState: "RECEIVED",
-    toState: "HTLC_LOCKED",
+    toState: "Hash-Time-Locked Contract_LOCKED",
     eventType: "HtlcAuthApproved",
     payload: { auth_id: authId, htlc_id: htlcId, hashlock },
   });
@@ -191,7 +191,7 @@ export async function approveAuthRequest(
   await logTxEvent(db, {
     txid,
     actor: `BANK_${authReq.payer_bank_id}`,
-    action: "HTLC_AUTH_APPROVED",
+    action: "Hash-Time-Locked Contract_AUTH_APPROVED",
     status: "OK",
     amount: authReq.amount_value,
     bank_id: authReq.payer_bank_id,

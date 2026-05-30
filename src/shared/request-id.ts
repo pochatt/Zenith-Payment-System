@@ -25,7 +25,7 @@ export const REQUEST_PREFIX = {
   EXECUTE_CREDIT: "CREDIT",
   /** 資金予約解放 */
   RELEASE_RESERVE: "RELEASE",
-  /** HTLC recheck */
+  /** Hash-Time-Locked Contract recheck */
   RECHECK: "RECHECK",
   /** 送金取消 */
   CANCEL: "CANCEL",

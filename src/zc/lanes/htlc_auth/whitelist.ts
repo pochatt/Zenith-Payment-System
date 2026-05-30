@@ -1,5 +1,5 @@
 /**
- * @file Whitelist management for HTLC Auth (admin only).
+ * @file Whitelist management for Hash-Time-Locked Contract Auth (admin only).
  * @module zc/lanes/htlc_auth/whitelist
  */
 import type { HtlcAuthWhitelistRow, HtlcAuthWhitelistRegisterRequest } from "../../../types";

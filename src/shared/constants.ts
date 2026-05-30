@@ -1,34 +1,34 @@
 // =============================================================================
 // src/shared/constants.ts  システム定数・設定値
 // =============================================================================
-// マジックナンバーを排除し、保守性を向上させるために一元管理する。
-// 各モジュールはハードコードされた数値の代わりにここからインポートする。
+// Centrally manage to eliminate magic numbers and improve maintainability.
+// Each module imports from here instead of using hardcoded numbers.
 // =============================================================================
 
 // ---------------------------------------------------------------------------
 // タイムアウト定数 (秒)
 // ---------------------------------------------------------------------------
 
-/** T2: 仕向実行 → 被仕向実行 のタイムアウト (5分) */
+/** T2: Timeout for sending-bank execution → receiving-bank execution (5 minutes) */
 export const TIMEOUT_T2_EXEC_SEC = 300;
 
-/** T3: 被仕向証憑待ちタイムアウト (5分) */
+/** T3: Receiving-bank proof waiting timeout (5 minutes) */
 export const TIMEOUT_T3_PAYEE_PROOF_SEC = 300;
 
-/** SUSPENDED 状態から FAILED_EXECUTION へ遷移するまでの猶予 (1時間) */
+/** Grace period to transition from SUSPENDED to FAILED_EXECUTION (1 hour) */
 export const TIMEOUT_SUSPENDED_TO_FAILED_SEC = 3600;
 
-/** GTID stalled recovery: GT_DECIDED_TO_SETTLE の滞留タイムアウト (10分) */
+/** GTID stalled recovery: GT_DECIDED_TO_SETTLE stall timeout (10 minutes) */
 export const TIMEOUT_GTID_STALLED_SEC = 600;
 
 // ---------------------------------------------------------------------------
 // 通知リトライ定数
 // ---------------------------------------------------------------------------
 
-/** 入金通知のリトライ間隔 (秒): 指数バックオフ */
+/** Credit notification retry interval (seconds): exponential backoff */
 export const NOTIFICATION_BACKOFF_SEC = [30, 120, 600, 3600] as const;
 
-/** 入金通知の最大リトライ回数 */
+/** Maximum retry count for credit notifications */
 export const NOTIFICATION_MAX_ATTEMPTS = 5;
 
 // ---------------------------------------------------------------------------

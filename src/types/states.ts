@@ -12,16 +12,16 @@
 /**
  * Transaction state machine for the Zenith Coordinator.
  *
- * Lifecycle: RECEIVED -> PRECHECKED -> H_RESERVED -> DECIDED_TO_SETTLE
+ * Lifecycle: RECEIVED -> PRECHECKED -> H_RESERVED (H-reserve funds are held) (H-reserve funds are held) -> DECIDED_TO_SETTLE
  *   -> PAYER_EXEC_CONFIRMED -> PAYEE_EXEC_CONFIRMED -> SETTLED
  */
 export type TxState =
   | "RECEIVED"
   | "PRECHECKED"
   | "PRECHECKED_SUSPENDED"
-  | "H_RESERVED"
-  | "HTLC_LOCKED"
-  | "HTLC_FULFILL_REQUESTED"
+  | "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)"
+  | "Hash-Time-Locked Contract_LOCKED"
+  | "Hash-Time-Locked Contract_FULFILL_REQUESTED"
   | "DECIDED_TO_SETTLE"
   | "DECIDED_CANCEL"
   | "PAYER_EXEC_CONFIRMED"
@@ -31,11 +31,11 @@ export type TxState =
   | "FAILED_EXECUTION"
   | "CANCELLED";
 
-/** State machine for HTLC (Hash Time-Locked Contract) transactions. */
+/** State machine for Hash-Time-Locked Contract (Hash Time-Locked Contract) transactions. */
 export type HtlcState =
-  | "HTLC_RECEIVED"
-  | "HTLC_LOCKED"
-  | "HTLC_FULFILL_REQUESTED"
+  | "Hash-Time-Locked Contract_RECEIVED"
+  | "Hash-Time-Locked Contract_LOCKED"
+  | "Hash-Time-Locked Contract_FULFILL_REQUESTED"
   | "DECIDED_TO_SETTLE"
   | "PAYER_EXEC_CONFIRMED"
   | "PAYEE_EXEC_CONFIRMED"
@@ -119,10 +119,10 @@ export type RtpState =
  * - BULK: Batch processing (salary, utility).
  * - DEFERRED: Deferred settlement via DNS cycle.
  * - RTP: Request-to-Pay initiated by payee.
- * - HTLC: Hash Time-Locked Contract conditional payment.
+ * - Hash-Time-Locked Contract: Hash Time-Locked Contract conditional payment.
  * - HIGH_VALUE: Large-value transactions requiring IGS/RTGS settlement.
  */
-export type LaneType = "EXPRESS" | "STANDARD" | "BULK" | "DEFERRED" | "RTP" | "HTLC" | "HIGH_VALUE";
+export type LaneType = "EXPRESS" | "STANDARD" | "BULK" | "DEFERRED" | "RTP" | "Hash-Time-Locked Contract" | "HIGH_VALUE";
 
 /** Transaction purpose category. */
 export type PurposeType = "MERCHANT" | "P2P" | "BILL" | "SALARY" | "REFUND";
@@ -136,7 +136,7 @@ export type PurposeType = "MERCHANT" | "P2P" | "BILL" | "SALARY" | "REFUND";
  * - RESERVED: Funds reserved from payer account.
  * - EXECUTED: Debit/credit executed against customer account.
  * - HV_TRANSIT: High-value funds in transit via IGS.
- * - HTLC_LOCKED: Funds locked under HTLC hash-lock.
+ * - Hash-Time-Locked Contract_LOCKED: Funds locked under Hash-Time-Locked Contract hash-lock.
  * - LANDED: Credit landed in payee suspense (hard landing).
  * - SETTLED: DNS/IGS settlement completed.
  * - CUSTODY: Funds held in custody (payee account frozen/closed/not found).
@@ -146,14 +146,14 @@ export type SuspenseStatus =
   | "RESERVED"
   | "EXECUTED"
   | "HV_TRANSIT"
-  | "HTLC_LOCKED"
+  | "Hash-Time-Locked Contract_LOCKED"
   | "LANDED"
   | "SETTLED"
   | "CUSTODY"
   | "RETURNED";
 
 /** Direction of a suspense entry relative to the bank. */
-export type SuspenseDirection = "PAY" | "RECEIVE" | "HV_TRANSIT" | "HTLC";
+export type SuspenseDirection = "PAY" | "RECEIVE" | "HV_TRANSIT" | "Hash-Time-Locked Contract";
 
 /** Status of a ZC Ingress command processed by the bank. */
 export type ZcRequestStatus = "PROCESSING" | "DONE" | "PROOF_ISSUED";

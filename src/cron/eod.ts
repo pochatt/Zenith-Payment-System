@@ -45,18 +45,18 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
       log.push(`DNS Settled: ${kickResult.cycle_id}`);
     }
 
-    // 4. HTLC 期限切れチェック
+    // 4. Hash-Time-Locked Contract 期限切れチェック
     const expiredHtlcs = await db
       .prepare(
-        `SELECT htlc_id, txid FROM HtlcContracts WHERE state IN ('HTLC_RECEIVED','HTLC_LOCKED') AND timelock < ?`
+        `SELECT htlc_id, txid FROM HtlcContracts WHERE state IN ('Hash-Time-Locked Contract_RECEIVED','Hash-Time-Locked Contract_LOCKED') AND timelock < ?`
       )
       .bind(new Date().toISOString())
       .all<{ htlc_id: string; txid: string }>();
 
     for (const htlc of expiredHtlcs.results) {
-      // env を渡して銀行側サスペンスの解放通知も行う（HTLC_LOCKED 時は reserve-funds が実行済み）
+      // env を渡して銀行側サスペンスの解放通知も行う（Hash-Time-Locked Contract_LOCKED 時は reserve-funds が実行済み）
       await cancelHtlc(htlc.htlc_id, htlc.txid, "TIMELOCK_EXPIRED", db, env);
-      log.push(`HTLC expired: ${htlc.htlc_id}`);
+      log.push(`Hash-Time-Locked Contract expired: ${htlc.htlc_id}`);
     }
 
     // 5. 利息計算 + 残高スナップショット

@@ -35,8 +35,8 @@ import type { ExplainResult, TimelineItem } from "./explain";
 export type VesselShape =
   | "tumbler" // EXPRESS — sleek, fast
   | "teabowl" // STANDARD — everyday bowl, wider at the rim
-  | "jar" // HTLC — sealed neck, locked
-  | "ringed_jar" // HTLC_AUTH — jar with a hold ring
+  | "jar" // Hash-Time-Locked Contract — sealed neck, locked
+  | "ringed_jar" // Hash-Time-Locked Contract_AUTH — jar with a hold ring
   | "twin_cups" // GTID — paired, multi-leg
   | "cone" // RTP — funnel, pulled in
   | "wide_jar" // HIGH_VALUE — heavy, stable, RTGS
@@ -77,8 +77,8 @@ export interface PostcardResult {
 const LANE_TO_SHAPE: Record<string, VesselShape> = {
   EXPRESS: "tumbler",
   STANDARD: "teabowl",
-  HTLC: "jar",
-  HTLC_AUTH: "ringed_jar",
+  Hash-Time-Locked Contract: "jar",
+  Hash-Time-Locked Contract_AUTH: "ringed_jar",
   GTID: "twin_cups",
   RTP: "cone",
   HIGH_VALUE: "wide_jar",
@@ -88,8 +88,8 @@ const LANE_TO_SHAPE: Record<string, VesselShape> = {
 const LANE_HUE_BASE: Record<string, number> = {
   EXPRESS: 200, // sky blue
   STANDARD: 215, // institutional blue
-  HTLC: 260, // violet
-  HTLC_AUTH: 280, // magenta-violet
+  Hash-Time-Locked Contract: 260, // violet
+  Hash-Time-Locked Contract_AUTH: 280, // magenta-violet
   GTID: 165, // jade green
   RTP: 195, // cyan
   HIGH_VALUE: 5, // deep red
@@ -100,7 +100,7 @@ const STATE_JP: Record<string, string> = {
   RECEIVED: "受付",
   PRECHECKED: "事前検証済",
   PRECHECKED_SUSPENDED: "事前検証保留",
-  H_RESERVED: "H 予約済",
+  H_RESERVED (H-reserve funds are held) (H-reserve funds are held): "H 予約済",
   DECIDED_TO_SETTLE: "確定判断後",
   DECIDED_CANCEL: "中止判断後",
   PAYER_EXEC_CONFIRMED: "出金確認済",
@@ -110,8 +110,8 @@ const STATE_JP: Record<string, string> = {
   SUSPENDED: "保留",
   FAILED_EXECUTION: "失敗",
   FAILED: "失敗",
-  HTLC_LOCKED: "HTLC ロック",
-  HTLC_FULFILL_REQUESTED: "HTLC 解錠要求",
+  Hash-Time-Locked Contract_LOCKED: "Hash-Time-Locked Contract ロック",
+  Hash-Time-Locked Contract_FULFILL_REQUESTED: "Hash-Time-Locked Contract 解錠要求",
 };
 
 /** Events that broke the smooth glaze and required a gold seam to mend. */
@@ -332,7 +332,7 @@ function vesselPath(shape: VesselShape): string {
         "Z",
       ].join(" ");
     case "jar":
-      // HTLC — pronounced shoulder + narrow neck (sealed neck = hash-locked).
+      // Hash-Time-Locked Contract — pronounced shoulder + narrow neck (sealed neck = hash-locked).
       return [
         "M218,168",
         "L262,168",
@@ -345,7 +345,7 @@ function vesselPath(shape: VesselShape): string {
         "Z",
       ].join(" ");
     case "ringed_jar":
-      // HTLC_AUTH — same silhouette as jar; the hold ring is drawn as a
+      // Hash-Time-Locked Contract_AUTH — same silhouette as jar; the hold ring is drawn as a
       // separate gold band in vesselExtras() so it doesn't break clip-path.
       return [
         "M218,168",
@@ -425,7 +425,7 @@ interface VesselExtra {
 function vesselExtras(shape: VesselShape): VesselExtra[] {
   switch (shape) {
     case "ringed_jar":
-      // HTLC_AUTH: two gold ring bands signalling the authorization hold.
+      // Hash-Time-Locked Contract_AUTH: two gold ring bands signalling the authorization hold.
       return [
         { d: "M170,304 C200,312 280,312 310,304", stroke: "#d4a056", opacity: 0.9, width: 1.6 },
         { d: "M170,336 C200,344 280,344 310,336", stroke: "#d4a056", opacity: 0.7, width: 1.2 },
@@ -551,11 +551,11 @@ const SEASON_OPENINGS: Record<Season, string[]> = {
 
 const LANE_MIDDLE: Record<string, string> = {
   EXPRESS: "ひと息に駆け抜け",
-  STANDARD: "律儀に手順を踏み",
-  HTLC: "鍵と鍵とを合わせ",
-  HTLC_AUTH: "仮の鍵を預けて",
+  STANDARD: "Following the procedure faithfully",
+  Hash-Time-Locked Contract: "Combining the two keys together",
+  Hash-Time-Locked Contract_AUTH: "Depositing a temporary key",
   GTID: "三脚 互いに支え",
-  RTP: "招かれて参じて",
+  RTP: "Responding to the invitation",
   HIGH_VALUE: "重き荷を運びて",
   BULK: "群れなして渡り",
 };
@@ -707,7 +707,7 @@ function formatAmountPoetic(value: number, currency: string): string {
   if (value >= 1_000_000) return `${Math.round(value / 1_000_000)}百万 渡し`;
   if (value >= 10_000) return `${Math.round(value / 10_000)}万を渡し`;
   if (value >= 1_000) return `${Math.round(value / 1_000)}千を渡し`;
-  return `小銭を渡し`;
+  return `Give change`;
 }
 
 /** ISO timestamp → month (1-12), with safe fallback. */

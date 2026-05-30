@@ -21,15 +21,15 @@ info:
 
     ## ZC→Bank Ingress API（10本）
     Zenith Coordinator から受信する内部コマンド。すべて POST で冪等性保証済み。
-    X-ZC-Signature (HMAC-SHA256) による署名検証を行う。
+    Perform signature verification using X-ZC-Signature (HMAC-SHA256).
 
     ## Bank Customer API（8本）
     顧客向けの口座残高照会・取引履歴・振込・承認管理。
-    ヘッダー X-Bank-Id + X-Customer-Id で認証（モック）。
+    Authentication via X-Bank-Id + X-Customer-Id headers (mock).
 
     ## Bank Teller API（12本）
     行員向けの現金入出金・口座管理・仕訳照会・別段預金解消・監査ログ。
-    ヘッダー X-Bank-Id + X-Teller-Id で認証（モック）。
+    Authentication via X-Bank-Id + X-Teller-Id headers (mock).
 
     ## Payment Filters API（4本）
     着金フィルタ（送信元ブロック・金額上限・EDIパターン・承認要求）の CRUD。
@@ -48,9 +48,9 @@ tags:
   - name: zc-ingress
     description: ZC→Bank Ingress API（X-ZC-Signature 必須・10本）
   - name: customer
-    description: 顧客向けAPI（X-Bank-Id + X-Customer-Id）
+    description: Customer API (X-Bank-Id + X-Customer-Id)
   - name: teller
-    description: 行員向けAPI（X-Bank-Id + X-Teller-Id）
+    description: Teller API (X-Bank-Id + X-Teller-Id)
   - name: filters
     description: 着金フィルタ管理API（X-Bank-Id + X-Customer-Id）
 
@@ -61,9 +61,9 @@ paths:
   /bank/{bankId}/zc-ingress/reserve-funds:
     post:
       tags: [zc-ingress]
-      summary: 資金予約（H_RESERVED確保要求）
+      summary: 資金予約（H_RESERVED (H-reserve funds are held) (H-reserve funds are held)確保要求）
       description: |
-        SuspenseDetails に RESERVED レコードを作成し、顧客口座の
+        Create RESERVED record in SuspenseDetails for the customer account,
         available_balance を減少させる。冪等キーは request_id。
       operationId: reserveFunds
       parameters:
@@ -87,7 +87,7 @@ paths:
       tags: [zc-ingress]
       summary: a実行指示（PayerExecRequested準拠）
       description: |
-        SuspenseDetails を RESERVED → COMMITTED に変更し、
+        Change SuspenseDetails from RESERVED → COMMITTED,
         顧客口座 → 別段預金 の仕訳（BankJournals）を記録する。
         a証憑（bank_proof_ref）を生成して返す。
       operationId: executeDebit
@@ -112,7 +112,7 @@ paths:
       tags: [zc-ingress]
       summary: b実行指示（PayeeExecRequested）
       description: |
-        Hard Landing: ZCS → 別段預金 仕訳を記録。
+        Hard Landing: Record journal entry from ZCS → segregated deposits.
         Soft Landing: 別段預金 → 顧客口座 即時入金。
         着金フィルタ評価（SENDER_BLOCK / AMOUNT_LIMIT / REQUIRE_APPROVAL 等）
         により Custody 発生時は別段預金に留め custody_detail を返す。
@@ -138,7 +138,7 @@ paths:
       tags: [zc-ingress]
       summary: 資金予約解放
       description: |
-        SuspenseDetails を RESERVED → RELEASED に変更し、
+        Change SuspenseDetails from RESERVED → RELEASED,
         顧客口座の available_balance を復元する。
         キャンセル・タイムアウト時に ZC から呼び出される。
       operationId: releaseReserve
@@ -205,7 +205,7 @@ paths:
       summary: 名義確認
       description: |
         受取人口座の名義を確認する。account_hash から口座を特定し、
-        PSPR 登録名と BankAccounts.customer_name を照合する。
+        Verify PSPR registered name against BankAccounts.customer_name.
       operationId: nameCheck
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -295,11 +295,11 @@ paths:
   /bank/{bankId}/zc-ingress/credit-notify:
     post:
       tags: [zc-ingress]
-      summary: 着金通知（決済完了後の入金記帳通知）
+      summary: Credit notification (credit posting notification after settlement completion)
       description: |
-        DNS/IGS 決済完了後、受取銀行に入金を通知する。
+        After DNS/IGS settlement completion, notify the receiving bank of credit.
         別段預金 → 顧客口座 の仕訳を記録し、着金フィルタを評価する。
-        Custody 発生時は別段預金に留める。
+        When Custody occurs, keep in segregated deposits.
       operationId: creditNotify
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -323,10 +323,10 @@ paths:
   /bank/{bankId}/zc-ingress/rtp-notify:
     post:
       tags: [zc-ingress]
-      summary: Request-to-Pay 通知（支払人銀行への請求通知）
+      summary: Request-to-Pay notification (billing notification to payer bank)
       description: |
         受取人銀行が発行した RTP リクエストを、支払人銀行に通知する。
-        PaymentApprovalRequests に PENDING レコードを作成し、
+        Create PENDING record in PaymentApprovalRequests,
         顧客の承認待ちとする。
       operationId: rtpNotify
       parameters:
@@ -355,7 +355,7 @@ paths:
     get:
       tags: [customer]
       summary: 口座一覧
-      description: 顧客が保有する全口座（CLOSED除外）の一覧と残高を返す。
+      description: Return list and balances of all accounts held by customer (excluding CLOSED).
       operationId: getMyAccounts
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -479,7 +479,7 @@ paths:
     get:
       tags: [customer]
       summary: 振込状態照会
-      description: 送金元銀行として、指定取引の現在状態を返す。
+      description: Return current state of specified transaction as payer bank.
       operationId: getMyTransferStatus
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -520,11 +520,11 @@ paths:
         - $ref: '#/components/parameters/bankId'
         - name: account_id
           in: query
-          description: 口座IDでフィルタ
+          description: Filter by account ID
           schema: { type: string }
         - name: status
           in: query
-          description: 承認ステータスでフィルタ（デフォルト PENDING）
+          description: Filter by approval status (default PENDING)
           schema: { type: string, enum: [PENDING, APPROVED, REJECTED], default: PENDING }
       security:
         - customerAuth: []
@@ -545,9 +545,9 @@ paths:
       tags: [customer]
       summary: 着金承認/拒否
       description: |
-        PENDING 状態の承認リクエストに対して承認（approved: true）
+        Approve requests in PENDING status (approved: true)
         または拒否（approved: false）を返す。承認時は ZC に
-        ZC_RESUME_CREDIT キューメッセージを送信し、着金処理を再開する。
+        Send ZC_RESUME_CREDIT queue message to resume credit processing.
       operationId: respondToApproval
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -621,7 +621,7 @@ paths:
   /bank/{bankId}/v1/teller/cash/withdrawal:
     post:
       tags: [teller]
-      summary: 現金払い戻し
+      summary: Cash refund
       description: |
         顧客口座から現金を払い戻す。顧客口座(-)→Cash口座(+) のゼロサム仕訳を記録。
         残高不足時は 400 エラー。
@@ -643,7 +643,7 @@ paths:
                 description: { type: string }
       responses:
         "200":
-          description: 払い戻し成功
+          description: Refund successful
           content:
             application/json:
               schema:
@@ -660,7 +660,7 @@ paths:
     get:
       tags: [teller]
       summary: 口座一覧（行員用）
-      description: 当該銀行の全口座を一覧表示する（システム口座含む）。
+      description: List all accounts for the bank (including system accounts).
       operationId: tellerListAccounts
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -719,7 +719,7 @@ paths:
       summary: 口座一括作成（最大200件）
       description: |
         最大200口座を一括作成する。各口座に initial_deposit を指定可能。
-        D1 batch でアトミックに実行される。
+        Executed atomically in D1 batch.
         シミュレーター大規模初期化で使用。
       operationId: batchCreateAccounts
       parameters:
@@ -797,7 +797,7 @@ paths:
     get:
       tags: [teller]
       summary: 仕訳照会（口座別）
-      description: 指定口座の仕訳一覧を返す。
+      description: Return journal entry list for specified account.
       operationId: getAccountJournals
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -828,7 +828,7 @@ paths:
         - $ref: '#/components/parameters/bankId'
         - name: account_id
           in: query
-          description: 口座IDでフィルタ
+          description: Filter by account ID
           schema: { type: string }
         - name: from
           in: query
@@ -862,7 +862,7 @@ paths:
       tags: [teller]
       summary: 別段預金一覧
       description: |
-        SuspenseDetails の一覧を返す。status / txid でフィルタ可能。
+        Return list of SuspenseDetails entries. Filterable by status/txid.
         最大200件。
       operationId: listSuspense
       parameters:
@@ -873,7 +873,7 @@ paths:
           schema: { type: string }
         - name: txid
           in: query
-          description: 取引IDで部分一致検索
+          description: Partial match search by transaction ID
           schema: { type: string }
       security:
         - tellerAuth: []
@@ -895,9 +895,9 @@ paths:
       tags: [teller]
       summary: 別段預金収束（Custody解消等）
       description: |
-        Custody 状態の別段預金を指定口座に振り替えて収束させる。
+        Transfer segregated deposits in Custody status to the specified account to settle.
         別段預金(-)→顧客口座(+) の仕訳を記録し、SuspenseDetails を
-        COMMITTED → SETTLED に更新。
+        Update from COMMITTED → SETTLED.
       operationId: resolveSuspense
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -925,7 +925,7 @@ paths:
     get:
       tags: [teller]
       summary: バッチ処理状態照会
-      description: 直近のバッチ処理（EOD・DNS清算等）の実行状態を返す。
+      description: Return execution status of recent batch processing (EOD, DNS settlement, etc.).
       operationId: getBatchStatus
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -940,14 +940,14 @@ paths:
       tags: [teller]
       summary: 監査ログ照会
       description: |
-        BankAuditLog の一覧を返す。txid でフィルタ可能。
-        ZC→Bank Ingress コマンドの実行履歴（成功/失敗・理由コード）を確認できる。
+        Return list of BankAuditLog entries. Filterable by txid.
+        Can view execution history of ZC→Bank Ingress commands (success/failure and reason codes).
       operationId: getAuditLog
       parameters:
         - $ref: '#/components/parameters/bankId'
         - name: txid
           in: query
-          description: 取引IDでフィルタ
+          description: Filter by transaction ID
           schema: { type: string }
         - name: limit
           in: query
@@ -983,7 +983,7 @@ paths:
         - $ref: '#/components/parameters/bankId'
         - name: account_id
           in: query
-          description: 口座IDでフィルタ
+          description: Filter by account ID
           schema: { type: string }
       security:
         - customerAuth: []

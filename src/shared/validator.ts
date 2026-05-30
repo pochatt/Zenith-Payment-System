@@ -35,7 +35,7 @@ const VALID_LANES: LaneType[] = [
   "BULK",
   "DEFERRED",
   "RTP",
-  "HTLC",
+  "Hash-Time-Locked Contract",
   "HIGH_VALUE",
 ];
 const VALID_PURPOSES: PurposeType[] = ["MERCHANT", "P2P", "BILL", "SALARY", "REFUND"];
@@ -85,7 +85,7 @@ export function validatePaymentInitiated(req: Partial<PaymentInitiatedRequest>):
 // ---------------------------------------------------------------------------
 
 /**
- * Validate an HTLC creation request.
+ * Validate an Hash-Time-Locked Contract creation request.
  *
  * Checks htlc_id format, optional hashlock hex, timelock date, amounts,
  * payer/payee accounts, and bank IDs.
@@ -94,8 +94,8 @@ export function validatePaymentInitiated(req: Partial<PaymentInitiatedRequest>):
  * @returns Validation result with reason_code on failure
  */
 export function validateHtlcCreate(req: Partial<HtlcCreateRequest>): ValidationResult {
-  if (!req.htlc_id || !/^HTLC-/.test(req.htlc_id))
-    return fail("INVALID_HTLC_ID", "htlc_id must start with HTLC-");
+  if (!req.htlc_id || !/^Hash-Time-Locked Contract-/.test(req.htlc_id))
+    return fail("INVALID_Hash-Time-Locked Contract_ID", "htlc_id must start with Hash-Time-Locked Contract-");
   // hashlock は空文字許可（サーバー側で自動生成）
   if (req.hashlock && !/^[0-9a-f]{64}$/.test(req.hashlock))
     return fail(
@@ -121,13 +121,13 @@ export function validateHtlcCreate(req: Partial<HtlcCreateRequest>): ValidationR
 // ---------------------------------------------------------------------------
 
 /**
- * Validate an HTLC claim (preimage reveal) request.
+ * Validate an Hash-Time-Locked Contract claim (preimage reveal) request.
  *
  * @param req - Partial request body to validate
  * @returns Validation result with reason_code on failure
  */
 export function validateHtlcClaim(req: Partial<HtlcClaimRequest>): ValidationResult {
-  if (!req.htlc_id) return fail("MISSING_HTLC_ID", "htlc_id required");
+  if (!req.htlc_id) return fail("MISSING_Hash-Time-Locked Contract_ID", "htlc_id required");
   if (!req.preimage || !/^[0-9a-f]+$/.test(req.preimage))
     return fail("INVALID_PREIMAGE", "preimage must be hex string");
   if (!req.idempotency_key) return fail("MISSING_IDEMPOTENCY_KEY", "idempotency_key required");

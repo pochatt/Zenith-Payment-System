@@ -6,7 +6,7 @@
  * the Zenith Coordinator (ZC). Each command corresponds to a specific stage in
  * the payment lifecycle:
  *
- *   1. reserve-funds     — Reserve payer funds in suspense (H_RESERVED)
+ *   1. reserve-funds     — Reserve payer funds in suspense (H_RESERVED (H-reserve funds are held) (H-reserve funds are held))
  *   2. execute-debit     — Finalize payer debit (a-proof generation)
  *   3. execute-credit    — Credit payee account (b-proof, hard landing)
  *   4. release-reserve   — Release reserved funds on cancel/timeout
@@ -252,7 +252,7 @@ async function saveResponse(requestId: string, response: unknown, db: D1Database
 }
 
 /**
- * **Command 1: reserve-funds** — Reserve payer funds (H_RESERVED).
+ * **Command 1: reserve-funds** — Reserve payer funds (H_RESERVED (H-reserve funds are held) (H-reserve funds are held)).
  *
  * Isolates the transfer amount from the payer's savings account into a
  * suspense account via double-entry journals:
@@ -1259,7 +1259,7 @@ async function bankInitialize(
     db
       .prepare(
         `INSERT OR IGNORE INTO BankAccounts (account_id, bank_id, customer_id, customer_name, account_type, status, opened_at)
-       VALUES (?, ?, 'BOJ', '日本銀行（預け金勘定）', 'BOJ', 'NORMAL', ?)`
+       VALUES (?, ?, 'BOJ', 'Bank of Japan (Deposit Account)', 'BOJ', 'NORMAL', ?)`
       )
       .bind(`${bankId}-BOJ`, bankId, now),
     db

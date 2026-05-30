@@ -9,7 +9,7 @@
  *  - `/console`       → Operations console (console.html)
  *  - `/bank-app`      → Customer banking app (bank-app.html)
  *  - `/theater`       → Settlement Theater (animated tx playback)
- *  - `/api/...`       → ZC Core API (transfers, HTLC, GTID, RTP, DNS, etc.)
+ *  - `/api/...`       → ZC Core API (transfers, Hash-Time-Locked Contract, GTID, RTP, DNS, etc.)
  *  - `/bank/:id/...`  → Bank API (ZC→Bank ingress, customer, teller, filters)
  *  - `/internal/...`  → Internal API (seed, cron triggers, DNS management)
  *
@@ -45,7 +45,7 @@ import {
   handleAccountNameLookup,
   handleSimSetup,
   handleSimSetupOneBank,
-  // HTLC Auth（受取側起点オーソリ型）
+  // Hash-Time-Locked Contract Auth（受取側起点オーソリ型）
   handleHtlcAuthRequest,
   handleHtlcAuthApprove,
   handleHtlcAuthDecline,
@@ -247,18 +247,18 @@ export default {
       // ZC Core API: /api/...
       // -----------------------------------------------------------------------
       if (path.startsWith("/api/")) {
-        // API認証: X-Api-Key ヘッダーまたは Authorization: Bearer ヘッダーを検証
-        // モック環境では ZC_HMAC_SECRET を API キーとして使用
+        // API authentication: validate X-Api-Key header or Authorization: Bearer header
+        // In mock environment, use ZC_HMAC_SECRET as API key
         const apiKey =
           req.headers.get("X-Api-Key") ?? req.headers.get("Authorization")?.replace("Bearer ", "");
 
         // API キー検証（優先）
         const hasValidApiKey = env.ZC_HMAC_SECRET && apiKey === env.ZC_HMAC_SECRET;
 
-        // 同一オリジンからのブラウザUI呼び出しを許可（開発・デモ用）
-        // Origin ヘッダーはブラウザが付与する。同一オリジンのリクエストでは Origin が
-        // 省略されるか、リクエストURLのオリジンと一致する。Refererと異なりパスを含まないため
-        // "https://attacker.com/dashboard" のようなバイパスが不可能。
+        // Allow browser UI calls from same origin (development and demo use)
+        // Origin header is set by the browser. For same-origin requests, Origin is
+        // either omitted or matches the request URL's origin. Unlike Referer, it does not include the path, so
+        // bypass attacks like "https://attacker.com/dashboard" are not possible.
         const origin = req.headers.get("Origin");
         const requestOrigin = new URL(req.url).origin;
         const isFromSameOrigin = !origin || origin === requestOrigin;
@@ -470,7 +470,7 @@ async function handleZcApi(
     return json(200, { txid: txEventsMatch[1], events });
   }
 
-  // GET /api/transactions/:txid/explain  人間可読な状態遷移の説明 + 改ざん検知
+  // GET /api/transactions/:txid/explain — human-readable state transition explanation + tampering detection
   const txExplainMatch = path.match(/^\/api\/transactions\/([^/]+)\/explain$/);
   if (method === "GET" && txExplainMatch) {
     const result = await explainTransaction(env.DB, txExplainMatch[1]!);
@@ -486,7 +486,7 @@ async function handleZcApi(
     return json(200, result);
   }
 
-  // GET /api/transactions/:txid/postcard.svg  生成された金継ぎ風 SVG（画像）
+  // GET /api/transactions/:txid/postcard.svg — generated kintsugi-style SVG (image)
   const txPostcardSvgMatch = path.match(/^\/api\/transactions\/([^/]+)\/postcard\.svg$/);
   if (method === "GET" && txPostcardSvgMatch) {
     const exp = await explainTransaction(env.DB, txPostcardSvgMatch[1]!);
@@ -501,7 +501,7 @@ async function handleZcApi(
     });
   }
 
-  // GET /api/transactions/:txid/postcard  SVG + 三行詩 + モチーフのメタ
+  // GET /api/transactions/:txid/postcard — SVG + three-line poem + motif metadata
   const txPostcardMatch = path.match(/^\/api\/transactions\/([^/]+)\/postcard$/);
   if (method === "GET" && txPostcardMatch) {
     const exp = await explainTransaction(env.DB, txPostcardMatch[1]!);
@@ -539,7 +539,7 @@ async function handleZcApi(
   // GET /api/gtid (一覧)
   if (method === "GET" && path === "/api/gtid") return handleListGtids(req, env);
 
-  // GET /api/gtid/:gtid/events  (/events を先にマッチさせる)
+  // GET /api/gtid/:gtid/events — (match /events before the parameter)
   const gtidEventsMatch = path.match(/^\/api\/gtid\/([^/]+)\/events$/);
   if (method === "GET" && gtidEventsMatch) {
     const events = await getGtidEvents(gtidEventsMatch[1]!, env.DB);
@@ -554,7 +554,7 @@ async function handleZcApi(
   if (method === "GET" && path === "/api/rtp/incoming") {
     const account = new URL(req.url).searchParams.get("account") ?? "";
 
-    // account は bank_id(3) + account_number(7) = 10文字であることを検証
+    // Verify that account is bank_id(3) + account_number(7) = 10 characters
     if (!account || account.length !== 10) {
       return jsonError(
         400,
@@ -565,8 +565,8 @@ async function handleZcApi(
 
     const payerBankId = account.slice(0, 3);
     const now = new Date().toISOString();
-    // 0025_rtp_consolidate.sql で RtpRequestRows を廃止したため、payer 側の受信
-    // 一覧も RtpRequests を直接参照する。
+    // RtpRequestRows was deprecated in 0025_rtp_consolidate.sql, so payer-side reception
+    // also directly references RtpRequests.
     const rows = await env.DB.prepare(`
       SELECT rtp_id, payee_bank_id, payer_bank_id, amount_value, state AS rtp_status,
              payee_name, description, expires_at, notified_at, created_at
@@ -599,7 +599,7 @@ async function handleZcApi(
     return handlePostResumeNameCheck(req, resumeNamecheckMatch[1]!, env);
 
   // POST /api/transfers/:txid/no-debit-proof  H_locked 自動解放（未実行証明・§8.4.1）
-  // 銀行 ingress と同じく X-ZC-Signature を検証する（PayerBank 発の署名付き証明）。
+  // Validate X-ZC-Signature like the bank ingress handler (PayerBank-issued signed proof).
   const noDebitMatch = path.match(/^\/api\/transfers\/([^/]+)\/no-debit-proof$/);
   if (method === "POST" && noDebitMatch) {
     const body = (await req.json().catch(() => null)) as {
@@ -660,8 +660,8 @@ async function handleZcApi(
   const dnsPosMatch = path.match(/^\/api\/dns\/([^/]+)\/position$/);
   if (method === "GET" && dnsPosMatch) return handleGetDnsPosition(dnsPosMatch[1]!, env);
 
-  // GET /api/boj/positions — 各参加行の日銀預け金（BOJ）残高照会（公開API）
-  // 報告書「論点7: 資金清算・決済のあり方」—プレファンドRTGS方式の残高監視
+  // GET /api/boj/positions — query BOJ (Bank of Japan) deposit balances for each participating bank (public API)
+  // Report "Topic 7: Framework for Fund Settlement and Payment" — balance monitoring for prefunded RTGS method
   if (method === "GET" && path === "/api/boj/positions") {
     const positions = await getBojPositions(env.DB);
     return json(200, { positions, as_of: nowISO() });
@@ -884,7 +884,7 @@ async function handleZcApi(
     const result = await processQrPayment(env.DB, body, env);
     if (!result.valid) return jsonError(400, "QR_INVALID", result.error ?? "QR payment failed");
 
-    // QR検証OK → 実際の振込処理を起動
+    // QR verification OK → trigger actual transfer processing
     const qr = result.qrRow!;
     const txid = `TX-${newUUID()}`;
     const zcReq = new Request("http://internal/api/transfers", {
@@ -1111,9 +1111,9 @@ async function handleBankApi(
     const result = await respondToApproval(bankId, approvalRespondMatch[1]!, body, env.DB);
     if (!result.ok) return jsonError(400, result.reason ?? "ERROR", result.reason ?? "failed");
 
-    // 承認された場合: ZC に resume_credit を通知（Queue 経由）
+    // If approved: notify ZC of resume_credit via Queue
     if (body.approved && result.txid) {
-      // 対象取引の payee 情報を取得
+      // Retrieve payee information for the target transaction
       const txInfo = await env.DB.prepare(
         `SELECT payee_bank_id, payee_account_hash FROM Transactions WHERE txid=?`
       )
@@ -1208,7 +1208,7 @@ async function handleInternal(
     return json(200, { result: "SETTLED", cycle_id: body.cycle_id });
   }
 
-  // 各銀行の日銀預け金勘定（BOJ）残高照会
+  // Query BOJ (Bank of Japan) deposit account balances for each bank
   if (method === "GET" && path === "/internal/boj-positions") {
     const positions = await getBojPositions(env.DB);
     return json(200, { positions });
@@ -1223,7 +1223,7 @@ async function handleInternal(
   }
 
   // POST /internal/transfers/:txid/resume-credit
-  // 顧客が着金承認後、銀行が ZC にクレジット処理の再開を通知する
+  // After customer approves credit arrival, bank notifies ZC to resume credit processing
   const resumeCreditMatch = path.match(/^\/internal\/transfers\/([^/]+)\/resume-credit$/);
   if (method === "POST" && resumeCreditMatch) {
     const txid = resumeCreditMatch[1]!;

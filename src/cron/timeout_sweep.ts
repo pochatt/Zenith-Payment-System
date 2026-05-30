@@ -1,6 +1,6 @@
 /**
  * @file Timeout sweep (runs every minute). Expires stale transactions in
- * T2/T3 timeout, recovers SUSPENDED->FAILED, expires HTLC timelocks, and
+ * T2/T3 timeout, recovers SUSPENDED->FAILED, expires Hash-Time-Locked Contract timelocks, and
  * cleans up stalled GTID transactions.
  * @module cron/timeout_sweep
  */
@@ -25,11 +25,11 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
 
   // 1. T2_exec タイムアウト: DECIDED_TO_SETTLE が 5分以上
   // BULK/DEFERRED は EOD まで DECIDED_TO_SETTLE で待機する設計のため除外
-  // HTLC は timelock で独立管理されるため除外（claimHtlc は同期 debit で完結）
+  // Hash-Time-Locked Contract は timelock で独立管理されるため除外（claimHtlc は同期 debit で完結）
   const t2Deadline = new Date(now.getTime() - T2_EXEC_TIMEOUT_SEC * 1000).toISOString();
   const decidedOld = await db
     .prepare(
-      `SELECT txid FROM Transactions WHERE state='DECIDED_TO_SETTLE' AND lane NOT IN ('BULK','DEFERRED','HTLC') AND updated_at < ?`
+      `SELECT txid FROM Transactions WHERE state='DECIDED_TO_SETTLE' AND lane NOT IN ('BULK','DEFERRED','Hash-Time-Locked Contract') AND updated_at < ?`
     )
     .bind(t2Deadline)
     .all<{ txid: string }>();
@@ -77,16 +77,16 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     if (applied) swept++;
   }
 
-  // 4. HTLC timelock 期限切れ
+  // 4. Hash-Time-Locked Contract timelock 期限切れ
   const expiredHtlcs = await db
     .prepare(
-      `SELECT htlc_id, txid FROM HtlcContracts WHERE state IN ('HTLC_RECEIVED','HTLC_LOCKED') AND timelock < ?`
+      `SELECT htlc_id, txid FROM HtlcContracts WHERE state IN ('Hash-Time-Locked Contract_RECEIVED','Hash-Time-Locked Contract_LOCKED') AND timelock < ?`
     )
     .bind(now.toISOString())
     .all<{ htlc_id: string; txid: string }>();
 
   for (const htlc of expiredHtlcs.results) {
-    // env を渡して銀行側サスペンスの解放通知も行う（HTLC_LOCKED 時は reserve-funds が実行済み）
+    // env を渡して銀行側サスペンスの解放通知も行う（Hash-Time-Locked Contract_LOCKED 時は reserve-funds が実行済み）
     await cancelHtlc(htlc.htlc_id, htlc.txid, "TIMELOCK_EXPIRED", db, env);
     swept++;
   }

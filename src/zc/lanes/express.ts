@@ -26,7 +26,7 @@ export interface ExpressResult {
 
 /**
  * Expressレーン: 同期で Decision まで完結
- * RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE
+ * RECEIVED → PRECHECKED → H_RESERVED (H-reserve funds are held) (H-reserve funds are held) → DECIDED_TO_SETTLE
  */
 export async function processExpress(
   req: PaymentInitiatedRequest,
@@ -112,11 +112,11 @@ export async function processExpress(
   }
   const reservationId = hResult.reservation_id;
 
-  // H_RESERVED 状態に遷移
+  // H_RESERVED (H-reserve funds are held) (H-reserve funds are held) 状態に遷移
   const reserved = await transitionWithLog(db, {
     txid,
     fromState: "PRECHECKED",
-    toState: "H_RESERVED",
+    toState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)",
     eventType: "HReserved",
     payload: { reservation_id: reservationId },
     setColumns: { h_reservation_id: reservationId },
@@ -158,7 +158,7 @@ export async function processExpress(
   const dnsCycleId = await getOrCreateDnsCycle(db, now);
   const decided = await transitionWithLog(db, {
     txid,
-    fromState: "H_RESERVED",
+    fromState: "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)",
     toState: "DECIDED_TO_SETTLE",
     eventType: "DecidedToSettle",
     payload: { decision_proof_ref: decisionProofRef },

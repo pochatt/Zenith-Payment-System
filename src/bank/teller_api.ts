@@ -83,7 +83,7 @@ export async function handleCashDeposit(req: Request, bankId: string, env: Env):
 }
 
 // ---------------------------------------------------------------------------
-// POST /bank/:bankId/v1/teller/cash/withdrawal  現金払い戻し
+// POST /bank/:bankId/v1/teller/cash/withdrawal  Cash refund
 // ---------------------------------------------------------------------------
 export async function handleCashWithdrawal(
   req: Request,
@@ -125,7 +125,7 @@ export async function handleCashWithdrawal(
         accountId: body.account_id,
         amount: -body.amount,
         txType: "CASH",
-        description: body.description ?? "現金払い戻し",
+        description: body.description ?? "Cash refund",
       },
       {
         accountId: cashAccountId(bankId),
@@ -251,7 +251,7 @@ export async function handleSuspenseResolve(
           amount: suspense.amount,
           txType: "CREDIT",
           txid: suspense.txid ?? undefined,
-          description: "CUSTODY returned 残高戻し",
+          description: "CUSTODY returned balance reversal",
         },
       ],
       valueDate: now.slice(0, 10),

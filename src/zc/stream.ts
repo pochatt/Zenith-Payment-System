@@ -174,7 +174,7 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
               lastEventId = ev.event_id;
             }
 
-            // 配信済みマーク
+            // Mark as delivered
             await markEventsDelivered(
               db,
               events.map((e) => e.event_id)
@@ -182,12 +182,12 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
           }
         } catch (err) {
           console.error("[stream] SSE poll error:", err);
-          // エラーをクライアントへ通知してもストリームは継続
+          // Notify the client of the error, but continue the stream
           const errMsg = `data: ${JSON.stringify({ type: "ERROR", message: "poll failed" })}\n\n`;
           try {
             controller.enqueue(new TextEncoder().encode(errMsg));
           } catch {
-            // コントローラが既にクローズされている場合は無視
+            // Ignore if the controller is already closed
             // ストリーム破棄 → タイマー停止
             if (timerId) {
               clearInterval(timerId);

@@ -112,7 +112,7 @@ export const REASON_CODE_CATEGORY: Record<string, ErrorCategory> = {
 
   // ----- Not found
   TX_NOT_FOUND: "NOT_FOUND",
-  HTLC_NOT_FOUND: "NOT_FOUND",
+  Hash-Time-Locked Contract_NOT_FOUND: "NOT_FOUND",
   GTID_NOT_FOUND: "NOT_FOUND",
   RTP_NOT_FOUND: "NOT_FOUND",
   ACCOUNT_NOT_FOUND: "NOT_FOUND",

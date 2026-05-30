@@ -106,7 +106,7 @@ export interface HReservationRow {
   txid: string;
   bank_id: string;
   amount: number;
-  /** RESERVED = standard hold, LOCKED = HTLC-reinforced hold. */
+  /** RESERVED = standard hold, LOCKED = Hash-Time-Locked Contract-reinforced hold. */
   mode: "RESERVED" | "LOCKED";
   /** 1 = reservation released (funds settled or cancelled). */
   is_released: number;

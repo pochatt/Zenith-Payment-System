@@ -1,5 +1,5 @@
 /**
- * @file HTLC Auth capture (settle) and void (cancel).
+ * @file Hash-Time-Locked Contract Auth capture (settle) and void (cancel).
  * @module zc/lanes/htlc_auth/capture
  */
 import type { Env, HtlcCaptureRequest, HtlcVoidRequest, HtlcAuthRequestRow } from "../../../types";
@@ -80,7 +80,7 @@ export async function captureHtlcAuth(
   await logTxEvent(db, {
     txid: authReq.txid,
     actor: `BANK_${authReq.payee_bank_id}`,
-    action: "HTLC_CAPTURE",
+    action: "Hash-Time-Locked Contract_CAPTURE",
     status: "OK",
     amount: authReq.amount_value,
     bank_id: authReq.payee_bank_id,
@@ -146,7 +146,7 @@ export async function voidHtlcAuth(
   await logTxEvent(db, {
     txid: authReq.txid,
     actor: "ZC",
-    action: "HTLC_VOID",
+    action: "Hash-Time-Locked Contract_VOID",
     status: "OK",
     amount: authReq.amount_value,
     details: { auth_id: authReq.auth_id, htlc_id: htlcId, reason: req.reason },

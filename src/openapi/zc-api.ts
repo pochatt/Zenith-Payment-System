@@ -2,7 +2,7 @@
  * @file ZC Core API — OpenAPI 3.0 specification (YAML string constant).
  *
  * Served at GET /api/openapi/zc.yaml.
- * Covers all ZC-side endpoints: transfers, HTLC, HTLC Auth, GTID, RTP,
+ * Covers all ZC-side endpoints: transfers, Hash-Time-Locked Contract, Hash-Time-Locked Contract Auth, GTID, RTP,
  * account verification, EDI, proxy, QR, rich data, cross-border,
  * DNS, SSE, IGS, events, CASE, PSPR, and participant management.
  *
@@ -15,7 +15,7 @@ info:
   description: |
     Zenith Coordinator core API. Accepts payment initiation from participating
     banks and orchestrates multi-lane settlement (EXPRESS, STANDARD, BULK,
-    HIGH_VALUE, HTLC, GTID, RTP). Provides account verification, EDI,
+    HIGH_VALUE, Hash-Time-Locked Contract, GTID, RTP). Provides account verification, EDI,
     proxy directory, QR payments, cross-border transfers, DNS management,
     real-time SSE events, and administrative endpoints.
   license:
@@ -30,7 +30,7 @@ tags:
   - name: htlc
     description: Hash Time-Locked Contract (create, claim, auth)
   - name: htlc-auth
-    description: HTLC payee-initiated authorization (request, approve, decline, capture, void)
+    description: Hash-Time-Locked Contract payee-initiated authorization (request, approve, decline, capture, void)
   - name: gtid
     description: Global Transaction ID — coordinated multi-leg transfers
   - name: rtp
@@ -125,7 +125,7 @@ paths:
       tags: [transfers]
       summary: Cancel transfer (pre-Decision only)
       description: |
-        Cancellable states: RECEIVED / PRECHECKED / PRECHECKED_SUSPENDED / H_RESERVED.
+        Cancellable states: RECEIVED / PRECHECKED / PRECHECKED_SUSPENDED / H_RESERVED (H-reserve funds are held) (H-reserve funds are held).
         Atomically releases H-reservation, bank suspense, and transitions to CANCELLED.
       parameters:
         - \$ref: '#/components/parameters/txid'
@@ -157,12 +157,12 @@ paths:
           \$ref: '#/components/responses/Conflict'
 
   # =========================================================================
-  # HTLC
+  # Hash-Time-Locked Contract
   # =========================================================================
   /api/htlc/create:
     post:
       tags: [htlc]
-      summary: Create HTLC contract
+      summary: Create Hash-Time-Locked Contract contract
       requestBody:
         required: true
         content:
@@ -171,22 +171,22 @@ paths:
               \$ref: '#/components/schemas/HtlcCreateRequest'
       responses:
         "201":
-          description: HTLC created
+          description: Hash-Time-Locked Contract created
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  result: { type: string, example: HTLC_CREATED }
+                  result: { type: string, example: Hash-Time-Locked Contract_CREATED }
                   htlc_id: { type: string }
-                  state: { type: string, example: HTLC_LOCKED }
+                  state: { type: string, example: Hash-Time-Locked Contract_LOCKED }
         "400":
           \$ref: '#/components/responses/BadRequest'
 
   /api/htlc/{htlc_id}/claim:
     post:
       tags: [htlc]
-      summary: Claim HTLC (reveal preimage)
+      summary: Claim Hash-Time-Locked Contract (reveal preimage)
       parameters:
         - name: htlc_id
           in: path
@@ -214,7 +214,7 @@ paths:
   /api/htlc:
     get:
       tags: [htlc]
-      summary: List HTLCs
+      summary: List Hash-Time-Locked Contracts
       parameters:
         - name: limit
           in: query
@@ -224,12 +224,12 @@ paths:
           schema: { type: integer, default: 0 }
       responses:
         "200":
-          description: HTLC list
+          description: Hash-Time-Locked Contract list
 
   /api/htlc/{htlc_id}:
     get:
       tags: [htlc]
-      summary: Get HTLC details
+      summary: Get Hash-Time-Locked Contract details
       parameters:
         - name: htlc_id
           in: path
@@ -237,12 +237,12 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: HTLC details
+          description: Hash-Time-Locked Contract details
         "404":
           \$ref: '#/components/responses/NotFound'
 
   # =========================================================================
-  # HTLC Auth (payee-initiated authorization)
+  # Hash-Time-Locked Contract Auth (payee-initiated authorization)
   # =========================================================================
   /api/htlc/auth-request:
     post:
@@ -349,7 +349,7 @@ paths:
   /api/htlc/{htlc_id}/capture:
     post:
       tags: [htlc-auth]
-      summary: Capture authorized HTLC (payee side)
+      summary: Capture authorized Hash-Time-Locked Contract (payee side)
       parameters:
         - name: htlc_id
           in: path
@@ -371,7 +371,7 @@ paths:
   /api/htlc/{htlc_id}/void:
     post:
       tags: [htlc-auth]
-      summary: Void authorized HTLC
+      summary: Void authorized Hash-Time-Locked Contract
       parameters:
         - name: htlc_id
           in: path
@@ -1377,7 +1377,7 @@ components:
       type: object
       required: [htlc_id, hashlock, timelock, amount, payer_bank_id, payee_bank_id, idempotency_key]
       properties:
-        htlc_id: { type: string, example: HTLC-abc }
+        htlc_id: { type: string, example: Hash-Time-Locked Contract-abc }
         hashlock: { type: string, description: SHA-256 hex (or empty for auto-generation) }
         timelock: { type: string, format: date-time }
         amount: { \$ref: '#/components/schemas/Amount' }
@@ -1391,7 +1391,7 @@ components:
       type: object
       properties:
         htlc_id: { type: string }
-        state: { type: string, enum: [HTLC_RECEIVED, HTLC_LOCKED, HTLC_FULFILL_REQUESTED, DECIDED_TO_SETTLE, SETTLED, CANCELLED] }
+        state: { type: string, enum: [Hash-Time-Locked Contract_RECEIVED, Hash-Time-Locked Contract_LOCKED, Hash-Time-Locked Contract_FULFILL_REQUESTED, DECIDED_TO_SETTLE, SETTLED, CANCELLED] }
         hashlock: { type: string }
         timelock: { type: string, format: date-time }
         amount_value: { type: integer }

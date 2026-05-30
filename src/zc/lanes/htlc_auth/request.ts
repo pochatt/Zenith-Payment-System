@@ -1,5 +1,5 @@
 /**
- * @file HTLC Auth request (payee-initiated) + decline.
+ * @file Hash-Time-Locked Contract Auth request (payee-initiated) + decline.
  * @module zc/lanes/htlc_auth/request
  */
 import type {
@@ -47,7 +47,7 @@ export async function createAuthRequest(
     await logTxEvent(db, {
       txid: null,
       actor: "ZC",
-      action: "HTLC_AUTH_REQUESTED",
+      action: "Hash-Time-Locked Contract_AUTH_REQUESTED",
       status: "NG",
       reason_code: "PAYEE_NOT_WHITELISTED",
       bank_id: req.payee_bank_id,
@@ -109,7 +109,7 @@ export async function createAuthRequest(
   await logTxEvent(db, {
     txid: null,
     actor: `BANK_${req.payee_bank_id}`,
-    action: "HTLC_AUTH_REQUESTED",
+    action: "Hash-Time-Locked Contract_AUTH_REQUESTED",
     status: "OK",
     amount: req.amount.value,
     bank_id: req.payee_bank_id,
@@ -158,7 +158,7 @@ export async function declineAuthRequest(
   await logTxEvent(db, {
     txid: null,
     actor: `BANK_${authReq.payer_bank_id}`,
-    action: "HTLC_AUTH_DECLINED",
+    action: "Hash-Time-Locked Contract_AUTH_DECLINED",
     status: "OK",
     amount: authReq.amount_value,
     bank_id: authReq.payer_bank_id,

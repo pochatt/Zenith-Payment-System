@@ -87,16 +87,16 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
   const beneficiaryInstErrors = validateInstitution(data.beneficiary_institution);
   beneficiaryInstErrors.forEach((e) => errors.push(`beneficiary_institution: ${e}`));
 
-  // 国をまたぐ取引であることの整合性確認
+  // Verify consistency that transaction is cross-border
   // NOTE: This validator checks consistency between fatf16_applicable and is_cross_border flags.
   // The fatf16_applicable flag should logically only be true when is_cross_border is true.
   // Amount threshold checking (JPY 150,000) occurs in ingress.ts, not here, so this validator
   // only ensures structural consistency, not amount-based applicability.
   if (data.fatf16_applicable && !data.is_cross_border) {
-    errors.push("fatf16_applicable=true だが is_cross_border=false: 矛盾した設定です");
+    errors.push("fatf16_applicable=true but is_cross_border=false: contradictory configuration");
   }
 
-  // intermediary が存在する場合の検証
+  // Validation when intermediary is present
   if (data.intermediary) {
     if (!data.intermediary.name || data.intermediary.name.trim().length === 0) {
       errors.push("intermediary.name: 仲介機関名は必須です");

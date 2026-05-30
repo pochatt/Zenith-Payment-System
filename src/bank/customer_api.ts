@@ -219,7 +219,7 @@ function journalDisplayLabel(
   lane: string | null,
   purpose: string | null
 ): string {
-  if (txType === "CASH") return amount >= 0 ? "現金入金" : "現金払い戻し";
+  if (txType === "CASH") return amount >= 0 ? "現金入金" : "Cash refund";
   if (txType === "INTEREST") return "利息";
   if (txType === "CORRECTION") return "訂正";
 
@@ -233,12 +233,12 @@ function journalDisplayLabel(
       switch (lane) {
         case "HIGH_VALUE":
           return "大口振込入金";
-        case "HTLC":
-          return "HTLC着金";
+        case "Hash-Time-Locked Contract":
+          return "Hash-Time-Locked Contract着金";
         case "DEFERRED":
           return "協調取引 着金";
         case "RTP":
-          return "請求払い 着金";
+          return "Request-to-Pay credit";
         default:
           return "振込入金";
       }
@@ -253,12 +253,12 @@ function journalDisplayLabel(
         return "一括振込";
       case "HIGH_VALUE":
         return "大口送金";
-      case "HTLC":
-        return "HTLC送金";
+      case "Hash-Time-Locked Contract":
+        return "Hash-Time-Locked Contract送金";
       case "DEFERRED":
         return "協調取引 送金";
       case "RTP":
-        return "請求払い";
+        return "Request-to-Pay";
       default:
         return purposeLabel(purpose);
     }
@@ -280,7 +280,7 @@ function purposeLabel(purpose: string | null): string {
     case "SALARY":
       return "給与・賞与";
     default:
-      return "お振込み";
+      return "Transfer";
   }
 }
 

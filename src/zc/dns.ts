@@ -581,7 +581,7 @@ export async function getDnsNetPositions(
 }
 
 // ---------------------------------------------------------------------------
-// 各銀行の日銀預け金勘定（BOJ）残高照会
+// Query BOJ (Bank of Japan) deposit account balances for each bank
 // account_type='BOJ' の口座に積み上がった仕訳を集計する
 // ---------------------------------------------------------------------------
 export async function getBojPositions(

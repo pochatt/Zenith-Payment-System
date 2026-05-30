@@ -33,99 +33,99 @@ interface EventRender {
 const EVENT_RENDER: Record<string, EventRender> = {
   PaymentInitiated: {
     arrows: () => [{ kind: "msg", from: "Customer", to: "ZC", text: "送金リクエスト" }],
-    blurb: "送金リクエストを受付",
+    blurb: "Payment request accepted",
   },
   PreCheckPassed: {
     arrows: () => [{ kind: "note", over: ["ZC"], text: "事前検証 OK" }],
-    blurb: "事前検証（金額・残高・宛先）を通過",
+    blurb: "Passed pre-validation (amount, balance, destination)",
   },
   PreCheckFailed: {
     arrows: () => [{ kind: "note", over: ["ZC"], text: "事前検証 NG" }],
-    blurb: "事前検証で弾かれ",
+    blurb: "Rejected by pre-validation",
   },
   HReserved: {
     arrows: () => [
       { kind: "msg", from: "ZC", to: "PayerBank", text: "reserve_funds" },
       { kind: "msg", from: "PayerBank", to: "ZC", text: "RESERVED", dashed: true },
     ],
-    blurb: "送金元銀行で資金を H 予約",
+    blurb: "H-reserve funds at payer bank",
   },
   DecidedToSettle: {
-    arrows: () => [{ kind: "note", over: ["ZC"], text: "決済確定を判断" }],
-    blurb: "決済確定を判断",
+    arrows: () => [{ kind: "note", over: ["ZC"], text: "Decision to finalize settlement" }],
+    blurb: "Decision to finalize settlement",
   },
   DecidedCancel: {
-    arrows: () => [{ kind: "note", over: ["ZC"], text: "中止を判断" }],
-    blurb: "中止を判断",
+    arrows: () => [{ kind: "note", over: ["ZC"], text: "Decision to abort" }],
+    blurb: "Decision to abort",
   },
   PayerExecConfirmed: {
     arrows: () => [
       { kind: "msg", from: "PayerBank", to: "ZC", text: "出金完了 (proof a)", dashed: true },
     ],
-    blurb: "送金元銀行の出金確認を取得",
+    blurb: "Obtain debit confirmation from payer bank",
   },
   PayeeExecConfirmed: {
     arrows: () => [
       { kind: "msg", from: "PayeeBank", to: "ZC", text: "入金完了 (proof b)", dashed: true },
     ],
-    blurb: "受取銀行の入金確認を取得",
+    blurb: "Obtain credit confirmation from payee bank",
   },
   Settled: {
     arrows: () => [{ kind: "note", over: ["ZC", "PayeeBank"], text: "SETTLED" }],
-    blurb: "送金は最終確定",
+    blurb: "Payment is finalized",
   },
   Cancelled: {
     arrows: () => [{ kind: "note", over: ["ZC"], text: "CANCELLED" }],
-    blurb: "取引はキャンセル",
+    blurb: "Transaction cancelled",
   },
   Suspended: {
     arrows: () => [{ kind: "note", over: ["ZC"], text: "⚠ SUSPENDED" }],
-    blurb: "異常検知により保留",
+    blurb: "On hold due to anomaly detection",
   },
   FailedExecution: {
     arrows: () => [{ kind: "note", over: ["ZC"], text: "✗ FAILED" }],
-    blurb: "実行エラーで失敗",
+    blurb: "Execution error failure",
   },
   HtlcCreated: {
-    arrows: () => [{ kind: "note", over: ["ZC"], text: "HTLC 作成" }],
-    blurb: "HTLC を作成",
+    arrows: () => [{ kind: "note", over: ["ZC"], text: "Hash-Time-Locked Contract 作成" }],
+    blurb: "Hash-Time-Locked Contract を作成",
   },
   HtlcLocked: {
     arrows: () => [
       { kind: "msg", from: "ZC", to: "PayerBank", text: "lock_funds" },
       { kind: "msg", from: "PayerBank", to: "ZC", text: "LOCKED", dashed: true },
     ],
-    blurb: "HTLC の資金をロック",
+    blurb: "Hash-Time-Locked Contract の資金をロック",
   },
   HtlcFulfillRequested: {
     arrows: () => [{ kind: "msg", from: "PayeeBank", to: "ZC", text: "preimage 提示" }],
-    blurb: "受取側がプリイメージで HTLC を解錠要求",
+    blurb: "受取側がプリイメージで Hash-Time-Locked Contract を解錠要求",
   },
   HtlcCancelled: {
-    arrows: () => [{ kind: "note", over: ["ZC"], text: "HTLC 取消" }],
-    blurb: "HTLC をタイムアウト/取消",
+    arrows: () => [{ kind: "note", over: ["ZC"], text: "Hash-Time-Locked Contract 取消" }],
+    blurb: "Hash-Time-Locked Contract をタイムアウト/取消",
   },
   FilterPending: {
     arrows: () => [{ kind: "msg", from: "ZC", to: "Customer", text: "着金承認待ち" }],
-    blurb: "受取顧客の着金承認待ちで保留",
+    blurb: "On hold awaiting payee customer credit approval",
   },
   FilterRejected: {
     arrows: () => [
       { kind: "msg", from: "PayeeBank", to: "ZC", text: "filter REJECT", dashed: true },
     ],
-    blurb: "受取銀行の着金フィルタで拒否",
+    blurb: "Rejected by payee bank's credit filter",
   },
   ApprovalGranted: {
     arrows: () => [{ kind: "msg", from: "Customer", to: "PayeeBank", text: "承認" }],
-    blurb: "受取顧客が着金を承認",
+    blurb: "Payee customer approves credit",
   },
   ApprovalDenied: {
     arrows: () => [{ kind: "msg", from: "Customer", to: "PayeeBank", text: "拒否" }],
-    blurb: "受取顧客が着金を拒否",
+    blurb: "Payee customer rejects credit",
   },
   CreditNotificationAttempted: {
     arrows: () => [{ kind: "note", over: ["ZC"], text: "通知配信試行" }],
-    blurb: "クレジット通知の配信を試行",
+    blurb: "Attempt delivery of credit notification",
   },
 };
 
@@ -143,14 +143,14 @@ const NEXT_EXPECTED: Record<string, string[]> = {
   RECEIVED: ["PreCheckPassed", "PreCheckFailed", "HtlcLocked"],
   PRECHECKED: ["HReserved", "DecidedToSettle", "DecidedCancel"],
   PRECHECKED_SUSPENDED: ["PreCheckPassed", "DecidedCancel"],
-  H_RESERVED: ["DecidedToSettle", "DecidedCancel"],
+  H_RESERVED (H-reserve funds are held) (H-reserve funds are held): ["DecidedToSettle", "DecidedCancel"],
   DECIDED_TO_SETTLE: ["PayerExecConfirmed", "PayeeExecConfirmed", "Suspended"],
   DECIDED_CANCEL: ["Cancelled"],
   PAYER_EXEC_CONFIRMED: ["PayeeExecConfirmed", "Suspended"],
   PAYEE_EXEC_CONFIRMED: ["Settled"],
   SUSPENDED: ["PayerExecConfirmed", "PayeeExecConfirmed", "FailedExecution"],
-  HTLC_LOCKED: ["HtlcFulfillRequested", "HtlcCancelled"],
-  HTLC_FULFILL_REQUESTED: ["DecidedToSettle", "FailedExecution"],
+  Hash-Time-Locked Contract_LOCKED: ["HtlcFulfillRequested", "HtlcCancelled"],
+  Hash-Time-Locked Contract_FULFILL_REQUESTED: ["DecidedToSettle", "FailedExecution"],
   SETTLED: [],
   CANCELLED: [],
   FAILED_EXECUTION: [],
@@ -234,25 +234,25 @@ function renderHeadline(exp: ExplainResult): string {
 function stateToVerb(state: string): string {
   switch (state) {
     case "SETTLED":
-      return "最終確定済み";
+      return "Finalized";
     case "CANCELLED":
-      return "キャンセル済み";
+      return "Cancelled";
     case "FAILED_EXECUTION":
       return "失敗";
     case "SUSPENDED":
       return "保留中";
-    case "H_RESERVED":
+    case "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)":
       return "H 予約済み";
     case "DECIDED_TO_SETTLE":
-      return "確定判断後の銀行処理中";
+      return "Bank processing in progress after finalization decision";
     case "PAYER_EXEC_CONFIRMED":
-      return "出金確認済み・入金待ち";
+      return "Debit confirmed; awaiting credit";
     case "PAYEE_EXEC_CONFIRMED":
-      return "入金確認済み・最終化待ち";
-    case "HTLC_LOCKED":
-      return "HTLC ロック中";
-    case "HTLC_FULFILL_REQUESTED":
-      return "HTLC 解錠要求中";
+      return "Credit confirmed; awaiting finalization";
+    case "Hash-Time-Locked Contract_LOCKED":
+      return "Hash-Time-Locked Contract ロック中";
+    case "Hash-Time-Locked Contract_FULFILL_REQUESTED":
+      return "Hash-Time-Locked Contract 解錠要求中";
     default:
       return `${state} 状態`;
   }

@@ -230,7 +230,7 @@ export async function transitionWithLog(
  */
 const ALLOWED_ENTRY_STATES: ReadonlySet<TxState> = new Set<TxState>([
   "RECEIVED",
-  "HTLC_LOCKED",
+  "Hash-Time-Locked Contract_LOCKED",
   "DECIDED_TO_SETTLE",
 ]);
 
@@ -421,7 +421,7 @@ export async function cancelInFlightTx(db: D1Database, req: CancelRequest): Prom
     "RECEIVED",
     "PRECHECKED",
     "PRECHECKED_SUSPENDED",
-    "H_RESERVED",
+    "H_RESERVED (H-reserve funds are held) (H-reserve funds are held)",
   ];
   const placeholders = fromStates.map(() => "?").join(",");
 

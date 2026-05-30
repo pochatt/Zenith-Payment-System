@@ -385,7 +385,7 @@ export interface RespondApprovalRequest {
 }
 
 // ---------------------------------------------------------------------------
-// HTLC Auth API
+// Hash-Time-Locked Contract Auth API
 // ---------------------------------------------------------------------------
 
 export interface HtlcAuthRequestInput {
