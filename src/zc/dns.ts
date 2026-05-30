@@ -321,7 +321,7 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
           accountId: `${row.bank_id}-BOJ`,
           amount: zcsBalance,
           txType: "TRANSFER",
-          description: `DNS BOJ清算 日銀当座預金 ${cycleId}`,
+          description: `DNS BOJ清算 日銀Checking account ${cycleId}`,
         },
       ],
       valueDate: cycle.business_date,

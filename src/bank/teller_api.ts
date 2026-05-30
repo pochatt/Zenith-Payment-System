@@ -206,7 +206,7 @@ export async function handleSuspenseResolve(
   const suspAcctId = suspenseAccountId(bankId);
 
   if (body.action === "SETTLE") {
-    // 別段 → 普通預金
+    // 別段 → Savings account
     await insertJournalGroup(env.DB, {
       bankId,
       txGroupId,

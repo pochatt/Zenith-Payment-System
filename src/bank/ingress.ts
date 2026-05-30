@@ -403,7 +403,7 @@ async function bankExecuteDebit(
           amount: -req.amount.value,
           txType: "TRANSFER",
           txid: req.txid,
-          description: "HV即時引落 普通預金(-)",
+          description: "HV即時引落 Savings account(-)",
         },
         {
           accountId: nostroAccountId(bankId),
@@ -639,9 +639,9 @@ async function bankExecuteCredit(
     .first<{ description: string | null }>();
   const creditDescription = rtpRow?.description
     ? `振込入金 ${rtpRow.description}`
-    : "ZC着金 普通預金(+)";
+    : "ZC着金 Savings account(+)";
 
-  // 正常accountの場合は即時credit / incoming payment（別段 → 普通預金）
+  // 正常accountの場合は即時credit / incoming payment（別段 → Savings account）
   if (!isCustody) {
     await insertJournalGroup(db, {
       bankId,
@@ -735,7 +735,7 @@ async function bankReleaseReserve(
       )
       .bind(nowISO(), nowISO(), suspense.suspense_id)
       .run();
-    // 普通預金に戻すjournal entry: segregated deposit(-) / 普通預金(+)
+    // Savings accountに戻すjournal entry: segregated deposit(-) / Savings account(+)
     await insertJournalGroup(db, {
       bankId,
       txGroupId: `RELEASE-${req.txid}`,
@@ -752,7 +752,7 @@ async function bankReleaseReserve(
           amount: suspense.amount,
           txType: "RESERVE",
           txid: req.txid,
-          description: "予約解放 普通預金(+)",
+          description: "予約解放 Savings account(+)",
         },
       ],
       valueDate: nowISO().slice(0, 10),
@@ -863,7 +863,7 @@ async function bankNameCheck(
     const account = await getAccountByHash(bankId, req.account_hash, db);
     if (!account) return { result: "MISMATCH", reason_code: "NAME_MISMATCH" };
     // システムaccount（segregated deposit・settlement勘定・現金・BOJ）はbank transfer不可
-    // SAVINGS（個人普通預金）・CURRENT（法人当座預金）はcredit / incoming payment可
+    // SAVINGS（個人Savings account）・CURRENT（法人Checking account）はcredit / incoming payment可
     if (account.account_type !== "SAVINGS" && account.account_type !== "CURRENT") {
       return { result: "MISMATCH", reason_code: "ACCOUNT_NOT_TRANSFERABLE" };
     }
@@ -1031,7 +1031,7 @@ function isEditDistanceAtMostOne(a: string, b: string): boolean {
  * SETTLED state for this txid so the bank can fire downstream signals
  * (customer push, EDI delivery, mobile alert, MT940 reporting, etc.). The
  * actual customer credit journals were already booked synchronously by
- * `execute-credit` (Hard Landing → 別段(-) / 普通預金(+)). Booking again
+ * `execute-credit` (Hard Landing → 別段(-) / Savings account(+)). Booking again
  * here would double-credit the payee, so this handler MUST NOT touch the
  * ledger — see the regression test in `test/integration/balance_invariants.test.ts`.
  *

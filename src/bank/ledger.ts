@@ -120,7 +120,7 @@ export async function applyDailyInterest(
     const interest = Math.floor(balance * dailyRate);
     if (interest === 0) continue;
 
-    // ゼロサム: 利益剰余金(負=費用) と 普通預金(正=負債)
+    // ゼロサム: 利益剰余金(負=費用) と Savings account(正=負債)
     await insertJournalGroup(db, {
       bankId,
       txGroupId: `INT-${snapshotDate}-${acc.account_id}`,

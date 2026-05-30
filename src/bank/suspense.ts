@@ -21,7 +21,7 @@ export interface ReserveSuspenseInput {
 }
 
 // ---------------------------------------------------------------------------
-// segregated deposit（payment account）: 普通預金 → 別段（RESERVED）
+// segregated deposit（payment account）: Savings account → 別段（RESERVED）
 // ---------------------------------------------------------------------------
 export async function reserveSuspense(
   db: D1Database,
@@ -31,7 +31,7 @@ export async function reserveSuspense(
   const suspenseId = `SUSP-${newUUID()}`;
   const suspAcctId = suspenseAccountId(input.bankId);
 
-  // journal entry: 普通預金(-) / segregated deposit(+)  → ゼロサム
+  // journal entry: Savings account(-) / segregated deposit(+)  → ゼロサム
   await insertJournalGroup(db, {
     bankId: input.bankId,
     txGroupId: `RESERVE-${suspenseId}`,

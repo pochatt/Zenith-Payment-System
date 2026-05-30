@@ -681,7 +681,7 @@ export async function handleSeed(env: Env): Promise<Response> {
       VALUES ('0010000002','001','C002','佐藤 花子','SAVINGS','NORMAL','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('0010000000','001','SYSTEM','別段預金','SUSPENSE','NORMAL','2025-01-01T00:00:00Z')`),
-    // ZCsettlement勘定（日銀当座預金相当）: 負balance=ZCが当行に支払義務あり（当行のsettlement資産）
+    // ZCsettlement勘定（日銀Checking account相当）: 負balance=ZCが当行に支払義務あり（当行のsettlement資産）
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('001-ZCS','001','SYSTEM','ZC清算勘定','SETTLEMENT','NORMAL','2025-01-01T00:00:00Z')`),
     // 現金（Cash）account

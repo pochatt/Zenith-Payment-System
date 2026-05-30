@@ -39,11 +39,11 @@
  */
 
 // ---------------------------------------------------------------------------
-// コード変換ユーティリティ
+// Code conversion utilities
 // ---------------------------------------------------------------------------
 
 /**
- * 全銀4桁bankコード → zenith-mock 3桁 bank_id 変換。
+ * Zengin 4-digit codebankコード → zenith-mock 3桁 bank_id 変換。
  *
  * 全銀コードの先頭1桁は常に '0' のため、単純に先頭を除去して3桁にする。
  * 例: '0001' → '001', '0005' → '005', '0010' → '010'
@@ -54,12 +54,12 @@ export function zenginCodeToMockBankId(zenginCode: string): string {
   if (!/^\d{4}$/.test(zenginCode)) {
     throw new Error(`Invalid zengin bank code: "${zenginCode}" (must be 4 digits)`);
   }
-  // 先頭1桁（常に '0'）を除去して3桁に
+  // Remove leading 1 digit (always '0') and extract 3 digits
   return zenginCode.slice(1);
 }
 
 /**
- * zenith-mock 3桁 bank_id → 全銀4桁bankコード変換。
+ * zenith-mock 3桁 bank_id → Zengin 4-digit codebankコード変換。
  *
  * 例: '001' → '0001', '010' → '0010'
  *
@@ -98,7 +98,7 @@ export function isUnresolvedAccountRef(accountHash: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy Zengin flat-format types（全銀フォーマット互換）
+// Legacy Zengin flat-format types (Zengin format compatible)
 // ---------------------------------------------------------------------------
 
 /**
@@ -109,11 +109,11 @@ export function isUnresolvedAccountRef(accountHash: string): boolean {
  * bankコードは4桁（全銀標準）、支店コードは3桁。
  */
 export interface LegacyZenginTransfer {
-  /** 仕向bankコード（全銀4桁: '0001'〜'9999'） */
+  /** 仕向bankコード（Zengin 4-digit code: '0001'〜'9999'） */
   shimukeKinko: string;
   /** 仕向支店コード（3桁: '001'〜'999'）。zenith-mock では DB matchに不使用 */
   shimukeSiten: string;
-  /** 被仕向bankコード（全銀4桁: '0001'〜'9999'） */
+  /** 被仕向bankコード（Zengin 4-digit code: '0001'〜'9999'） */
   hishimukeKinko: string;
   /** 被仕向支店コード（3桁: '001'〜'999'）。zenith-mock では DB matchに不使用 */
   hishimukeSiten: string;
@@ -137,9 +137,9 @@ export interface LegacyZenginTransfer {
 
 /** 全銀科目コード → zenith-mock account種別mapping */
 const KAMOKU_MAP: Record<string, string> = {
-  "1": "SAVINGS", // 普通預金
-  "2": "CHECKING", // 当座預金
-  "4": "SAVINGS", // 貯蓄預金（zenith-mock では SAVINGS 扱い）
+  "1": "SAVINGS", // Savings account
+  "2": "CHECKING", // Checking account
+  "4": "SAVINGS", // Savings deposit (treated as SAVINGS in zenith-mock)
 };
 
 // ---------------------------------------------------------------------------
@@ -176,9 +176,9 @@ export interface ConvertedPaymentRequest {
    * DB matchには使わないが、障害調査・match用に保持する。
    */
   _zengin_meta: {
-    shimukeKinko: string; // 全銀4桁
+    shimukeKinko: string; // Zengin 4-digit code
     shimukeSiten: string; // 支店3桁（DB非対応）
-    hishimukeKinko: string; // 全銀4桁
+    hishimukeKinko: string; // Zengin 4-digit code
     hishimukeSiten: string; // 支店3桁（DB非対応）
     kozaBango: string; // 7桁口座番号（account_hash とは別体系）
   };
@@ -223,7 +223,7 @@ export function convertLegacyToNew(
   txid: string,
   payerAccountHash: string
 ): ConvertedPaymentRequest {
-  // bankコード: 全銀4桁 → zenith-mock 3桁
+  // bankコード: Zengin 4-digit code → zenith-mock 3桁
   const payerBankId = zenginCodeToMockBankId(legacy.shimukeKinko);
   const payeeBankId = zenginCodeToMockBankId(legacy.hishimukeKinko);
 
@@ -295,7 +295,7 @@ export function convertNewToLegacy(
     shimukeSiten: shimukeSitenCode,
     hishimukeKinko: mockBankIdToZenginCode(converted.payee.bank_id),
     hishimukeSiten: payeeSitenCode,
-    kamoku: "1", // デフォルト: 普通預金
+    kamoku: "1", // デフォルト: Savings account
     kozaBango: payeeKozaBango.slice(-7).padStart(7, "0"),
     uketorininMei: toHalfWidthKatakana(uketorininMei).slice(0, 48),
     kingaku: converted.amount.value,

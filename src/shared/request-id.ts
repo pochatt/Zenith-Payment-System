@@ -1,11 +1,11 @@
 // =============================================================================
-// src/shared/request-id.ts  決定論的リクエストIDgenerate
+// src/shared/request-id.ts  Deterministic request ID generation
 // =============================================================================
 // ZC → Bank Ingress API 呼び出しで使用するリクエストIDを一元管理する。
 // idempotent制御のため、同一コマンド × 同一transactionで常に同じIDをgenerateする必要がある。
 //
-// 命名規則: {COMMAND_PREFIX}-{primary_key}
-//   - primary_key は通常 txid だが、GTID leg の場合は leg_id を使用する
+// Naming convention: {COMMAND_PREFIX}-{primary_key}
+//   - primary_key is usually txid, but use leg_id for GTID legs
 // =============================================================================
 
 /**
