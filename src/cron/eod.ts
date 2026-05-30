@@ -15,6 +15,7 @@ import { snapshotDailyBalance, applyDailyInterest, verifyZeroSum } from "../bank
 import { retryPendingNotifications } from "../zc/credit_notify";
 import { retryFailedIgs } from "../zc/igs";
 import { pruneDeliveredEvents } from "../zc/stream";
+import { runFinalityChainAudit } from "../zc/finality_audit";
 
 export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> {
   const log: string[] = [];
@@ -111,6 +112,19 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
     await retryFailedIgs(db, env);
     await pruneDeliveredEvents(db);
     log.push("Notification retry, IGS retry, event prune: done");
+
+    // 9. FinalityLog ハッシュチェーン日次監査
+    // 全チェーンを走査し、改ざん（prev_hash 断絶・entry_hash 不一致）を検知したら
+    // CASE へ収束させる。説明可能性の単一の正である FinalityLog の完全性を、
+    // 誰かが個別 txid を照会するのを待たずに日次で確認する。
+    const audit = await runFinalityChainAudit(env);
+    log.push(
+      `Finality audit: ${audit.chains_checked} chains / ${audit.entries_checked} entries, ` +
+        `${audit.broken_chains.length} broken, ${audit.cases_opened} cases opened`
+    );
+    if (audit.broken_chains.length > 0) {
+      console.error("[EOD] FinalityLog chain audit detected breakage:", audit.broken_chains);
+    }
 
     return { ok: true, log };
   } catch (err) {

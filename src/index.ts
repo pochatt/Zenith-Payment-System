@@ -1134,6 +1134,12 @@ async function handleInternal(
     return json(200, result);
   }
 
+  if (method === "POST" && path === "/internal/cron/finality-audit") {
+    const { runFinalityChainAudit } = await import("./zc/finality_audit");
+    const result = await runFinalityChainAudit(env);
+    return json(200, result);
+  }
+
   if (method === "POST" && path === "/internal/seed") {
     return handleSeed(env);
   }

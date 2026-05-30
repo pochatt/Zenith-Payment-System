@@ -308,7 +308,8 @@ export type FinalityEventType =
   | "HtlcAuthApproved"
   | "HtlcAuthDeclined"
   | "HtlcCaptured"
-  | "HtlcVoided";
+  | "HtlcVoided"
+  | "FinalityChainAuditFailed";
 
 // ---------------------------------------------------------------------------
 // Common error response
