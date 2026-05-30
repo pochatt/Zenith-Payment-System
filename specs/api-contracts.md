@@ -191,6 +191,24 @@ Request: `{ "txid": "...", "authorized": true, "idempotency_key": "string" }`
 
 Request: `{ "txid": "...", "reason_code": "CANCEL_BY_PAYER", "idempotency_key": "string" }`
 
+#### POST /api/transfers/:txid/no-debit-proof
+H_locked の自動解放（未実行証明・zenith_public.md §8.4.1）。PayerBank が「デビット未記録」を署名付きで提出し、ZC が `X-ZC-Signature` を検証のうえ H_locked を解放する。
+
+Request: `{ "proof_ref": "PROOF-...", "bank_id": "001" }`（Header: `X-ZC-Signature`）
+
+Response: `{ "ok": true, "result": "H_RELEASED", "txid": "...", "reservation_id": "H-...", "amount": 5000, "event": "NoDebitRecordedProofSubmitted" }`
+
+ガード: a（PAYER_EXEC_CONFIRMED）/ b（PAYEE_EXEC_CONFIRMED）成立済みは解放不可（`422 A_OR_B_CONFIRMED` → 補償＝Reversal 経路）。現在状態と FinalityLog 履歴の双方で判定。
+
+#### POST /api/transfers/:txid/h-unlock-authorize
+H_locked の運用解放（二重統制＝4 眼・zenith_public.md §8.4.1）。未実行証明が得られない場合に、2 名の異なる承認者と証跡参照を要件として解放する。
+
+Request: `{ "approver_1": "ops.alice", "approver_2": "ops.bob", "evidence_type": "LEDGER_HASH|QUERY_SIGNATURE|AUTHORITY_CHECK", "evidence_ref": "...", "case_id": "CASE-..." }`
+
+Response: `{ "ok": true, "result": "H_RELEASED", "event": "HUnlockAuthorized", ... }`
+
+ガード: `approver_1 != approver_2`（`422 FOUR_EYES_REQUIRED`）、`evidence_ref` 必須（`422 EVIDENCE_REQUIRED`）、a/b 成立済みは解放不可（`422 A_OR_B_CONFIRMED`）。
+
 ---
 
 ### 口座確認・EDI・Proxy・QR・RichData
@@ -968,6 +986,11 @@ EODバッチ手動トリガー
 
 #### POST /internal/cron/timeout-sweep
 タイムアウト巡回手動トリガー
+
+#### POST /internal/cron/finality-audit
+FinalityLog ハッシュチェーン全鎖監査の手動トリガー（通常は EOD バッチに内包）。断絶検知時は CASE へ収束。
+
+Response: `{ "chains_checked": N, "entries_checked": M, "broken_chains": [...], "cases_opened": K }`
 
 #### POST /internal/seed
 初期データ投入（開発用）

@@ -120,7 +120,7 @@ curl -X POST https://<your-worker>.workers.dev/internal/seed
 npm run dev               # ローカル開発サーバー
 npm run deploy            # Cloudflare へデプロイ
 npm run type-check        # TypeScript 型チェック
-npm run test              # テストスイート（463 ケース）
+npm run test              # テストスイート（471 ケース）
 npm run db:migrate:local  # ローカル D1 にマイグレーション
 npm run db:migrate:remote # リモート D1 にマイグレーション
 ```
@@ -181,7 +181,7 @@ GET  /api/transactions/TX-.../verify   # FinalityLog ハッシュチェーン検
 ### テスト
 
 ```bash
-npm run test                          # 全 463 ケース
+npm run test                          # 全 471 ケース
 npx vitest test/zc/express.test.ts    # 単一ファイル
 ```
 
@@ -284,7 +284,7 @@ git clone https://github.com/pochatt/zenith-payment-system.git
 cd zenith-payment-system && npm install
 npm run db:migrate:local
 npm run dev          # http://localhost:8787 (dashboard at root)
-npm run test         # full suite, 463 cases
+npm run test         # full suite, 471 cases
 ```
 
 Deploy: `wrangler login` → create D1/queue/R2 → `cp wrangler.toml.example wrangler.toml` (fill ids) → `npm run db:migrate:remote` → `npm run deploy` → `POST /internal/seed`.
