@@ -43,8 +43,8 @@ const ZENGIN_RECORD_LENGTH = 120;
 /** Zengin account type code to ISO 20022 account type label mapping. */
 const ZENGIN_ACCOUNT_TYPE_LABEL: Record<string, string> = {
   "1": "SAVINGS", // Savings
-  "2": "CURRENT", // 当座
-  "4": "SAVINGS", // 貯蓄
+  "2": "CURRENT", // Checking account
+  "4": "SAVINGS", // Savings deposit
 };
 
 // ---------------------------------------------------------------------------
@@ -458,20 +458,20 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
  * @returns Equivalent ZenginFixedRecord
  */
 export function iso20022ToZengin(msg: Pacs008Message): ZenginFixedRecord {
-  // creditor.bank_id から bank_code / branch_code を分解
-  // 内部形式: 3桁(or 4桁)bankId が bank_code に相当
+  // Decompose bank_code / branch_code from creditor.bank_id
+  // Internal format: 3 or 4-digit bankId corresponds to bank_code
   const payeeBankId = msg.creditor.bank_id;
   const payerBankId = msg.debtor.bank_id;
 
-  // account numberを全銀形式に変換（7桁固定）
-  // 内部account形式: bankCode + 7桁seq → 末尾7桁をaccount numberとして取る
+  // Convert account number to Zengin format (7-digit fixed)
+  // Internal account format: bankCode + 7-digit seq → extract last 7 digits as account number
   const rawAccountId = msg.creditor.account_id;
   const accountNumber =
     rawAccountId.length >= 7
       ? rawAccountId.slice(-7).padStart(7, "0")
       : rawAccountId.padStart(7, "0");
 
-  // remittance_info の unstructured から支店コード・account種別を復元（可能な場合）
+  // Recover branch code and account type from remittance_info.unstructured if available
   let branchCode = "000";
   let accountType: "1" | "2" | "4" = "1";
 

@@ -14,25 +14,25 @@
 import type { LaneType, MessageFormat } from "../types";
 
 // ---------------------------------------------------------------------------
-// BIC ↔ bank_id mapping（モック固定値）
+// BIC ↔ bank_id mapping (mock fixed values)
 // ---------------------------------------------------------------------------
 
 /**
- * BIC コード → 内部 bank_id mappingtable。
- * モックimplementationでは固定値。本番では DB または外部ディレクトリを参照する。
+ * BIC code → internal bank_id mapping table.
+ * In mock implementation, values are fixed. In production, query DB or external directory.
  */
 const BIC_TO_BANK_ID: Record<string, string> = {
-  // 日本国内参加bank
-  MHCBJPJT: "001", // 長岡銀行
-  BOTKJPJT: "002", // 尾張銀行
-  SMTBJPJT: "003", // 加賀銀行
-  RZSBJPJT: "004", // 肥前銀行
-  HANGJPJT: "005", // 薩摩銀行
-  SMBCJPJT: "006", // 越後銀行
-  YUKBJPJT: "007", // 讃岐銀行（国際BIC）
-  SFJPJPJT: "008", // 備後銀行
-  AOZOBJPJT: "009", // 淡路銀行
-  OKHBJPJT: "010", // 日向銀行（仮）
+  // Participating banks in Japan
+  MHCBJPJT: "001", // Nagaoka Bank
+  BOTKJPJT: "002", // Owari Bank
+  SMTBJPJT: "003", // Kaga Bank
+  RZSBJPJT: "004", // Hizen Bank
+  HANGJPJT: "005", // Satsuma Bank
+  SMBCJPJT: "006", // Echigo Bank
+  YUKBJPJT: "007", // Sanuki Bank (international BIC)
+  SFJPJPJT: "008", // Bingo Bank
+  AOZOBJPJT: "009", // Awaji Bank
+  OKHBJPJT: "010", // Hyuga Bank (temporary)
   HOKBJPJT: "011",
   TOHOJPJT: "012",
   CHUBJPJT: "013",
@@ -40,10 +40,10 @@ const BIC_TO_BANK_ID: Record<string, string> = {
   HIRBJPJT: "015",
   SHKBJPJT: "016",
   FUKBJPJT: "017",
-  KUMBJPJT: "018", // 大隅銀行
+  KUMBJPJT: "018", // Osumi Bank
   KAGBJPJT: "019",
   OKNBJPJT: "020",
-  // 海外主要bank（クロスボーダー用）
+  // Major overseas banks (for cross-border)
   CHASUS33: "JPMC-US", // JP Morgan Chase (US)
   CITIUS33: "CITI-US", // Citibank (US)
   BOFAUS3N: "BOFA-US", // Bank of America (US)
