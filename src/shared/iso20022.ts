@@ -42,7 +42,7 @@ const ZENGIN_RECORD_LENGTH = 120;
 
 /** Zengin account type code to ISO 20022 account type label mapping. */
 const ZENGIN_ACCOUNT_TYPE_LABEL: Record<string, string> = {
-  "1": "SAVINGS", // 普通
+  "1": "SAVINGS", // Savings
   "2": "CURRENT", // 当座
   "4": "SAVINGS", // 貯蓄
 };

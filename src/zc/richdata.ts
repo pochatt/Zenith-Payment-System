@@ -128,7 +128,7 @@ export async function computeContentHash(content: object): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// 内部ヘルパー: R2保存時のD1summarygenerate
+// 内部Helpers: R2保存時のD1summarygenerate
 // ---------------------------------------------------------------------------
 function buildSummary(
   content: Record<string, unknown>,
@@ -185,7 +185,7 @@ function buildSummary(
 }
 
 // ---------------------------------------------------------------------------
-// 内部ヘルパー: ArrayBuffer → hex string
+// 内部Helpers: ArrayBuffer → hex string
 // ---------------------------------------------------------------------------
 function bufToHex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf))

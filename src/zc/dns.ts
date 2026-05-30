@@ -465,7 +465,7 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// 当日 DNS サイクルをgetまたはcreate（共有ヘルパー: 各laneが dns_cycle_id をsetするために使用）
+// 当日 DNS サイクルをgetまたはcreate（共有Helpers: 各laneが dns_cycle_id をsetするために使用）
 // ---------------------------------------------------------------------------
 export async function getOrCreateDnsCycle(db: D1Database, now: string): Promise<string> {
   const today = now.slice(0, 10);

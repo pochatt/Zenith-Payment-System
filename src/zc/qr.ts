@@ -153,7 +153,7 @@ export async function verifyQrSignature(
 }
 
 // ---------------------------------------------------------------------------
-// 内部ヘルパー: signatureペイロード文字列construct
+// 内部Helpers: signatureペイロード文字列construct
 // ---------------------------------------------------------------------------
 function buildSigPayload(qrRef: string, payeeBankId: string, amountValue?: number): string {
   const amountStr = amountValue !== undefined ? String(amountValue) : "";

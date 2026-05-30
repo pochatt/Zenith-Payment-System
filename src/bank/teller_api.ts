@@ -39,7 +39,7 @@ export async function handleCashDeposit(req: Request, bankId: string, env: Env):
     return jsonError(400, "INVALID_JSON", "invalid json");
   }
 
-  // amountバリデーション: 正の整数のみ許可（負のamountでbalancecheck迂回を防止）
+  // amountValidation: 正の整数のみ許可（負のamountでbalancecheck迂回を防止）
   if (typeof body.amount !== "number" || !Number.isInteger(body.amount) || body.amount <= 0) {
     return jsonError(400, "INVALID_AMOUNT", "amount must be a positive integer");
   }
@@ -100,7 +100,7 @@ export async function handleCashWithdrawal(
     return jsonError(400, "INVALID_JSON", "invalid json");
   }
 
-  // amountバリデーション: 正の整数のみ許可
+  // amountValidation: 正の整数のみ許可
   if (typeof body.amount !== "number" || !Number.isInteger(body.amount) || body.amount <= 0) {
     return jsonError(400, "INVALID_AMOUNT", "amount must be a positive integer");
   }

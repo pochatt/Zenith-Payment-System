@@ -117,7 +117,7 @@ export interface LegacyZenginTransfer {
   hishimukeKinko: string;
   /** 被仕向支店コード（3桁: '001'〜'999'）。zenith-mock では DB matchに不使用 */
   hishimukeSiten: string;
-  /** 科目 ('1'=普通, '2'=当座, '4'=貯蓄) */
+  /** 科目 ('1'=Savings, '2'=当座, '4'=貯蓄) */
   kamoku: "1" | "2" | "4";
   /** account number（7桁数字）。zenith-mock の account_hash とは別体系 */
   kozaBango: string;
@@ -143,7 +143,7 @@ const KAMOKU_MAP: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// New format types（Zenith Coordinator API）
+// New format types (Zenith Coordinator API)
 // ---------------------------------------------------------------------------
 
 /**
@@ -177,10 +177,10 @@ export interface ConvertedPaymentRequest {
    */
   _zengin_meta: {
     shimukeKinko: string; // Zengin 4-digit code
-    shimukeSiten: string; // 支店3桁（DB非対応）
+    shimukeSiten: string; // Branch 3-digit code (DB not supported)
     hishimukeKinko: string; // Zengin 4-digit code
-    hishimukeSiten: string; // 支店3桁（DB非対応）
-    kozaBango: string; // 7桁口座番号（account_hash とは別体系）
+    hishimukeSiten: string; // Branch 3-digit code (DB not supported)
+    kozaBango: string; // 7-digit account number (separate system from account_hash)
   };
 }
 
@@ -208,7 +208,7 @@ export interface ConvertedPaymentRequest {
  * ```typescript
  * const converted = convertLegacyToNew(legacy, txid, payerAccountHash)
  * if (isUnresolvedAccountRef(converted.payee.account_hash)) {
- *   // account-verify で解決してからfund transfer
+ *   // Resolve via account-verify before fund transfer
  *   const verified = await callAccountVerify(converted.payee.bank_id, converted._zengin_meta.kozaBango)
  *   converted.payee.account_hash = verified.account_hash
  * }
@@ -228,7 +228,7 @@ export function convertLegacyToNew(
   const payeeBankId = zenginCodeToMockBankId(legacy.hishimukeKinko);
 
   // 被仕向account: 全銀account numberはそのまま account_hash にできない。
-  // 未解決識別子をgenerateし、呼び出し元が account-verify で解決する。
+  // Generate unresolved identifier; caller resolves via account-verify
   const payeeAccountHash = buildUnresolvedAccountRef(
     legacy.hishimukeKinko,
     legacy.hishimukeSiten,
@@ -245,7 +245,7 @@ export function convertLegacyToNew(
     },
     payee: {
       bank_id: payeeBankId,
-      account_hash: payeeAccountHash, // 未解決: account-verify が必要
+      account_hash: payeeAccountHash, // Unresolved: account-verify required
       account_name: normalizeKatakana(legacy.uketorininMei),
     },
     purpose: "P2P",
@@ -295,7 +295,7 @@ export function convertNewToLegacy(
     shimukeSiten: shimukeSitenCode,
     hishimukeKinko: mockBankIdToZenginCode(converted.payee.bank_id),
     hishimukeSiten: payeeSitenCode,
-    kamoku: "1", // デフォルト: Savings account
+    kamoku: "1", // Default: Savings account
     kozaBango: payeeKozaBango.slice(-7).padStart(7, "0"),
     uketorininMei: toHalfWidthKatakana(uketorininMei).slice(0, 48),
     kingaku: converted.amount.value,
@@ -304,11 +304,11 @@ export function convertNewToLegacy(
 }
 
 // ---------------------------------------------------------------------------
-// バリデーション
+// Validation
 // ---------------------------------------------------------------------------
 
 /**
- * 全銀フォーマットmessageの基本バリデーション。
+ * 全銀フォーマットmessageの基本Validation。
  *
  * bankコードは全銀標準の4桁、支店コードは3桁を期待する。
  * zenith-mock の DB 側コード（3桁）とは異なることにcaution。
@@ -330,7 +330,7 @@ export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
   if (!/^\d{3}$/.test(legacy.hishimukeSiten))
     errors.push(`hishimukeSiten must be 3 digits, got "${legacy.hishimukeSiten}"`);
   if (!["1", "2", "4"].includes(legacy.kamoku))
-    errors.push(`kamoku must be '1' (普通), '2' (当座), or '4' (貯蓄)`);
+    errors.push(`kamoku must be '1' (Savings), '2' (当座), or '4' (貯蓄)`);
   if (!/^\d{1,7}$/.test(legacy.kozaBango))
     errors.push(`kozaBango must be 1–7 digits, got "${legacy.kozaBango}"`);
   if (legacy.uketorininMei.length === 0) errors.push("uketorininMei is required");
@@ -356,7 +356,7 @@ export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
 }
 
 // ---------------------------------------------------------------------------
-// ヘルパー
+// Helpers
 // ---------------------------------------------------------------------------
 
 /** 全銀科目コードから zenith-mock account種別文字列をreturn */
@@ -458,6 +458,6 @@ function toHalfWidthKatakana(str: string): string {
 /** カタカナ文字列を正規化（制御文字・非ASCII除去, trim） */
 function normalizeKatakana(str: string): string {
   return toHalfWidthKatakana(str)
-    .replace(/[^\x20-\x7E\uFF65-\uFF9F]/g, "") // ASCII + 半角カタカナ以外除去
+    .replace(/[^\x20-\x7E\uFF65-\uFF9F]/g, "") // Remove anything except ASCII + half-width katakana
     .trim();
 }

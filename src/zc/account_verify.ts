@@ -287,7 +287,7 @@ export async function batchVerify(
 }
 
 // ---------------------------------------------------------------------------
-// ヘルパー
+// Helpers
 // ---------------------------------------------------------------------------
 /** ISO 文字列に秒数を加算して新しい ISO 文字列をreturn */
 function addSeconds(isoStr: string, secs: number): string {

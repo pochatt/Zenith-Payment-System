@@ -1113,7 +1113,7 @@ components:
 
   responses:
     BadRequest:
-      description: バリデーションエラー
+      description: Validationエラー
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorResponse' }

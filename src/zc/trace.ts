@@ -58,7 +58,7 @@ export async function logTxEvent(db: D1Database, params: TxEventParams): Promise
 }
 
 /**
- * ZC→Bank 呼び出しをラップし、自動的に TxEventLog をrecordするヘルパー。
+ * ZC→Bank 呼び出しをラップし、自動的に TxEventLog をrecordするHelpers。
  * duration_ms も自動計測する。
  */
 export async function tracedBankCall<T extends { result: string }>(
