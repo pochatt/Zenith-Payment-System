@@ -5,10 +5,10 @@
  * @module bank/filter
  */
 //
-// 将来的なcustomerapprovalフロー拡張ポイント:
-//   - HOLD_CONFIRM が発動したとき approval_id をgenerateしてreturn
-//   - customerスマートフォンへのプッシュ通知sendはここに追加する
-//   - customerがapproval/denial後 ZC にコールバックする仕組みも同様
+// Future extension points for customer approval flow:
+//   - When HOLD_CONFIRM triggers, generate and return approval_id
+//   - Add customer smartphone push notification sending here
+//   - Similar mechanism for customer callback to ZC after approval/denial
 import type {
   FilterEvalResult,
   PaymentFilterRow,
@@ -240,7 +240,7 @@ export async function respondToApproval(
   if (!approval) return { ok: false, reason: "NOT_FOUND" };
   if (approval.status !== "PENDING") return { ok: false, reason: "ALREADY_RESPONDED" };
 
-  // expiredcheckと応答をatomicに実行（単一 UPDATE で TOCTOU (time-of-check-time-of-use) 回避）
+  // Execute expiry check and response atomically (single UPDATE to avoid TOCTOU)
   const newStatus = req.approved ? "APPROVED" : "REJECTED";
   const respondResult = await db
     .prepare(

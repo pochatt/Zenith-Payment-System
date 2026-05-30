@@ -362,8 +362,8 @@ export async function handleGetTransferStatus(
   const headers = getHeaders(req);
   if (!headers) return jsonError(401, "UNAUTHORIZED", "headers required");
 
-  // customerauthorization check: payer_account_hash がcustomerのaccountに一致するかvalidation
-  // （水平privilege escalation防止: 同一bankの別customerがtxidを推測して閲覧できないようにする）
+  // Customer authorization check: validate payer_account_hash matches customer's account
+  // (Horizontal privilege escalation prevention: prevent other customers from same bank guessing txid)
   const customerId = headers.customerId;
   const tx = await env.DB.prepare(
     `SELECT txid, state, reason_code, amount_value, amount_currency, payer_account_hash, created_at, updated_at FROM Transactions WHERE txid=? AND payer_bank_id=?`
@@ -382,7 +382,7 @@ export async function handleGetTransferStatus(
 
   if (!tx) return jsonError(404, "NOT_FOUND", "transfer not found");
 
-  // customer IDからaccountを検索し、payer_account_hash とreconcile
+  // Search account from customer ID and reconcile with payer_account_hash
   if (customerId) {
     const customerAccounts = await env.DB.prepare(
       `SELECT account_id FROM BankAccounts WHERE bank_id=? AND customer_id=?`
