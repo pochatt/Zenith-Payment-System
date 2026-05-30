@@ -15,7 +15,7 @@
 
 業務知見をもとに「決済を説明可能な状態機械として扱う」という設計思想を一貫して通し、TypeScript と Cloudflare Workers のうえで、最後まで動くところまで実装してあります。趣味で書いたものなので、現実のいずれの組織・システム・運用も示していません。
 
-構想そのものの出発点は、別ページにまとまっています：[Zenith 構想・基本コンセプト](https://www.sakuolia.jp/zenith.html)
+構想そのものの出発点は、別ページにまとまっています：[Zenith 構想・基本コンセプト](https://www.sakuolia.jp/zenith.md)
 
 ### なぜ作ったのか
 
@@ -148,7 +148,7 @@ curl -X POST https://<your-worker>.workers.dev/internal/seed
 npm run dev               # ローカル開発サーバー
 npm run deploy            # Cloudflare へデプロイ
 npm run type-check        # TypeScript 型チェック
-npm run test              # テストスイート（399 ケース）
+npm run test              # テストスイート（463 ケース）
 npm run test:watch        # ウォッチモード
 npm run db:migrate:local  # ローカル D1 にマイグレーション
 npm run db:migrate:remote # リモート D1 にマイグレーション
@@ -224,12 +224,13 @@ GET /api/transactions/TX-...
 - FATF R.16 に沿ったクロスボーダー
 - 口座名義確認、EDI／リッチデータ
 - サーキットブレーカと自動健全性監視
+- FinalityLog ハッシュチェーンの日次自動監査（改ざん検知 → CASE へ収束）
 - SSE による参加銀行向けイベントストリーム
 
 ### テスト
 
 ```bash
-npm run test                          # 全 399 ケース
+npm run test                          # 全 463 ケース
 npx vitest test/zc/express.test.ts    # 単一ファイル
 ```
 
@@ -433,7 +434,7 @@ The dashboard is served at the root of the deployed worker.
 npm run dev               # local dev server
 npm run deploy            # deploy to Cloudflare
 npm run type-check        # TypeScript type check
-npm run test              # full test suite (399 cases)
+npm run test              # full test suite (463 cases)
 npm run test:watch        # watch mode
 npm run db:migrate:local  # apply migrations locally
 npm run db:migrate:remote # apply migrations to remote D1
@@ -510,12 +511,13 @@ Cross-cutting:
 - name and account verification
 - EDI / rich commercial data
 - circuit breaker and self-monitoring
+- daily FinalityLog hash-chain audit (tamper detection → CASE)
 - SSE event stream to participating banks
 
 ### Tests
 
 ```bash
-npm run test                          # full suite, 399 cases
+npm run test                          # full suite, 463 cases
 npx vitest test/zc/express.test.ts    # a single file
 ```
 
