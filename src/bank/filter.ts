@@ -414,10 +414,10 @@ export async function deleteFilter(
  * EdiFilterCondition に基づいて EdiRecords を検索し、
  * 一致したtransaction IDの一覧をreturn。
  *
- * @param db              D1 データベース
- * @param bankId          filter対象のbank ID（EdiRecords.created_by_bank_id）
- * @param filterCondition EdiFilterCondition（field / operator / value）
- * @returns 一致した EdiRecordRow 配列（txid で Transactions と紐付け可）
+ * @param db              D1 database
+ * @param bankId          filter target bank ID (EdiRecords.created_by_bank_id)
+ * @param filterCondition EdiFilterCondition (field / operator / value)
+ * @returns array of matching EdiRecordRow (linkable to Transactions by txid)
  */
 export async function applyEdiFilter(
   db: D1Database,

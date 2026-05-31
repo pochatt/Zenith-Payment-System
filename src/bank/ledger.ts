@@ -144,7 +144,7 @@ export async function applyDailyInterest(
 }
 
 /**
- * ゼロサムvalidation（全journal entryの合計）
+ * Zero-sum validation (sum of all journal entries)
  */
 export async function verifyZeroSum(bankId: string, db: D1Database): Promise<boolean> {
   const row = await db

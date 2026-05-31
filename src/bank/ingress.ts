@@ -793,7 +793,7 @@ async function bankLegReadyCheck(
       return { result: "NG", reason_code: "INSUFFICIENT_FUNDS" };
     }
     // PAYER isolates funds to suspense (like reserve-funds)
-    // txid は後からcreateされる TX-GT-{leg_id} を予測して使用
+    // Predict txid TX-GT-{leg_id} created later
     const predictedTxid = `TX-GT-${req.leg_id}`;
     const suspenseId = await reserveSuspense(db, {
       bankId,
