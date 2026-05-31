@@ -19,7 +19,7 @@ function getHeaders(req: Request): { bankId: string; customerId: string } | null
 }
 
 // ---------------------------------------------------------------------------
-// GET /bank/:bankId/v1/me/accounts  口座一覧
+// GET /bank/:bankId/v1/me/accounts  account list
 // ---------------------------------------------------------------------------
 export async function handleGetAccounts(req: Request, bankId: string, env: Env): Promise<Response> {
   const headers = getHeaders(req);
@@ -79,7 +79,7 @@ export async function handleGetBalance(
 }
 
 // ---------------------------------------------------------------------------
-// GET /bank/:bankId/v1/me/accounts/:accountId/transactions  取引履歴
+// GET /bank/:bankId/v1/me/accounts/:accountId/transactions  transaction history
 // ---------------------------------------------------------------------------
 export async function handleGetAccountTransactions(
   req: Request,
@@ -132,8 +132,8 @@ export async function handleGetAccountTransactions(
       created_at: string;
     }>();
 
-  // txid → Transactions（送金人・受取人情報）をバッチ照会
-  // map().filter() の中間配列確保を避け、Set 構築と配列化を 1 パスで行う
+  // Batch query txid → Transactions (sender/recipient info)
+  // Avoid allocating intermediate arrays from map().filter(); build the Set and array in a single pass
   const txidSet = new Set<string>();
   for (const j of journals.results) {
     if (j.txid) txidSet.add(j.txid);
@@ -166,7 +166,7 @@ export async function handleGetAccountTransactions(
     for (const row of txRows.results) txInfoMap.set(row.txid, row);
   }
 
-  // 関連口座の名義をバッチ照会
+  // Batch query the account holder names of the related accounts
   const cpAccountIds = new Set<string>();
   for (const [, tx] of txInfoMap) {
     if (tx.payer_account_hash) cpAccountIds.add(tx.payer_account_hash);
@@ -193,7 +193,7 @@ export async function handleGetAccountTransactions(
     );
     let counterparty: string | null = null;
     if (j.txid && txInfo) {
-      // 出金（マイナス）は相手口座＝payee、入金（プラス）は相手口座＝payer
+      // For debits (negative) the counterparty account = payee; for credits (positive) the counterparty account = payer
       const cpId = j.amount < 0 ? (txInfo.payee_account_hash ?? "") : txInfo.payer_account_hash;
       counterparty = acctNameMap.get(cpId) ?? null;
     }
@@ -223,12 +223,12 @@ function journalDisplayLabel(
   if (txType === "INTEREST") return "利息";
   if (txType === "CORRECTION") return "訂正";
 
-  // 送金・着金の取引種別ラベル（lane優先）
+  // Transaction type label for outgoing/incoming credit (lane takes priority)
   const isDebit = amount < 0;
   if (txType === "RESERVE" && !isDebit) return "振込取消";
 
   if (lane) {
-    // 入金側は lane を問わず「振込入金」ベース＋種別補足
+    // The credit side is based on "transfer credit" regardless of lane, with a type annotation
     if (!isDebit) {
       switch (lane) {
         case "HIGH_VALUE":
@@ -243,7 +243,7 @@ function journalDisplayLabel(
           return "振込入金";
       }
     }
-    // 出金側
+    // Debit side
     switch (lane) {
       case "EXPRESS":
         return purposeLabel(purpose);
@@ -264,7 +264,7 @@ function journalDisplayLabel(
     }
   }
 
-  // lane 不明時は tx_type で判定
+  // When the lane is unknown, determine by tx_type
   if (txType === "CREDIT") return isDebit ? "取引" : "振込入金";
   return isDebit ? purposeLabel(purpose) : "振込入金";
 }
@@ -285,8 +285,8 @@ function purposeLabel(purpose: string | null): string {
 }
 
 // ---------------------------------------------------------------------------
-// POST /bank/:bankId/v1/me/transfers  振込実行
-// payee_bank_id 不要: payee_account_id の先頭3桁から自動導出
+// POST /bank/:bankId/v1/me/transfers  execute transfer
+// payee_bank_id not required: automatically derived from the first 3 digits of payee_account_id
 // ---------------------------------------------------------------------------
 export async function handlePostCustomerTransfer(
   req: Request,
@@ -303,7 +303,7 @@ export async function handlePostCustomerTransfer(
     return jsonError(400, "INVALID_JSON", "invalid json");
   }
 
-  // payee_account_id から payee_bank_id を導出
+  // Derive payee_bank_id from payee_account_id
   const payeeAccountId = body.payee_account_id ?? body.payee_account_hash ?? "";
   let payeeBankId = body.payee_bank_id;
   if (!payeeBankId) {
@@ -317,7 +317,7 @@ export async function handlePostCustomerTransfer(
     payeeBankId = bankCodeFromAccount(payeeAccountId);
   }
 
-  // 顧客口座を特定（customer_id で SAVINGS 口座を検索）
+  // Identify the customer account (look up the SAVINGS account by customer_id)
   const account = await env.DB.prepare(
     `SELECT * FROM BankAccounts WHERE bank_id=? AND customer_id=? AND status='NORMAL' AND account_type='SAVINGS' LIMIT 1`
   )
@@ -325,7 +325,7 @@ export async function handlePostCustomerTransfer(
     .first<BankAccountRow>();
   if (!account) return jsonError(404, "NOT_FOUND", "customer account not found");
 
-  // ZC の POST /api/transfers と同等のリクエストを構築
+  // Build a request equivalent to ZC's POST /api/transfers
   const txid = `TX-${newUUID()}`;
   const zcReq = new Request("http://internal/api/transfers", {
     method: "POST",
@@ -351,7 +351,7 @@ export async function handlePostCustomerTransfer(
 }
 
 // ---------------------------------------------------------------------------
-// GET /bank/:bankId/v1/me/transfers/:txid  振込状態照会
+// GET /bank/:bankId/v1/me/transfers/:txid  query transfer status
 // ---------------------------------------------------------------------------
 export async function handleGetTransferStatus(
   req: Request,
@@ -362,8 +362,8 @@ export async function handleGetTransferStatus(
   const headers = getHeaders(req);
   if (!headers) return jsonError(401, "UNAUTHORIZED", "headers required");
 
-  // 顧客認可チェック: payer_account_hash が顧客の口座に一致するか検証
-  // （水平権限昇格防止: 同一銀行の別顧客がtxidを推測して閲覧できないようにする）
+  // Customer authorization check: validate that payer_account_hash matches the customer's account
+  // (Prevent horizontal privilege escalation: stop another customer at the same bank from guessing a txid to view it)
   const customerId = headers.customerId;
   const tx = await env.DB.prepare(
     `SELECT txid, state, reason_code, amount_value, amount_currency, payer_account_hash, created_at, updated_at FROM Transactions WHERE txid=? AND payer_bank_id=?`
@@ -382,7 +382,7 @@ export async function handleGetTransferStatus(
 
   if (!tx) return jsonError(404, "NOT_FOUND", "transfer not found");
 
-  // 顧客IDから口座を検索し、payer_account_hash と突合
+  // Look up the account by customer ID and match against payer_account_hash
   if (customerId) {
     const customerAccounts = await env.DB.prepare(
       `SELECT account_id FROM BankAccounts WHERE bank_id=? AND customer_id=?`
@@ -391,7 +391,7 @@ export async function handleGetTransferStatus(
       .all<{ account_id: string }>();
     const accountIds = customerAccounts.results.map((a) => a.account_id);
     const payerHash = tx.payer_account_hash ?? "";
-    // account_hash は "h:accountId" 形式または accountId そのもの
+    // account_hash is in the "h:accountId" format or the accountId itself
     const payerAccountId = payerHash.startsWith("h:") ? payerHash.slice(2) : payerHash;
     if (accountIds.length > 0 && !accountIds.includes(payerAccountId)) {
       return jsonError(403, "FORBIDDEN", "not authorized to view this transfer");

@@ -50,7 +50,7 @@ export interface TimelineItem {
 }
 
 /**
- * Event-type → 日本語 reason. Keys match FinalityEventType. Unknown events fall
+ * Event-type → Japanese reason. Keys match FinalityEventType. Unknown events fall
  * back to a generic label so new event types do not break the endpoint.
  */
 const EVENT_REASONS: Record<string, { reason: string; actors: string[] }> = {

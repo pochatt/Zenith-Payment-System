@@ -5,10 +5,10 @@
  * @module bank/filter
  */
 //
-// 将来的な顧客承認フロー拡張ポイント:
-//   - HOLD_CONFIRM が発動したとき approval_id を生成して返す
-//   - 顧客スマートフォンへのプッシュ通知送信はここに追加する
-//   - 顧客が承認/拒否後 ZC にコールバックする仕組みも同様
+// Future extension point for the customer approval flow:
+//   - When HOLD_CONFIRM fires, generate and return an approval_id
+//   - Sending push notifications to the customer's smartphone goes here
+//   - The mechanism for the customer to call back to ZC after approval/rejection goes here too
 import type {
   FilterEvalResult,
   PaymentFilterRow,
@@ -23,20 +23,20 @@ import { newUUID } from "../shared/idempotency";
 import { filterByEdiCondition } from "../zc/edi";
 
 // ---------------------------------------------------------------------------
-// フィルタ評価
+// Filter evaluation
 // ---------------------------------------------------------------------------
 
 /**
- * 着金フィルタを評価する。
- * execute-credit の前段で呼び出し、最初にマッチしたフィルタのアクションを返す。
+ * Evaluate incoming credit filters.
+ * Called before execute-credit; returns the action of the first matching filter.
  *
- * @param bankId        着金銀行ID
- * @param accountId     着金口座ID（内部ID）
- * @param senderBankId  送金元銀行ID
- * @param senderAccountHash 送金元口座ハッシュ
- * @param amountValue   送金額
- * @param ediData       電文EDIデータ（null可）
- * @param txid          ZC取引ID
+ * @param bankId        credit bank ID
+ * @param accountId     credit account ID (internal ID)
+ * @param senderBankId  sender bank ID
+ * @param senderAccountHash sender account hash
+ * @param amountValue   transfer amount
+ * @param ediData       message EDI data (nullable)
+ * @param txid          ZC transaction ID
  */
 export async function evaluatePaymentFilters(
   bankId: string,
@@ -48,7 +48,7 @@ export async function evaluatePaymentFilters(
   txid: string,
   db: D1Database
 ): Promise<FilterEvalResult> {
-  // 銀行全体フィルタ + 口座フィルタを取得（優先度: ACCOUNT > BANK_WIDE）
+  // Fetch bank-wide filters + account filters (priority: ACCOUNT > BANK_WIDE)
   const rows = await db
     .prepare(
       `SELECT * FROM PaymentFilters
@@ -69,7 +69,7 @@ export async function evaluatePaymentFilters(
     });
     if (!matched) continue;
 
-    // フィルタにマッチした
+    // Matched a filter
     if (filter.action === "REJECT") {
       return {
         matched: true,
@@ -79,7 +79,7 @@ export async function evaluatePaymentFilters(
       };
     }
 
-    // HOLD_CONFIRM / HOLD_MANUAL: 承認リクエストを生成
+    // HOLD_CONFIRM / HOLD_MANUAL: generate an approval request
     const approvalId = await createApprovalRequest(db, {
       bankId,
       accountId,
@@ -89,7 +89,7 @@ export async function evaluatePaymentFilters(
       senderAccountHash,
       amountValue,
       ediData,
-      // 承認期限: 着金保留から24時間
+      // Approval deadline: 24 hours from the credit hold
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     });
 
@@ -104,7 +104,7 @@ export async function evaluatePaymentFilters(
   return { matched: false };
 }
 
-/** フィルタ条件の評価 */
+/** Evaluate filter condition */
 function matchFilter(
   filterType: string,
   condition: Record<string, unknown>,
@@ -137,11 +137,11 @@ function matchFilter(
       }
     }
 
-    // EDI_STRUCTURED: EdiFilterCondition による構造化照合
-    // condition は { field, operator, value } の EdiFilterCondition 形式
-    // evaluatePaymentFilters からの同期呼び出しでは DB アクセス不可のため、
-    // ediData（purpose テキスト）に対して条件を文字列照合する簡易評価を行う。
-    // 完全な DB 照合は applyEdiFilter() を使用すること。
+    // EDI_STRUCTURED: structured matching via EdiFilterCondition
+    // condition is in the EdiFilterCondition format { field, operator, value }
+    // Since DB access is not available in the synchronous call from evaluatePaymentFilters,
+    // perform a simplified evaluation that string-matches the condition against ediData (purpose text).
+    // Use applyEdiFilter() for full DB matching.
     case "EDI_STRUCTURED": {
       const cond = condition as Partial<EdiFilterCondition>;
       if (!cond.field || !cond.operator || cond.value === undefined) return false;
@@ -169,7 +169,7 @@ function matchFilter(
     }
 
     case "REQUIRE_APPROVAL":
-      return true; // 無条件発動
+      return true; // Unconditional trigger
 
     default:
       return false;
@@ -224,7 +224,7 @@ async function createApprovalRequest(
   return approvalId;
 }
 
-/** 顧客の承認/拒否を記録する */
+/** Record the customer's approval/rejection */
 export async function respondToApproval(
   bankId: string,
   approvalId: string,
@@ -240,7 +240,7 @@ export async function respondToApproval(
   if (!approval) return { ok: false, reason: "NOT_FOUND" };
   if (approval.status !== "PENDING") return { ok: false, reason: "ALREADY_RESPONDED" };
 
-  // 期限切れチェックと応答をアトミックに実行（単一 UPDATE で TOCTOU 回避）
+  // Perform the expiry check and response atomically (a single UPDATE avoids TOCTOU)
   const newStatus = req.approved ? "APPROVED" : "REJECTED";
   const respondResult = await db
     .prepare(
@@ -252,7 +252,7 @@ export async function respondToApproval(
     .run();
 
   if (respondResult.meta.changes === 0) {
-    // expires_at <= now なら期限切れ → TIMEOUT にマーク
+    // If expires_at <= now it has expired → mark as TIMEOUT
     const timeoutResult = await db
       .prepare(
         `UPDATE PaymentApprovalRequests SET status='TIMEOUT', updated_at=?
@@ -270,7 +270,7 @@ export async function respondToApproval(
   return { ok: true, txid: approval.txid };
 }
 
-/** 期限切れの承認リクエストを TIMEOUT に更新（timeout_sweep.ts から呼ばれる） */
+/** Update expired approval requests to TIMEOUT (called from timeout_sweep.ts) */
 export async function sweepExpiredApprovals(db: D1Database): Promise<number> {
   const now = nowISO();
   const result = await db
@@ -284,7 +284,7 @@ export async function sweepExpiredApprovals(db: D1Database): Promise<number> {
   return result.meta.changes ?? 0;
 }
 
-/** 口座の承認待ちリクエスト一覧 */
+/** List of pending approval requests for an account */
 export async function listApprovalRequests(
   bankId: string,
   accountId: string | null,
@@ -407,17 +407,17 @@ export async function deleteFilter(
 }
 
 // ---------------------------------------------------------------------------
-// EDI構造化フィルタ: EdiRecords + Transactions を結合して条件照合
+// EDI structured filter: join EdiRecords + Transactions and match against the conditions
 // ---------------------------------------------------------------------------
 
 /**
- * EdiFilterCondition に基づいて EdiRecords を検索し、
- * 一致した取引IDの一覧を返す。
+ * Search EdiRecords based on the EdiFilterCondition and
+ * return the list of matching transaction IDs.
  *
- * @param db              D1 データベース
- * @param bankId          フィルタ対象の銀行ID（EdiRecords.created_by_bank_id）
- * @param filterCondition EdiFilterCondition（field / operator / value）
- * @returns 一致した EdiRecordRow 配列（txid で Transactions と紐付け可）
+ * @param db              D1 database
+ * @param bankId          Bank ID to filter on (EdiRecords.created_by_bank_id)
+ * @param filterCondition EdiFilterCondition (field / operator / value)
+ * @returns Array of matching EdiRecordRow (can be linked to Transactions by txid)
  */
 export async function applyEdiFilter(
   db: D1Database,

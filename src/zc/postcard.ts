@@ -8,7 +8,7 @@
  * silhouette, the txid hash chooses the palette, the FinalityLog chooses the
  * seams, and the chain-verification status becomes a hanko-style seal —
  * intentionally the dominant visual anchor, because in Zenith's design ethos
- * 証跡 (evidence) is the point, not decoration.
+ * evidence is the point, not decoration.
  *
  * Visual language is aligned with `/theater` and `/sky`:
  *   - Deep indigo background (Zenith ink #0a1730 → #050d22)
@@ -432,7 +432,7 @@ function vesselExtras(shape: VesselShape): VesselExtra[] {
       ];
     case "twin_cups":
       // GTID: a thin gold coupler line tying the two bases together —
-      // the visual signature of "Decision一体性".
+      // the visual signature of "Decision unity".
       return [
         { d: "M186,458 L294,458", stroke: "#d4a056", opacity: 0.85, width: 1.4 },
         { d: "M240,452 L240,462", stroke: "#d4a056", opacity: 0.85, width: 1.4 },
@@ -693,7 +693,7 @@ function formatAmount(value: number, currency: string): string {
 }
 
 /**
- * Poetic amount: rounded to the nearest 万 for JPY so the line reads naturally
+ * Poetic amount: rounded to the nearest 10,000 for JPY so the line reads naturally
  * inside a 5-7-5-ish phrase. For other currencies we fall back to compact form.
  */
 function formatAmountPoetic(value: number, currency: string): string {

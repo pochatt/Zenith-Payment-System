@@ -27,7 +27,7 @@ export interface Env {
   /**
    * System-wide HIGH_VALUE auto-routing threshold in JPY (integer string).
    * Payments at or above this amount are automatically escalated to HIGH_VALUE lane.
-   * Default: 100000000 (¥100,000,000 = 1億円). Per-bank override via Participants.hv_threshold.
+   * Default: 100000000 (¥100,000,000 = 100 million yen). Per-bank override via Participants.hv_threshold.
    */
   ZC_HV_THRESHOLD?: string;
   R2_BUCKET?: R2Bucket;
@@ -110,37 +110,37 @@ export interface FatfR16Data {
 // Account Number Utilities
 // ---------------------------------------------------------------------------
 
-/** 口座番号から銀行コード (3桁) を取得 */
+/** Get the bank code (3 digits) from an account number */
 export function bankCodeFromAccount(accountId: string): string {
   return accountId.slice(0, 3);
 }
 
-/** 銀行コードから別段預金口座番号を生成 */
+/** Generate a segregated deposit (suspense) account number from a bank code */
 export function suspenseAccountId(bankCode: string): string {
   return `${bankCode}0000000`;
 }
 
-/** 銀行コードから ZC清算勘定口座番号を生成 */
+/** Generate the ZC settlement account number from a bank code */
 export function nostroAccountId(bankCode: string): string {
   return `${bankCode}-ZCS`;
 }
 
-/** 銀行コードから利益剰余金（Retained Earnings）口座番号を生成 */
+/** Generate the Retained Earnings account number from a bank code */
 export function retainedEarningsAccountId(bankCode: string): string {
   return `${bankCode}-RE`;
 }
 
-/** 銀行コードから現金（Cash）口座番号を生成 */
+/** Generate the Cash account number from a bank code */
 export function cashAccountId(bankCode: string): string {
   return `${bankCode}-CASH`;
 }
 
-/** 口座番号が別段預金かどうか */
+/** Whether the account number is a segregated deposit (suspense) account */
 export function isSuspenseAccount(accountId: string): boolean {
   return accountId.endsWith("0000000");
 }
 
-/** 次の口座番号を生成 */
+/** Generate the next account number */
 export function generateAccountId(bankCode: string, seq: number): string {
   return `${bankCode}${String(seq).padStart(7, "0")}`;
 }

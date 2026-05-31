@@ -34,7 +34,7 @@ import type {
 import { bicToBankId, bankIdToBic } from "./routing";
 
 // ---------------------------------------------------------------------------
-// 定数
+// Constants
 // ---------------------------------------------------------------------------
 
 /** Zengin fixed-length record size (120 bytes per record). */
@@ -42,13 +42,13 @@ const ZENGIN_RECORD_LENGTH = 120;
 
 /** Zengin account type code to ISO 20022 account type label mapping. */
 const ZENGIN_ACCOUNT_TYPE_LABEL: Record<string, string> = {
-  "1": "SAVINGS", // 普通
-  "2": "CURRENT", // 当座
-  "4": "SAVINGS", // 貯蓄
+  "1": "SAVINGS", // Ordinary deposit
+  "2": "CURRENT", // Current account
+  "4": "SAVINGS", // Savings
 };
 
 // ---------------------------------------------------------------------------
-// pacs.008 生成
+// Generate pacs.008
 // ---------------------------------------------------------------------------
 
 /**
@@ -123,7 +123,7 @@ export function buildPacs008(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pacs.002 生成
+// Generate pacs.002
 // ---------------------------------------------------------------------------
 
 /**
@@ -160,7 +160,7 @@ export function buildPacs002(params: {
 }
 
 // ---------------------------------------------------------------------------
-// acmt.023 生成
+// Generate acmt.023
 // ---------------------------------------------------------------------------
 
 /**
@@ -196,7 +196,7 @@ export function buildAcmt023(params: {
 }
 
 // ---------------------------------------------------------------------------
-// acmt.024 生成
+// Generate acmt.024
 // ---------------------------------------------------------------------------
 
 /**
@@ -240,7 +240,7 @@ export function buildAcmt024(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pacs.004 生成
+// Generate pacs.004
 // ---------------------------------------------------------------------------
 
 /**
@@ -287,7 +287,7 @@ export function buildPacs004(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pacs.028 生成
+// Generate pacs.028
 // ---------------------------------------------------------------------------
 
 /**
@@ -314,7 +314,7 @@ export function buildPacs028(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pain.013 生成
+// Generate pain.013
 // ---------------------------------------------------------------------------
 
 /**
@@ -358,7 +358,7 @@ export function buildPain013(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pain.014 生成
+// Generate pain.014
 // ---------------------------------------------------------------------------
 
 /**
@@ -390,7 +390,7 @@ export function buildPain014(params: {
 }
 
 // ---------------------------------------------------------------------------
-// 全銀 → ISO 20022
+// Zengin → ISO 20022
 // ---------------------------------------------------------------------------
 
 /**
@@ -406,10 +406,10 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
   const now = new Date().toISOString();
   const msgId = `ZG-${record.originator_bank_code}-${Date.now()}`;
 
-  // 全銀の口座番号を内部形式に変換
-  // 全銀: 4桁金融機関コード + 3桁支店コード + 7桁口座番号
+  // Convert a Zengin account number to the internal format
+  // Zengin: 4-digit financial institution code + 3-digit branch code + 7-digit account number
   const payeeAccountId = `${record.bank_code}${record.account_number.replace(/\s/g, "").padStart(7, "0")}`;
-  const payerAccountId = `${record.originator_bank_code}0000000`; // 送金元は別段預金口座
+  const payerAccountId = `${record.originator_bank_code}0000000`; // The originating account is a segregated deposit (suspense) account
 
   const payerBic = bankIdToBicLocal(record.originator_bank_code);
   const payeeBic = bankIdToBicLocal(record.bank_code);
@@ -444,7 +444,7 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
 }
 
 // ---------------------------------------------------------------------------
-// ISO 20022 → 全銀
+// ISO 20022 → Zengin
 // ---------------------------------------------------------------------------
 
 /**
@@ -458,20 +458,20 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
  * @returns Equivalent ZenginFixedRecord
  */
 export function iso20022ToZengin(msg: Pacs008Message): ZenginFixedRecord {
-  // creditor.bank_id から bank_code / branch_code を分解
-  // 内部形式: 3桁(or 4桁)bankId が bank_code に相当
+  // Split bank_code / branch_code out of creditor.bank_id
+  // Internal format: a 3-digit (or 4-digit) bankId corresponds to bank_code
   const payeeBankId = msg.creditor.bank_id;
   const payerBankId = msg.debtor.bank_id;
 
-  // 口座番号を全銀形式に変換（7桁固定）
-  // 内部口座形式: bankCode + 7桁seq → 末尾7桁を口座番号として取る
+  // Convert the account number to Zengin format (fixed 7 digits)
+  // Internal account format: bankCode + 7-digit seq → take the last 7 digits as the account number
   const rawAccountId = msg.creditor.account_id;
   const accountNumber =
     rawAccountId.length >= 7
       ? rawAccountId.slice(-7).padStart(7, "0")
       : rawAccountId.padStart(7, "0");
 
-  // remittance_info の unstructured から支店コード・口座種別を復元（可能な場合）
+  // Recover the branch code and account type from remittance_info's unstructured field (when possible)
   let branchCode = "000";
   let accountType: "1" | "2" | "4" = "1";
 
@@ -504,7 +504,7 @@ export function iso20022ToZengin(msg: Pacs008Message): ZenginFixedRecord {
 }
 
 // ---------------------------------------------------------------------------
-// 全銀固定長テキスト解析
+// Parse Zengin fixed-length text
 // ---------------------------------------------------------------------------
 
 /**
@@ -565,7 +565,7 @@ export function parseZenginRecord(line: string): ZenginFixedRecord {
 }
 
 // ---------------------------------------------------------------------------
-// 全銀固定長テキスト生成
+// Generate Zengin fixed-length text
 // ---------------------------------------------------------------------------
 
 /**
@@ -577,17 +577,17 @@ export function parseZenginRecord(line: string): ZenginFixedRecord {
  */
 export function formatZenginRecord(record: ZenginFixedRecord): string {
   const parts: string[] = [
-    record.record_type, //  1文字
-    record.bank_code.padStart(4, "0").substring(0, 4), //  4文字
-    record.branch_code.padStart(3, "0").substring(0, 3), //  3文字
-    record.account_type, //  1文字
-    record.account_number.padStart(7, "0").substring(0, 7), //  7文字
-    padZenginKana(record.beneficiary_name, 30), // 30文字
-    String(record.amount).padStart(10, "0").substring(0, 10), // 10文字
-    padZenginKana(record.originator_name, 40), // 40文字
-    record.originator_bank_code.padStart(4, "0").substring(0, 4), //  4文字
-    record.originator_branch_code.padStart(3, "0").substring(0, 3), // 3文字
-    "".padEnd(17, " "), // 17文字（予備）
+    record.record_type, //  1 character
+    record.bank_code.padStart(4, "0").substring(0, 4), //  4 characters
+    record.branch_code.padStart(3, "0").substring(0, 3), //  3 characters
+    record.account_type, //  1 character
+    record.account_number.padStart(7, "0").substring(0, 7), //  7 characters
+    padZenginKana(record.beneficiary_name, 30), // 30 characters
+    String(record.amount).padStart(10, "0").substring(0, 10), // 10 characters
+    padZenginKana(record.originator_name, 40), // 40 characters
+    record.originator_bank_code.padStart(4, "0").substring(0, 4), //  4 characters
+    record.originator_branch_code.padStart(3, "0").substring(0, 3), // 3 characters
+    "".padEnd(17, " "), // 17 characters (reserved)
   ];
 
   const result = parts.join("");
@@ -602,7 +602,7 @@ export function formatZenginRecord(record: ZenginFixedRecord): string {
 }
 
 // ---------------------------------------------------------------------------
-// 内部ユーティリティ（モジュール非公開）
+// Internal utilities (module-private)
 // ---------------------------------------------------------------------------
 
 /**

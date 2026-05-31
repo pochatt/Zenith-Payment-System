@@ -507,7 +507,7 @@ export interface BankCreditNotifyRequest {
 }
 
 // ---------------------------------------------------------------------------
-// ZEDI (全銀EDI) API
+// ZEDI (Zengin EDI) API
 // ---------------------------------------------------------------------------
 
 export interface EdiLineItem {

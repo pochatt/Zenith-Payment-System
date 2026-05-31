@@ -90,17 +90,18 @@ export type CaseState = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "ESCALATED";
 /**
  * Request-to-Pay lifecycle state.
  *
- * 旧 `state` (REQUESTED|ATTEMPTED|SETTLED|EXPIRED|FAILED) と
- * 旧 `rtp_status` (CREATED|NOTIFIED|...) を 0025_rtp_consolidate.sql で
- * 単一 `state` 列に統合した結果の唯一の状態集合。
- *  - CREATED      : RtpRequests 行作成、銀行未通知
- *  - NOTIFIED     : 支払銀行への rtp-notify 成功
- *  - ACCEPTED     : 支払人が承認（TX 作成前の過渡状態 — 通常は経由しない）
- *  - TX_CREATED   : 紐づき送金 Transaction 作成済み
- *  - COMPLETED    : 送金 SETTLED 確定
- *  - DECLINED     : 支払人が拒否
- *  - EXPIRED      : expires_at 経過
- *  - FAILED       : max_attempts 超過などのその他失敗
+ * The single, authoritative set of states that resulted from consolidating the
+ * old `state` (REQUESTED|ATTEMPTED|SETTLED|EXPIRED|FAILED) and the old
+ * `rtp_status` (CREATED|NOTIFIED|...) into a single `state` column in
+ * 0025_rtp_consolidate.sql.
+ *  - CREATED      : RtpRequests row created, bank not yet notified
+ *  - NOTIFIED     : rtp-notify to the payer bank succeeded
+ *  - ACCEPTED     : payer approved (transient state before TX creation — usually not passed through)
+ *  - TX_CREATED   : the linked transfer Transaction has been created
+ *  - COMPLETED    : the transfer is confirmed SETTLED
+ *  - DECLINED     : payer declined
+ *  - EXPIRED      : expires_at elapsed
+ *  - FAILED       : other failure such as exceeding max_attempts
  */
 export type RtpState =
   | "CREATED"
@@ -212,8 +213,8 @@ export type NotificationStatus = "PENDING" | "DELIVERED" | "FAILED" | "EXPIRED";
 export type QrType = "STATIC" | "DYNAMIC";
 
 /**
- * @deprecated Use {@link RtpState} instead. 0025_rtp_consolidate.sql で
- * RtpRequests.state と rtp_status を統合した結果、RtpState が唯一の状態集合。
+ * @deprecated Use {@link RtpState} instead. As a result of consolidating
+ * RtpRequests.state and rtp_status in 0025_rtp_consolidate.sql, RtpState is the only state set.
  */
 export type RtpFullStatus = RtpState;
 

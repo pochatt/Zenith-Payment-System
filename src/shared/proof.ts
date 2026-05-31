@@ -34,7 +34,7 @@ export async function createProof(
   custodyDetail?: CustodyDetail
 ): Promise<BankProofRef> {
   const proofId = `PROOF-${newUUID()}`;
-  // 証憑の内容ダイジェスト（監査用）
+  // Content digest of the voucher (for auditing)
   await sha256hex(`${issuerBankId}:${proofType}:${txid}:${amount}:${proofId}`);
 
   const proof: BankProofRef = {

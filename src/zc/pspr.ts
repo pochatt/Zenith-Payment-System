@@ -12,7 +12,7 @@ import {
 } from "../shared/entity_state_log";
 
 /**
- * PSPR 登録（POST /api/pspr/register）
+ * PSPR registration (POST /api/pspr/register)
  */
 export async function registerPspr(
   db: D1Database,
@@ -49,7 +49,7 @@ export async function registerPspr(
 }
 
 /**
- * PSPR 照会
+ * PSPR query
  */
 export async function lookupPspr(db: D1Database, psprRef: string): Promise<PsprRegistryRow | null> {
   const row = await db
@@ -79,7 +79,7 @@ export async function lookupPspr(db: D1Database, psprRef: string): Promise<PsprR
 }
 
 /**
- * PSPR 失効
+ * PSPR revocation
  */
 export async function revokePspr(db: D1Database, psprRef: string): Promise<void> {
   const cur = await db

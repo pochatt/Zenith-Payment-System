@@ -20,7 +20,7 @@ export interface OpenCaseInput {
 }
 
 /**
- * CASE起票
+ * Open a case
  */
 export async function openCase(db: D1Database, input: OpenCaseInput): Promise<string> {
   const caseId = `CASE-${newUUID()}`;
@@ -58,7 +58,7 @@ export async function openCase(db: D1Database, input: OpenCaseInput): Promise<st
     }),
   ]);
 
-  // Transactions に case_id を紐付け
+  // Associate case_id with Transactions
   if (input.related_txid) {
     await db
       .prepare(`UPDATE Transactions SET case_id=?, updated_at=? WHERE txid=?`)
@@ -70,7 +70,7 @@ export async function openCase(db: D1Database, input: OpenCaseInput): Promise<st
 }
 
 /**
- * CASE状態更新
+ * Update CASE state
  */
 export async function updateCase(
   db: D1Database,
@@ -101,7 +101,7 @@ export async function updateCase(
 }
 
 /**
- * CASE を解決状態へ自動遷移させる（状態進展による自動収束）
+ * Automatically transition the CASE to a resolved state (automatic convergence driven by state progression)
  */
 export async function autoResolveCaseForTx(db: D1Database, txid: string): Promise<void> {
   const row = await db

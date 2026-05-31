@@ -20,8 +20,8 @@ import { signPayload } from "../shared/hmac";
 // requestAccountVerification
 // ---------------------------------------------------------------------------
 /**
- * 口座確認リクエストを作成し、対象銀行の ZC Ingress API を呼ぶ。
- * キャッシュヒット時は銀行呼び出しをスキップする。
+ * Creates an account verification request and calls the target bank's ZC Ingress API.
+ * Skips the bank call on a cache hit.
  *
  * @returns verification_id
  */
@@ -32,17 +32,17 @@ export async function requestAccountVerification(
 ): Promise<string> {
   const now = nowISO();
 
-  // 冪等チェック: 同じ idempotency_key が存在すれば既存 ID を返す
+  // Idempotency check: if the same idempotency_key exists, return the existing ID
   const existing = await db
     .prepare(`SELECT verification_id FROM AccountVerifications WHERE idempotency_key = ?`)
     .bind(req.idempotency_key)
     .first<{ verification_id: string }>();
   if (existing) return existing.verification_id;
 
-  // アカウントハッシュ（account_id をそのままハッシュ相当として使用）
+  // Account hash (account_id is used directly as the hash equivalent)
   const accountHash = req.target_account_id;
 
-  // キャッシュ確認: 同一 (target_bank_id, target_account_hash) で有効期限内のレコードを探す
+  // Cache check: look for a record with the same (target_bank_id, target_account_hash) that is still within its validity period
   const cached = await db
     .prepare(
       `SELECT * FROM AccountVerifications
@@ -58,7 +58,7 @@ export async function requestAccountVerification(
     .first<AccountVerificationRow>();
 
   if (cached) {
-    // キャッシュヒット: 新しいレコードをキャッシュ結果でコピー作成
+    // Cache hit: create a new record by copying the cached result
     const newId = req.verification_id;
     await db
       .prepare(
@@ -87,7 +87,7 @@ export async function requestAccountVerification(
     return newId;
   }
 
-  // 新規レコードを PENDING で挿入
+  // Insert a new record as PENDING
   await db
     .prepare(
       `INSERT OR IGNORE INTO AccountVerifications
@@ -107,7 +107,7 @@ export async function requestAccountVerification(
     )
     .run();
 
-  // 対象銀行の ZC Ingress API を呼ぶ
+  // Call the target bank's ZC Ingress API
   const bankPayload: BankAccountVerifyRequest = {
     verification_id: req.verification_id,
     account_id: req.target_account_id,
@@ -161,7 +161,7 @@ export async function requestAccountVerification(
 // handleBankVerifyResponse
 // ---------------------------------------------------------------------------
 /**
- * 銀行からの口座確認レスポンスを AccountVerifications テーブルに反映する。
+ * Apply the bank's account verification response to the AccountVerifications table.
  */
 export async function handleBankVerifyResponse(
   db: D1Database,
@@ -174,7 +174,7 @@ export async function handleBankVerifyResponse(
   let targetAccountName: string | null = null;
   let matchScore: number | null = null;
   let fraudWarning = 0;
-  // キャッシュ有効期限: MATCHED/UNMATCHED は 24 時間、NOT_FOUND は 1 時間
+  // Cache expiry: 24 hours for MATCHED/UNMATCHED, 1 hour for NOT_FOUND
   let cachedUntil: string | null = null;
 
   switch (response.result) {
@@ -227,7 +227,7 @@ export async function handleBankVerifyResponse(
 // ---------------------------------------------------------------------------
 // getVerificationResult
 // ---------------------------------------------------------------------------
-/** verification_id に紐付く AccountVerifications レコードを返す。 */
+/** Return the AccountVerifications record associated with verification_id. */
 export async function getVerificationResult(
   db: D1Database,
   verificationId: string
@@ -242,8 +242,8 @@ export async function getVerificationResult(
 // batchVerify
 // ---------------------------------------------------------------------------
 /**
- * 複数口座の確認を一括で実行する。
- * 各アイテムに対して requestAccountVerification を呼び、結果配列を返す。
+ * Verify multiple accounts in a single batch.
+ * Calls requestAccountVerification for each item and returns an array of results.
  */
 export async function batchVerify(
   db: D1Database,
@@ -287,9 +287,9 @@ export async function batchVerify(
 }
 
 // ---------------------------------------------------------------------------
-// ヘルパー
+// Helpers
 // ---------------------------------------------------------------------------
-/** ISO 文字列に秒数を加算して新しい ISO 文字列を返す */
+/** Add seconds to an ISO string and return a new ISO string */
 function addSeconds(isoStr: string, secs: number): string {
   return new Date(new Date(isoStr).getTime() + secs * 1000).toISOString();
 }

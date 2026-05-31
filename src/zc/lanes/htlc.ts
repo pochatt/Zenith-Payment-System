@@ -33,7 +33,7 @@ import { newDecisionProofRef, newFinalityLogRef } from "../../shared/proof";
 import { sha256hex } from "../../shared/hmac";
 import { getOrCreateDnsCycle } from "../dns";
 
-/** ランダムなpreimageを生成（32バイト hex） */
+/** Generate a random preimage (32-byte hex) */
 async function generatePreimage(): Promise<string> {
   const buf = new Uint8Array(32);
   crypto.getRandomValues(buf);
@@ -43,9 +43,9 @@ async function generatePreimage(): Promise<string> {
 }
 
 /**
- * HTLC新規作成。
- * Transactions は RECEIVED で挿入し、HtlcContracts は HTLC_RECEIVED で並走させる。
- * lockHtlc キュー処理で RECEIVED → HTLC_LOCKED に遷移する。
+ * Create a new HTLC.
+ * Inserts Transactions as RECEIVED and runs HtlcContracts in parallel as HTLC_RECEIVED.
+ * The lockHtlc queue processing transitions RECEIVED → HTLC_LOCKED.
  */
 export async function createHtlc(
   req: HtlcCreateRequest,
@@ -62,7 +62,7 @@ export async function createHtlc(
   const now = nowISO();
   const txid = `TX-HTLC-${req.htlc_id}`;
 
-  // ハッシュを自動生成（ユーザーがhashlockを指定していない場合）
+  // Auto-generate the hash (when the user has not specified a hashlock)
   let hashlock = req.hashlock;
   let preimage: string | undefined;
   if (!hashlock || hashlock === "") {
@@ -70,8 +70,8 @@ export async function createHtlc(
     hashlock = await sha256hex(preimage);
   }
 
-  // canonical RECEIVED 入口で Transactions を作成。HtlcContracts INSERT と
-  // FinalityLog INSERT を同一 db.batch() に統合し、「行はあるが audit が無い」窓を消す。
+  // Create Transactions at the canonical RECEIVED entry point. Combine the HtlcContracts INSERT and
+  // FinalityLog INSERT into the same db.batch() to eliminate the "row exists but audit is missing" window.
   await insertTxWithLog(db, {
     txid,
     lane: "HTLC",
@@ -106,7 +106,7 @@ export async function createHtlc(
     ],
   });
 
-  // 非同期で H予約 & Lock
+  // Asynchronously H-reserve & Lock
   await env.QUEUE.send({
     type: "ZC_BANK_RESERVE",
     payload: { htlc_id: req.htlc_id, txid },
@@ -119,9 +119,9 @@ export async function createHtlc(
 }
 
 /**
- * HTLC Lock処理（QueueConsumerから呼ばれる）
+ * HTLC Lock processing (called from the QueueConsumer)
  * Transactions: RECEIVED → HTLC_LOCKED
- * HtlcContracts: HTLC_RECEIVED → HTLC_LOCKED（バッチ内 side update で同期）
+ * HtlcContracts: HTLC_RECEIVED → HTLC_LOCKED (synced via side update within the batch)
  */
 export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
   const db = env.DB;
@@ -133,13 +133,13 @@ export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
     .first<HtlcContractRow>();
   if (!htlc || htlc.state !== "HTLC_RECEIVED") return;
 
-  // timelock が過去なら即キャンセル（銀行サスペンス未作成のため env 不要）
+  // Cancel immediately if the timelock is in the past (bank suspense not yet created, so env is not needed)
   if (new Date(htlc.timelock) < new Date(now)) {
     await cancelHtlc(htlcId, htlc.txid, "TIMELOCK_EXPIRED", db);
     return;
   }
 
-  // H予約 (ZC側)
+  // H reservation (ZC side)
   const hResult = await reserveH(htlc.payer_bank_id, htlc.txid, htlc.amount_value, db);
   if (!hResult.ok) {
     await cancelHtlc(htlcId, htlc.txid, hResult.reason, db);
@@ -147,7 +147,7 @@ export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
   }
   const reservationId = hResult.reservation_id;
 
-  // Bank側 reserve-funds
+  // Bank-side reserve-funds
   const txForPayer = await db
     .prepare(`SELECT payer_account_hash FROM Transactions WHERE txid = ?`)
     .bind(htlc.txid)
@@ -189,7 +189,7 @@ export async function lockHtlc(htlcId: string, env: Env): Promise<void> {
 }
 
 /**
- * preimage 提示: HTLC_LOCKED → HTLC_FULFILL_REQUESTED → DECIDED_TO_SETTLE
+ * preimage presentation: HTLC_LOCKED → HTLC_FULFILL_REQUESTED → DECIDED_TO_SETTLE
  */
 export async function claimHtlc(
   req: HtlcClaimRequest,
@@ -223,7 +223,7 @@ export async function claimHtlc(
       reason_code: "INVALID_STATE",
     };
 
-  // timelock 期限確認
+  // Check timelock expiry
   if (new Date(htlc.timelock) < new Date(now)) {
     await cancelHtlc(req.htlc_id, htlc.txid, "TIMELOCK_EXPIRED", db, env);
     return {
@@ -234,10 +234,10 @@ export async function claimHtlc(
     };
   }
 
-  // preimage 検証
+  // preimage validation
   const computedHash = await sha256hex(req.preimage);
   if (computedHash !== htlc.hashlock) {
-    // 検証失敗を FinalityLog に記録（実 preimage は出さない）
+    // Record the validation failure in the FinalityLog (do not emit the actual preimage)
     await writeFinalityLog(db, {
       txid: htlc.txid,
       event_type: "HtlcClaimRejected",
@@ -258,7 +258,7 @@ export async function claimHtlc(
     };
   }
 
-  // timelockが翌日以降 → AML recheck
+  // timelock is on or after the next day → AML recheck
   const endOfToday = new Date(now.slice(0, 10) + "T23:59:59Z");
   const needsRecheck = new Date(htlc.timelock) > endOfToday;
   if (needsRecheck) {
@@ -306,7 +306,7 @@ export async function claimHtlc(
     };
   }
 
-  // dns_cycle_id 設定
+  // set dns_cycle_id
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();
   const dnsCycleId = await getOrCreateDnsCycle(db, now);
@@ -333,7 +333,7 @@ export async function claimHtlc(
     ],
   });
   if (decided.applied) {
-    // lockH は DECIDED_TO_SETTLE 遷移成功後に実行
+    // lockH runs after a successful DECIDED_TO_SETTLE transition
     const txForH = await db
       .prepare(`SELECT h_reservation_id FROM Transactions WHERE txid = ?`)
       .bind(htlc.txid)
@@ -343,7 +343,7 @@ export async function claimHtlc(
     }
   }
 
-  // HTLC は timelock があるため、キューの遅延リスクを避けて同期的に debit を実行する
+  // Since HTLC has a timelock, run debit synchronously to avoid queue delay risk
   const bankResp = await callBankExecuteDebit(
     htlc.payer_bank_id,
     {
@@ -411,7 +411,7 @@ export async function cancelHtlc(
     return;
   }
 
-  // HTLC_LOCKED 時点で reserve-funds 済みのため、銀行側の別段預金も解放する。
+  // Since reserve-funds is already done at HTLC_LOCKED, also release the bank-side segregated deposit (suspense).
   if (env) {
     const htlcRow = await db
       .prepare(`SELECT payer_bank_id FROM HtlcContracts WHERE htlc_id = ?`)

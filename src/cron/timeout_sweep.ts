@@ -4,8 +4,8 @@
  * cleans up stalled GTID transactions.
  * @module cron/timeout_sweep
  */
-// - Vault TTL切れ → 論理削除（is_evicted = 1）
-// - GT_DECIDED_TO_SETTLE スタック GTID 回収
+// - Vault TTL expired → logical delete (is_evicted = 1)
+// - Recover GTIDs stuck in GT_DECIDED_TO_SETTLE
 import type { Env } from "../types";
 import { nowISO } from "../types";
 import { suspendTx, checkAndFinalizeGtid } from "../zc/orchestrator";
@@ -14,18 +14,18 @@ import { cancelHtlc } from "../zc/lanes/htlc";
 import { expireRtpRequests } from "../zc/rtp";
 import { retryPendingNotifications } from "../zc/credit_notify";
 
-// タイムアウト閾値（秒）
-const T2_EXEC_TIMEOUT_SEC = 300; // 5分: DECIDED_TO_SETTLE → PAYER_EXEC_CONFIRMED
-const T3_PAYEE_TIMEOUT_SEC = 300; // 5分: PAYER_EXEC_CONFIRMED → PAYEE_EXEC_CONFIRMED
+// Timeout threshold (seconds)
+const T2_EXEC_TIMEOUT_SEC = 300; // 5 minutes: DECIDED_TO_SETTLE → PAYER_EXEC_CONFIRMED
+const T3_PAYEE_TIMEOUT_SEC = 300; // 5 minutes: PAYER_EXEC_CONFIRMED → PAYEE_EXEC_CONFIRMED
 
 export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
   const db = env.DB;
   const now = new Date();
   let swept = 0;
 
-  // 1. T2_exec タイムアウト: DECIDED_TO_SETTLE が 5分以上
-  // BULK/DEFERRED は EOD まで DECIDED_TO_SETTLE で待機する設計のため除外
-  // HTLC は timelock で独立管理されるため除外（claimHtlc は同期 debit で完結）
+  // 1. T2_exec timeout: DECIDED_TO_SETTLE for 5 minutes or more
+  // Exclude BULK/DEFERRED since by design they wait in DECIDED_TO_SETTLE until EOD
+  // Exclude HTLC since it is managed independently by timelock (claimHtlc completes with a synchronous debit)
   const t2Deadline = new Date(now.getTime() - T2_EXEC_TIMEOUT_SEC * 1000).toISOString();
   const decidedOld = await db
     .prepare(
@@ -39,7 +39,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     swept++;
   }
 
-  // 2. T3_payee_proof タイムアウト: PAYER_EXEC_CONFIRMED が 5分以上
+  // 2. T3_payee_proof timeout: PAYER_EXEC_CONFIRMED for 5 minutes or more
   const t3Deadline = new Date(now.getTime() - T3_PAYEE_TIMEOUT_SEC * 1000).toISOString();
   const payerConfOld = await db
     .prepare(`SELECT txid FROM Transactions WHERE state='PAYER_EXEC_CONFIRMED' AND updated_at < ?`)
@@ -51,7 +51,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     swept++;
   }
 
-  // 3. FAILED_EXECUTION 遷移: SUSPENDED が expires_at を超えた場合
+  // 3. FAILED_EXECUTION transition: when SUSPENDED exceeds expires_at
   const failedOld = await db
     .prepare(
       `SELECT txid FROM Transactions WHERE state='SUSPENDED' AND expires_at IS NOT NULL AND expires_at < ?`
@@ -77,7 +77,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     if (applied) swept++;
   }
 
-  // 4. HTLC timelock 期限切れ
+  // 4. HTLC timelock expired
   const expiredHtlcs = await db
     .prepare(
       `SELECT htlc_id, txid FROM HtlcContracts WHERE state IN ('HTLC_RECEIVED','HTLC_LOCKED') AND timelock < ?`
@@ -86,26 +86,26 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     .all<{ htlc_id: string; txid: string }>();
 
   for (const htlc of expiredHtlcs.results) {
-    // env を渡して銀行側サスペンスの解放通知も行う（HTLC_LOCKED 時は reserve-funds が実行済み）
+    // Pass env to also send the bank-side suspense release notification (reserve-funds has already run when HTLC_LOCKED)
     await cancelHtlc(htlc.htlc_id, htlc.txid, "TIMELOCK_EXPIRED", db, env);
     swept++;
   }
 
-  // 5. Vault TTL 切れ（論理削除）
+  // 5. Vault TTL expired (logical delete)
   const expiredVault = await db
     .prepare(`UPDATE Vault SET is_evicted=1 WHERE is_evicted=0 AND expires_at < ?`)
     .bind(now.toISOString())
     .run();
   swept += expiredVault.meta.changes ?? 0;
 
-  // 6. RTP 期限切れ（state 列のみを更新）
+  // 6. RTP expired (update only the state column)
   swept += await expireRtpRequests(db);
 
-  // 7. 未配信通知リトライ
+  // 7. Retry undelivered notifications
   await retryPendingNotifications(db, env);
 
-  // 8. GT_DECIDED_TO_SETTLE スタック GTID 回収（10分以上更新なし）
-  // leg 実行失敗や 0-legs で checkAndFinalizeGtid が呼ばれなかった GTID を救済
+  // 8. Recover GTIDs stuck in GT_DECIDED_TO_SETTLE (no update for 10 minutes or more)
+  // Rescue GTIDs for which checkAndFinalizeGtid was not called due to leg execution failure or 0-legs
   const gtStuckDeadline = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
   const stuckGtids = await db
     .prepare(
@@ -119,7 +119,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     swept++;
   }
 
-  // 9. GT_SETTLED 済みなのに GtidLegs.state が未更新のレコードを一括修正
+  // 9. Bulk-fix records that are already GT_SETTLED but whose GtidLegs.state is not updated
   const legFixResult = await db
     .prepare(`
     UPDATE GtidLegs SET state='LEG_SETTLED', updated_at=?

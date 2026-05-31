@@ -15,8 +15,8 @@ export function processBulkIngress(req: PaymentInitiatedRequest) {
 }
 
 /**
- * Bulkバッチ処理: RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE
- * EODバッチまたはウィンドウ締切Cronから呼ばれる
+ * Bulk batch processing: RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE
+ * Called from the EOD batch or the window cutoff cron
  */
 export async function advanceBulk(txid: string, env: Env): Promise<void> {
   const db = env.DB;
@@ -31,7 +31,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   });
   if (!precheck.applied) return;
 
-  // payer_bank_id / amount / account_hash は PRECHECKED 後にまとめて読む
+  // payer_bank_id / amount / account_hash are read together after PRECHECKED
   const tx = await db
     .prepare(
       `SELECT payer_bank_id, amount_value, payer_account_hash FROM Transactions WHERE txid = ?`
@@ -40,7 +40,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
     .first<{ payer_bank_id: string; amount_value: number; payer_account_hash: string }>();
   if (!tx) return;
 
-  // 2. H予約
+  // 2. H-reserve
   const hResult = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db);
   if (!hResult.ok) {
     await cancelInFlightTx(db, {
@@ -63,8 +63,8 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   });
   if (!reserved.applied) return;
 
-  // 3. 銀行側 reserve-funds（SuspenseDetails RESERVED 作成）
-  // execute-debit が RESERVATION_NOT_FOUND で失敗するのを防ぐ
+  // 3. Bank-side reserve-funds (create SuspenseDetails RESERVED)
+  // Prevents execute-debit from failing with RESERVATION_NOT_FOUND
   const reserveResult = await callBankReserveFunds(
     tx.payer_bank_id,
     {
@@ -84,8 +84,8 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 4. Decision確定（Bulkは即時Decision）
-  // dns_cycle_id は kickDns が一元管理するため、ここでは設定しない
+  // 4. Finalize Decision (Bulk decides immediately)
+  // dns_cycle_id is managed centrally by kickDns, so do not set it here
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();
   const decided = await transitionWithLog(db, {
@@ -101,8 +101,8 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   });
   if (!decided.applied) return;
 
-  // DECIDED_TO_SETTLE で lockH（H_RESERVED → LOCKED）
+  // lockH on DECIDED_TO_SETTLE (H_RESERVED → LOCKED)
   await lockH(reservationId, db);
 
-  // DNS Execution はEOD時に一括実行（キューには積まない）
+  // DNS Execution runs in bulk at EOD (not enqueued)
 }

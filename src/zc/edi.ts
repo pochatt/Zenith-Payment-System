@@ -6,7 +6,7 @@
 import type { EdiRecordRow, EdiRegisterRequest, EdiLineItem, EdiFilterCondition } from "../types";
 
 // ---------------------------------------------------------------------------
-// EDI登録: EdiRecords テーブルへ INSERT
+// EDI registration: INSERT into the EdiRecords table
 // ---------------------------------------------------------------------------
 export async function registerEdiRecord(
   db: D1Database,
@@ -62,7 +62,7 @@ export async function registerEdiRecord(
 }
 
 // ---------------------------------------------------------------------------
-// txid からEDIレコード取得
+// Get the EDI record from txid
 // ---------------------------------------------------------------------------
 export async function getEdiByTxid(db: D1Database, txid: string): Promise<EdiRecordRow | null> {
   const row = await db
@@ -75,7 +75,7 @@ export async function getEdiByTxid(db: D1Database, txid: string): Promise<EdiRec
 }
 
 // ---------------------------------------------------------------------------
-// edi_ref からEDIレコード取得
+// Get the EDI record from edi_ref
 // ---------------------------------------------------------------------------
 export async function getEdiByRef(db: D1Database, ediRef: string): Promise<EdiRecordRow | null> {
   const row = await db
@@ -88,7 +88,7 @@ export async function getEdiByRef(db: D1Database, ediRef: string): Promise<EdiRe
 }
 
 // ---------------------------------------------------------------------------
-// Transactions の edi_ref カラムを更新 (送金時にEDIを紐付ける)
+// Update the edi_ref column of Transactions (links the EDI at transfer time)
 // ---------------------------------------------------------------------------
 export async function linkEdiToTransaction(
   db: D1Database,
@@ -104,7 +104,7 @@ export async function linkEdiToTransaction(
 }
 
 // ---------------------------------------------------------------------------
-// EDI filter: EdiFilterCondition に基づいて EdiRecords + Transactions を結合クエリ
+// EDI filter: join-query EdiRecords + Transactions based on EdiFilterCondition
 // ---------------------------------------------------------------------------
 export async function filterByEdiCondition(
   db: D1Database,
@@ -144,9 +144,9 @@ export async function filterByEdiCondition(
       predicate = `${fieldExpr} LIKE ?`;
       break;
     case "REGEX":
-      // SQLite has no native REGEX; LIKE では正規表現は動作しない。
-      // アプリケーション層で正規表現マッチングを行い、SQL はワイルドカード近似で候補を絞る。
-      // 完全な REGEX サポートは将来 SQLite 拡張で対応予定。
+      // SQLite has no native REGEX; regular expressions do not work with LIKE.
+      // Perform regex matching in the application layer, and use SQL wildcard approximation to narrow candidates.
+      // Full REGEX support is planned via a future SQLite extension.
       predicate = `${fieldExpr} LIKE ?`;
       break;
     case "GT":
@@ -181,7 +181,7 @@ export async function filterByEdiCondition(
   const result = await db.prepare(sql).bind(bankId, bindValue).all<EdiRecordRow>();
   let rows = result.results ?? [];
 
-  // REGEX: SQL LIKE で候補を絞った後、アプリケーション層で正規表現マッチングを適用
+  // REGEX: after narrowing candidates with SQL LIKE, apply regex matching in the application layer
   if (condition.operator === "REGEX") {
     try {
       const re = new RegExp(condition.value);
@@ -190,7 +190,7 @@ export async function filterByEdiCondition(
         return typeof val === "string" && re.test(val);
       });
     } catch {
-      // 無効な正規表現の場合はフォールバック結果をそのまま返す
+      // For an invalid regular expression, return the fallback result as is
     }
   }
 
@@ -198,7 +198,7 @@ export async function filterByEdiCondition(
 }
 
 // ---------------------------------------------------------------------------
-// line_items_json のパース/シリアライズ
+// Parse/serialize line_items_json
 // ---------------------------------------------------------------------------
 export function parseLineItems(json: string): EdiLineItem[] {
   try {

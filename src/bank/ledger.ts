@@ -9,7 +9,7 @@ import { newUUID } from "../shared/idempotency";
 
 export interface JournalEntry {
   accountId: string;
-  amount: number; // 符号付き（正=増加、負=減少）
+  amount: number; // Signed (positive = increase, negative = decrease)
   txType: string; // TRANSFER|RESERVE|EXECUTE|CREDIT|INTEREST|CASH|CORRECTION
   txid?: string;
   description?: string;
@@ -23,13 +23,13 @@ export interface JournalGroupInput {
 }
 
 /**
- * 仕訳グループを一括 INSERT する。
- * ゼロサム検証: SUM(amount) が 0 でなければ例外
+ * Batch INSERT a journal entry group.
+ * Zero-sum validation: throws if SUM(amount) != 0
  */
 export async function insertJournalGroup(db: D1Database, input: JournalGroupInput): Promise<void> {
   const sum = input.entries.reduce((s, e) => s + e.amount, 0);
   if (sum !== 0) {
-    // ゼロサム違反はシステムバグなので例外を投げる
+    // A zero-sum violation is a system bug, so throw an exception
     throw new Error(`Zero-sum violation: SUM(amount)=${sum} for group=${input.txGroupId}`);
   }
 
@@ -58,7 +58,7 @@ export async function insertJournalGroup(db: D1Database, input: JournalGroupInpu
 }
 
 /**
- * 口座残高を計算する（仕訳の合計）
+ * Compute the account balance (sum of journal entries)
  */
 export async function calcBalance(accountId: string, db: D1Database): Promise<number> {
   const row = await db
@@ -69,7 +69,7 @@ export async function calcBalance(accountId: string, db: D1Database): Promise<nu
 }
 
 /**
- * 日次残高スナップショットを保存
+ * Save the daily balance snapshot
  */
 export async function snapshotDailyBalance(
   accountId: string,
@@ -87,7 +87,7 @@ export async function snapshotDailyBalance(
 }
 
 /**
- * 利息計算と仕訳（30/360）
+ * Interest calculation and journal entry (30/360)
  * annual_rate: 0.001 = 0.1%
  */
 export async function applyDailyInterest(
@@ -111,8 +111,8 @@ export async function applyDailyInterest(
 
   if (!rate || accounts.results.length === 0) return;
 
-  const dailyRate = rate.annual_rate / 360; // 30/360 ルール
-  const reAcctId = retainedEarningsAccountId(bankId); // 利益剰余金口座（別段預金を汚さない）
+  const dailyRate = rate.annual_rate / 360; // 30/360 rule
+  const reAcctId = retainedEarningsAccountId(bankId); // Retained earnings account (does not pollute the segregated deposit (suspense))
 
   for (const acc of accounts.results) {
     const balance = await calcBalance(acc.account_id, db);
@@ -120,7 +120,7 @@ export async function applyDailyInterest(
     const interest = Math.floor(balance * dailyRate);
     if (interest === 0) continue;
 
-    // ゼロサム: 利益剰余金(負=費用) と 普通預金(正=負債)
+    // Zero-sum: retained earnings (negative = expense) and ordinary deposit (positive = liability)
     await insertJournalGroup(db, {
       bankId,
       txGroupId: `INT-${snapshotDate}-${acc.account_id}`,
@@ -144,7 +144,7 @@ export async function applyDailyInterest(
 }
 
 /**
- * ゼロサム検証（全仕訳の合計）
+ * Zero-sum validation (sum of all journal entries)
  */
 export async function verifyZeroSum(bankId: string, db: D1Database): Promise<boolean> {
   const row = await db

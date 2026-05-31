@@ -6,9 +6,9 @@ import type { RtpRequestRow, RtpState } from "../../../types";
 import { nowISO } from "../../../types";
 
 /**
- * RTP照会
+ * RTP lookup
  *
- * 0025_rtp_consolidate.sql 以降は state 列が唯一の状態源なので、そのまま返す。
+ * Since 0025_rtp_consolidate.sql the state column is the sole source of state, so return it as-is.
  */
 export async function getRtpStatus(
   db: D1Database,
@@ -27,9 +27,9 @@ export async function getRtpStatus(
 }
 
 /**
- * RTPタイムアウト処理（cron用）
+ * RTP timeout processing (for cron)
  *
- * expires_at < now かつ CREATED / NOTIFIED 状態の RTP を EXPIRED にする。
+ * Sets RTPs with expires_at < now and in CREATED / NOTIFIED state to EXPIRED.
  */
 export async function expireRtpRequests(db: D1Database): Promise<number> {
   const now = nowISO();

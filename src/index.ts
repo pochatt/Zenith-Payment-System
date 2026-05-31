@@ -45,7 +45,7 @@ import {
   handleAccountNameLookup,
   handleSimSetup,
   handleSimSetupOneBank,
-  // HTLC Auth（受取側起点オーソリ型）
+  // HTLC Auth (payee-initiated authorization type)
   handleHtlcAuthRequest,
   handleHtlcAuthApprove,
   handleHtlcAuthDecline,
@@ -113,7 +113,7 @@ import {
   respondToApproval,
 } from "./bank/filter";
 
-// ZC TxEventLog 照会
+// ZC TxEventLog query
 import { getTxEvents, getRecentEvents, getGtidEvents } from "./zc/trace";
 
 // ZC Finality chain verification & explainability
@@ -202,7 +202,7 @@ function withCors(resp: Response): Response {
 
 export default {
   // =========================================================================
-  // HTTP fetch ハンドラー
+  // HTTP fetch handler
   // =========================================================================
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -247,18 +247,18 @@ export default {
       // ZC Core API: /api/...
       // -----------------------------------------------------------------------
       if (path.startsWith("/api/")) {
-        // API認証: X-Api-Key ヘッダーまたは Authorization: Bearer ヘッダーを検証
-        // モック環境では ZC_HMAC_SECRET を API キーとして使用
+        // API authentication: validate the X-Api-Key header or the Authorization: Bearer header
+        // In the mock environment, use ZC_HMAC_SECRET as the API key
         const apiKey =
           req.headers.get("X-Api-Key") ?? req.headers.get("Authorization")?.replace("Bearer ", "");
 
-        // API キー検証（優先）
+        // API key validation (preferred)
         const hasValidApiKey = env.ZC_HMAC_SECRET && apiKey === env.ZC_HMAC_SECRET;
 
-        // 同一オリジンからのブラウザUI呼び出しを許可（開発・デモ用）
-        // Origin ヘッダーはブラウザが付与する。同一オリジンのリクエストでは Origin が
-        // 省略されるか、リクエストURLのオリジンと一致する。Refererと異なりパスを含まないため
-        // "https://attacker.com/dashboard" のようなバイパスが不可能。
+        // Allow browser UI calls from the same origin (for development and demo)
+        // The Origin header is set by the browser. For same-origin requests, Origin is
+        // either omitted or matches the request URL's origin. Unlike Referer, it contains no path, so
+        // a bypass like "https://attacker.com/dashboard" is impossible.
         const origin = req.headers.get("Origin");
         const requestOrigin = new URL(req.url).origin;
         const isFromSameOrigin = !origin || origin === requestOrigin;
@@ -313,7 +313,7 @@ export default {
   },
 
   // =========================================================================
-  // Cloudflare Queues コンシューマー
+  // Cloudflare Queues consumer
   // =========================================================================
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
@@ -360,7 +360,7 @@ export default {
 };
 
 // =========================================================================
-// ZC ルーティング
+// ZC routing
 // =========================================================================
 async function handleZcApi(
   req: Request,
@@ -368,7 +368,7 @@ async function handleZcApi(
   method: string,
   env: Env
 ): Promise<Response> {
-  // GET /api/openapi/*.yaml — API仕様書
+  // GET /api/openapi/*.yaml -- API specification
   const yamlHeaders = {
     "Content-Type": "text/yaml; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
@@ -384,11 +384,11 @@ async function handleZcApi(
   // POST /api/htlc/create
   if (method === "POST" && path === "/api/htlc/create") return handlePostHtlcCreate(req, env);
 
-  // POST /api/htlc/auth-request  受取側オーソリリクエスト
+  // POST /api/htlc/auth-request  receiving-side authorization request
   if (method === "POST" && path === "/api/htlc/auth-request")
     return handleHtlcAuthRequest(req, env);
 
-  // GET /api/htlc/auth-requests  オーソリリクエスト一覧
+  // GET /api/htlc/auth-requests  authorization request list
   if (method === "GET" && path === "/api/htlc/auth-requests")
     return handleListHtlcAuthRequests(req, env);
 
@@ -419,7 +419,7 @@ async function handleZcApi(
     return stub.fetch(new Request("http://do/reserve", { method: "POST", body: await req.text() }));
   }
 
-  // GET/POST/DELETE /api/htlc/auth-whitelist  ホワイトリスト管理
+  // GET/POST/DELETE /api/htlc/auth-whitelist  whitelist management
   if (path === "/api/htlc/auth-whitelist") {
     if (method === "GET") return handleListAuthWhitelist(env);
     if (method === "POST") return handleRegisterAuthWhitelist(req, env);
@@ -428,17 +428,17 @@ async function handleZcApi(
   if (method === "DELETE" && whitelistDeleteMatch)
     return handleRevokeAuthWhitelist(whitelistDeleteMatch[1]!, req, env);
 
-  // GET /api/htlc/auth/:auth_id  オーソリリクエスト詳細
+  // GET /api/htlc/auth/:auth_id  authorization request detail
   const htlcAuthGetMatch = path.match(/^\/api\/htlc\/auth\/([^/]+)$/);
   if (method === "GET" && htlcAuthGetMatch)
     return handleGetHtlcAuthRequest(htlcAuthGetMatch[1]!, env);
 
-  // POST /api/htlc/auth/:auth_id/approve  送金側承認
+  // POST /api/htlc/auth/:auth_id/approve  originating-side approval
   const htlcAuthApproveMatch = path.match(/^\/api\/htlc\/auth\/([^/]+)\/approve$/);
   if (method === "POST" && htlcAuthApproveMatch)
     return handleHtlcAuthApprove(req, htlcAuthApproveMatch[1]!, env);
 
-  // POST /api/htlc/auth/:auth_id/decline  送金側拒否
+  // POST /api/htlc/auth/:auth_id/decline  originating-side decline
   const htlcAuthDeclineMatch = path.match(/^\/api\/htlc\/auth\/([^/]+)\/decline$/);
   if (method === "POST" && htlcAuthDeclineMatch)
     return handleHtlcAuthDecline(req, htlcAuthDeclineMatch[1]!, env);
@@ -447,30 +447,30 @@ async function handleZcApi(
   const htlcClaimMatch = path.match(/^\/api\/htlc\/([^/]+)\/claim$/);
   if (method === "POST" && htlcClaimMatch) return handlePostHtlcClaim(req, htlcClaimMatch[1]!, env);
 
-  // POST /api/htlc/:htlc_id/capture  受取側キャプチャ（オーソリ型）
+  // POST /api/htlc/:htlc_id/capture  receiving-side capture (authorization type)
   const htlcCaptureMatch = path.match(/^\/api\/htlc\/([^/]+)\/capture$/);
   if (method === "POST" && htlcCaptureMatch)
     return handleHtlcCapture(req, htlcCaptureMatch[1]!, env);
 
-  // POST /api/htlc/:htlc_id/void  ボイド（オーソリ取消）
+  // POST /api/htlc/:htlc_id/void  void (authorization cancellation)
   const htlcVoidMatch = path.match(/^\/api\/htlc\/([^/]+)\/void$/);
   if (method === "POST" && htlcVoidMatch) return handleHtlcVoid(req, htlcVoidMatch[1]!, env);
 
-  // GET /api/htlc  (一覧)
+  // GET /api/htlc  (list)
   if (method === "GET" && path === "/api/htlc") return handleListHtlcs(req, env);
 
   // GET /api/htlc/:htlc_id
   const htlcGetMatch = path.match(/^\/api\/htlc\/([^/]+)$/);
   if (method === "GET" && htlcGetMatch) return handleGetHtlc(htlcGetMatch[1]!, env);
 
-  // GET /api/transactions/:txid/events  取引イベントログ
+  // GET /api/transactions/:txid/events  transaction event log
   const txEventsMatch = path.match(/^\/api\/transactions\/([^/]+)\/events$/);
   if (method === "GET" && txEventsMatch) {
     const events = await getTxEvents(txEventsMatch[1]!, env.DB);
     return json(200, { txid: txEventsMatch[1], events });
   }
 
-  // GET /api/transactions/:txid/explain  人間可読な状態遷移の説明 + 改ざん検知
+  // GET /api/transactions/:txid/explain  human-readable explanation of state transitions + tampering detection
   const txExplainMatch = path.match(/^\/api\/transactions\/([^/]+)\/explain$/);
   if (method === "GET" && txExplainMatch) {
     const result = await explainTransaction(env.DB, txExplainMatch[1]!);
@@ -478,7 +478,7 @@ async function handleZcApi(
     return json(200, result);
   }
 
-  // GET /api/transactions/:txid/story  ナラティブ + Mermaid シーケンス図 + 健全性
+  // GET /api/transactions/:txid/story  narrative + Mermaid sequence diagram + soundness
   const txStoryMatch = path.match(/^\/api\/transactions\/([^/]+)\/story$/);
   if (method === "GET" && txStoryMatch) {
     const result = await narrateTransaction(env.DB, txStoryMatch[1]!);
@@ -486,7 +486,7 @@ async function handleZcApi(
     return json(200, result);
   }
 
-  // GET /api/transactions/:txid/postcard.svg  生成された金継ぎ風 SVG（画像）
+  // GET /api/transactions/:txid/postcard.svg  generated kintsugi-style SVG (image)
   const txPostcardSvgMatch = path.match(/^\/api\/transactions\/([^/]+)\/postcard\.svg$/);
   if (method === "GET" && txPostcardSvgMatch) {
     const exp = await explainTransaction(env.DB, txPostcardSvgMatch[1]!);
@@ -501,7 +501,7 @@ async function handleZcApi(
     });
   }
 
-  // GET /api/transactions/:txid/postcard  SVG + 三行詩 + モチーフのメタ
+  // GET /api/transactions/:txid/postcard  SVG + three-line poem + motif metadata
   const txPostcardMatch = path.match(/^\/api\/transactions\/([^/]+)\/postcard$/);
   if (method === "GET" && txPostcardMatch) {
     const exp = await explainTransaction(env.DB, txPostcardMatch[1]!);
@@ -510,21 +510,21 @@ async function handleZcApi(
     return json(200, card);
   }
 
-  // GET /api/transactions/:txid/verify  FinalityLog ハッシュチェーン検証
+  // GET /api/transactions/:txid/verify  FinalityLog hash chain validation
   const txVerifyMatch = path.match(/^\/api\/transactions\/([^/]+)\/verify$/);
   if (method === "GET" && txVerifyMatch) {
     const result = await verifyChain(env.DB, txVerifyMatch[1]!);
     return json(200, result);
   }
 
-  // GET /api/gtid/:gtid/verify  GTID 用ハッシュチェーン検証
+  // GET /api/gtid/:gtid/verify  hash chain validation for GTID
   const gtidVerifyMatch = path.match(/^\/api\/gtid\/([^/]+)\/verify$/);
   if (method === "GET" && gtidVerifyMatch) {
     const result = await verifyChain(env.DB, gtidVerifyMatch[1]!);
     return json(200, result);
   }
 
-  // GET /api/events  全体イベントログ（最近N件）
+  // GET /api/events  global event log (most recent N entries)
   if (method === "GET" && path === "/api/events") {
     const url = new URL(req.url);
     const limit = parseInt(url.searchParams.get("limit") ?? "100");
@@ -536,10 +536,10 @@ async function handleZcApi(
   // POST /api/gtid/register
   if (method === "POST" && path === "/api/gtid/register") return handlePostGtidRegister(req, env);
 
-  // GET /api/gtid (一覧)
+  // GET /api/gtid (list)
   if (method === "GET" && path === "/api/gtid") return handleListGtids(req, env);
 
-  // GET /api/gtid/:gtid/events  (/events を先にマッチさせる)
+  // GET /api/gtid/:gtid/events  (match /events first)
   const gtidEventsMatch = path.match(/^\/api\/gtid\/([^/]+)\/events$/);
   if (method === "GET" && gtidEventsMatch) {
     const events = await getGtidEvents(gtidEventsMatch[1]!, env.DB);
@@ -550,11 +550,11 @@ async function handleZcApi(
   const gtidMatch = path.match(/^\/api\/gtid\/([^/]+)$/);
   if (method === "GET" && gtidMatch) return handleGetGtid(gtidMatch[1]!, env);
 
-  // GET /api/rtp/incoming?account=XXXXXXXXXX  受信請求一覧（payer側）
+  // GET /api/rtp/incoming?account=XXXXXXXXXX  list of incoming requests (payer side)
   if (method === "GET" && path === "/api/rtp/incoming") {
     const account = new URL(req.url).searchParams.get("account") ?? "";
 
-    // account は bank_id(3) + account_number(7) = 10文字であることを検証
+    // Validate that account is bank_id(3) + account_number(7) = 10 characters
     if (!account || account.length !== 10) {
       return jsonError(
         400,
@@ -565,8 +565,8 @@ async function handleZcApi(
 
     const payerBankId = account.slice(0, 3);
     const now = new Date().toISOString();
-    // 0025_rtp_consolidate.sql で RtpRequestRows を廃止したため、payer 側の受信
-    // 一覧も RtpRequests を直接参照する。
+    // Because 0025_rtp_consolidate.sql removed RtpRequestRows, the payer-side incoming
+    // list also references RtpRequests directly.
     const rows = await env.DB.prepare(`
       SELECT rtp_id, payee_bank_id, payer_bank_id, amount_value, state AS rtp_status,
              payee_name, description, expires_at, notified_at, created_at
@@ -598,8 +598,8 @@ async function handleZcApi(
   if (method === "POST" && resumeNamecheckMatch)
     return handlePostResumeNameCheck(req, resumeNamecheckMatch[1]!, env);
 
-  // POST /api/transfers/:txid/no-debit-proof  H_locked 自動解放（未実行証明・§8.4.1）
-  // 銀行 ingress と同じく X-ZC-Signature を検証する（PayerBank 発の署名付き証明）。
+  // POST /api/transfers/:txid/no-debit-proof  H_locked automatic release (proof-of-non-execution, §8.4.1)
+  // Like the bank ingress, validate X-ZC-Signature (signed proof originating from PayerBank).
   const noDebitMatch = path.match(/^\/api\/transfers\/([^/]+)\/no-debit-proof$/);
   if (method === "POST" && noDebitMatch) {
     const body = (await req.json().catch(() => null)) as {
@@ -623,7 +623,7 @@ async function handleZcApi(
     return json(result.ok ? 200 : 422, result);
   }
 
-  // POST /api/transfers/:txid/h-unlock-authorize  H_locked 運用解放（4 眼・§8.4.1）
+  // POST /api/transfers/:txid/h-unlock-authorize  H_locked operational release (four-eyes, §8.4.1)
   const hUnlockMatch = path.match(/^\/api\/transfers\/([^/]+)\/h-unlock-authorize$/);
   if (method === "POST" && hUnlockMatch) {
     const body = (await req.json().catch(() => null)) as {
@@ -660,8 +660,8 @@ async function handleZcApi(
   const dnsPosMatch = path.match(/^\/api\/dns\/([^/]+)\/position$/);
   if (method === "GET" && dnsPosMatch) return handleGetDnsPosition(dnsPosMatch[1]!, env);
 
-  // GET /api/boj/positions — 各参加行の日銀預け金（BOJ）残高照会（公開API）
-  // 報告書「論点7: 資金清算・決済のあり方」—プレファンドRTGS方式の残高監視
+  // GET /api/boj/positions — query each participating bank's BOJ deposit (BOJ) balance (public API)
+  // Report "Topic 7: How funds settlement and clearing should work" — balance monitoring for the prefunded RTGS scheme
   if (method === "GET" && path === "/api/boj/positions") {
     const positions = await getBojPositions(env.DB);
     return json(200, { positions, as_of: nowISO() });
@@ -680,7 +680,7 @@ async function handleZcApi(
   }
 
   // -----------------------------------------------------------------------
-  // Reversal（救済取引）
+  // Reversal (remedial transaction)
   // -----------------------------------------------------------------------
 
   // POST /api/reversals
@@ -706,7 +706,7 @@ async function handleZcApi(
   }
 
   // -----------------------------------------------------------------------
-  // Circuit Breaker（参加行疎通監視）
+  // Circuit Breaker (participating bank connectivity monitoring)
   // -----------------------------------------------------------------------
 
   // GET /api/circuit-breaker
@@ -758,7 +758,7 @@ async function handleZcApi(
   if (method === "POST" && path === "/api/participants/register")
     return handlePostParticipantRegister(req, env);
 
-  // --- 銀行管理 ---
+  // --- Bank administration ---
   // GET /api/banks
   if (method === "GET" && path === "/api/banks") return handleListBanks(env);
 
@@ -773,7 +773,7 @@ async function handleZcApi(
   const bankAcctsMatch = path.match(/^\/api\/banks\/([^/]+)\/accounts$/);
   if (method === "GET" && bankAcctsMatch) return handleBankAccounts(bankAcctsMatch[1]!, env);
 
-  // GET /api/accounts/:accountId/name  名義照会
+  // GET /api/accounts/:accountId/name  account holder name lookup
   const nameMatch = path.match(/^\/api\/accounts\/([^/]+)\/name$/);
   if (method === "GET" && nameMatch) return handleAccountNameLookup(nameMatch[1]!, env);
 
@@ -884,7 +884,7 @@ async function handleZcApi(
     const result = await processQrPayment(env.DB, body, env);
     if (!result.valid) return jsonError(400, "QR_INVALID", result.error ?? "QR payment failed");
 
-    // QR検証OK → 実際の振込処理を起動
+    // QR validation OK → launch the actual transfer processing
     const qr = result.qrRow!;
     const txid = `TX-${newUUID()}`;
     const zcReq = new Request("http://internal/api/transfers", {
@@ -990,7 +990,7 @@ async function handleZcApi(
 }
 
 // =========================================================================
-// Bank ルーティング  /bank/:bankId/...
+// Bank routing  /bank/:bankId/...
 // =========================================================================
 async function handleBankApi(
   req: Request,
@@ -1008,7 +1008,7 @@ async function handleBankApi(
   if (method === "POST" && ingressMatch)
     return handleBankIngressHttp(req, bankId, ingressMatch[1]!, env);
 
-  // 顧客API
+  // Customer API
   if (method === "GET" && sub === "/v1/me/accounts") return handleGetAccounts(req, bankId, env);
 
   const balanceMatch = sub.match(/^\/v1\/me\/accounts\/([^/]+)\/balance$/);
@@ -1025,7 +1025,7 @@ async function handleBankApi(
   if (method === "GET" && txStatusMatch)
     return handleGetTransferStatus(req, bankId, txStatusMatch[1]!, env);
 
-  // 行員API
+  // Teller API
   if (method === "POST" && sub === "/v1/teller/cash/deposit")
     return handleCashDeposit(req, bankId, env);
 
@@ -1059,7 +1059,7 @@ async function handleBankApi(
   if (method === "GET" && sub === "/v1/teller/batch/status")
     return handleBatchStatus(req, bankId, env);
 
-  // 着金フィルタ管理 API
+  // Incoming credit filter management API
   if (sub === "/v1/filters") {
     if (method === "GET") {
       const url = new URL(req.url);
@@ -1091,7 +1091,7 @@ async function handleBankApi(
     }
   }
 
-  // 着金承認 API（顧客）
+  // Incoming credit approval API (customer)
   if (method === "GET" && sub === "/v1/me/approvals") {
     const url = new URL(req.url);
     const approvals = await listApprovalRequests(
@@ -1111,9 +1111,9 @@ async function handleBankApi(
     const result = await respondToApproval(bankId, approvalRespondMatch[1]!, body, env.DB);
     if (!result.ok) return jsonError(400, result.reason ?? "ERROR", result.reason ?? "failed");
 
-    // 承認された場合: ZC に resume_credit を通知（Queue 経由）
+    // If approved: notify ZC of resume_credit (via Queue)
     if (body.approved && result.txid) {
-      // 対象取引の payee 情報を取得
+      // Fetch the payee information for the target transaction
       const txInfo = await env.DB.prepare(
         `SELECT payee_bank_id, payee_account_hash FROM Transactions WHERE txid=?`
       )
@@ -1136,7 +1136,7 @@ async function handleBankApi(
     return json(200, { result: body.approved ? "APPROVED" : "REJECTED", txid: result.txid });
   }
 
-  // BankAuditLog 照会（行員）
+  // BankAuditLog lookup (teller)
   if (method === "GET" && sub === "/v1/teller/audit-log") {
     const url = new URL(req.url);
     const txid = url.searchParams.get("txid");
@@ -1167,7 +1167,7 @@ async function handleInternal(
   method: string,
   env: Env
 ): Promise<Response> {
-  // CRON_SECRET 検証
+  // CRON_SECRET validation
   const cronSecret = req.headers.get("X-Cron-Secret");
   if (cronSecret !== env.CRON_SECRET) return jsonError(403, "FORBIDDEN", "X-Cron-Secret required");
 
@@ -1208,7 +1208,7 @@ async function handleInternal(
     return json(200, { result: "SETTLED", cycle_id: body.cycle_id });
   }
 
-  // 各銀行の日銀預け金勘定（BOJ）残高照会
+  // Query each bank's BOJ deposit account (BOJ) balance
   if (method === "GET" && path === "/internal/boj-positions") {
     const positions = await getBojPositions(env.DB);
     return json(200, { positions });
@@ -1223,7 +1223,7 @@ async function handleInternal(
   }
 
   // POST /internal/transfers/:txid/resume-credit
-  // 顧客が着金承認後、銀行が ZC にクレジット処理の再開を通知する
+  // After the customer approves the incoming credit, the bank notifies ZC to resume credit processing
   const resumeCreditMatch = path.match(/^\/internal\/transfers\/([^/]+)\/resume-credit$/);
   if (method === "POST" && resumeCreditMatch) {
     const txid = resumeCreditMatch[1]!;

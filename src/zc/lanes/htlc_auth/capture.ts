@@ -9,8 +9,8 @@ import { logTxEvent } from "../../trace";
 import { claimHtlc, cancelHtlc } from "../htlc";
 
 /**
- * 受取側（加盟店）がキャプチャを実行する。
- * Vault から preimage を取得して内部的に claimHtlc を呼び出す。
+ * The payee (merchant) performs the capture.
+ * Retrieves the preimage from the Vault and calls claimHtlc internally.
  * POST /api/htlc/:htlc_id/capture
  */
 export async function captureHtlcAuth(
@@ -31,7 +31,7 @@ export async function captureHtlcAuth(
     return { result: "ERROR", reason_code: "INVALID_AUTH_STATE" };
   }
 
-  // キャプチャ期限チェック
+  // Capture deadline check
   if (new Date(authReq.capture_expires_at) <= new Date(now)) {
     await db
       .prepare(`UPDATE HtlcAuthRequests SET status='EXPIRED', updated_at=? WHERE auth_id=?`)
@@ -40,7 +40,7 @@ export async function captureHtlcAuth(
     return { result: "ERROR", reason_code: "CAPTURE_EXPIRED" };
   }
 
-  // Vault から preimage を取得
+  // Retrieve the preimage from the Vault
   const vault = await db
     .prepare(`SELECT payload_json FROM Vault WHERE vault_ref=? AND is_evicted=0`)
     .bind(authReq.vault_ref)
@@ -50,7 +50,7 @@ export async function captureHtlcAuth(
 
   const { preimage } = JSON.parse(vault.payload_json) as { preimage: string };
 
-  // claimHtlc を内部呼び出し（preimage を提示して DECIDED_TO_SETTLE へ）
+  // Call claimHtlc internally (present the preimage to move to DECIDED_TO_SETTLE)
   const claimResult = await claimHtlc(
     {
       htlc_id: htlcId,
@@ -64,10 +64,10 @@ export async function captureHtlcAuth(
     return { result: "ERROR", reason_code: claimResult.reason_code ?? "CLAIM_FAILED" };
   }
 
-  // Vault の preimage を使用済みにする
+  // Mark the Vault preimage as used
   await db.prepare(`UPDATE Vault SET is_evicted=1 WHERE vault_ref=?`).bind(authReq.vault_ref).run();
 
-  // HtlcAuthRequests を CAPTURED に更新
+  // Update HtlcAuthRequests to CAPTURED
   await db
     .prepare(
       `UPDATE HtlcAuthRequests
@@ -91,7 +91,7 @@ export async function captureHtlcAuth(
 }
 
 /**
- * 受取側または送金側がオーソリを取り消す。
+ * The beneficiary or originator voids the authorization.
  * POST /api/htlc/:htlc_id/void
  */
 export async function voidHtlcAuth(
@@ -112,11 +112,11 @@ export async function voidHtlcAuth(
     return { result: "ERROR", reason_code: "INVALID_AUTH_STATE" };
   }
 
-  // cancelHtlc を内部呼び出し（H 解放 + 銀行側別段解放）
-  // env を渡して callBankReleaseReserve を実行し、承認済み別段預金を解放する
+  // Internally call cancelHtlc (H release + bank-side segregated deposit release)
+  // Pass env and run callBankReleaseReserve to release the approved segregated deposit
   await cancelHtlc(htlcId, authReq.txid!, req.reason ?? "VOID_REQUESTED", db, env);
 
-  // Vault の preimage を無効化
+  // Invalidate the preimage in the Vault
   if (authReq.vault_ref) {
     await db
       .prepare(`UPDATE Vault SET is_evicted=1 WHERE vault_ref=?`)
@@ -124,7 +124,7 @@ export async function voidHtlcAuth(
       .run();
   }
 
-  // HtlcAuthRequests を VOIDED に更新
+  // Update HtlcAuthRequests to VOIDED
   await db
     .prepare(
       `UPDATE HtlcAuthRequests

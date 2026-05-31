@@ -26,7 +26,7 @@ import { insertJournalGroup, calcBalance } from "../bank/ledger";
 import { releaseH } from "./h_model";
 
 // ---------------------------------------------------------------------------
-// DNS Kick: 当日サイクルを OPEN → KICKED
+// DNS Kick: move the current-day cycle OPEN → KICKED
 // ---------------------------------------------------------------------------
 export async function kickDns(
   businessDate: string,
@@ -39,7 +39,7 @@ export async function kickDns(
   const db = env.DB;
   const now = nowISO();
 
-  // 当日 OPEN サイクルを取得（後着サイクル含む）。なければ新規作成
+  // Get the current-day OPEN cycle (including late-arriving cycles). If none exists, create a new one
   let cycle = await db
     .prepare(
       `SELECT * FROM DnsCycles WHERE business_date = ? AND state = 'OPEN' ORDER BY created_at ASC LIMIT 1`
@@ -63,7 +63,7 @@ export async function kickDns(
       .bind(businessDate)
       .first<DnsCycleRow>();
     if (!cycle) {
-      // 当日サイクルは既に KICKED か SETTLED → early return
+      // The current-day cycle is already KICKED or SETTLED → early return
       const existing = await db
         .prepare(`SELECT * FROM DnsCycles WHERE business_date = ? ORDER BY created_at DESC LIMIT 1`)
         .bind(businessDate)
@@ -74,10 +74,10 @@ export async function kickDns(
     }
   }
 
-  // 未割当TX を先にサイクルに紐付け → その後ネットポジション計算
-  // HIGH_VALUE は即時 RTGS 清算のため DNS Kick の対象外とする
-  // DATE フィルタ廃止: dns_cycle_id=NULL の全未決TX（前日繰越分を含む）を収容する
-  //   advanceBulk は dns_cycle_id を設定しないため、kickDns が唯一の割当機関
+  // Associate unassigned TX with the cycle first → then compute net positions
+  // HIGH_VALUE settles immediately via RTGS, so it is excluded from DNS Kick
+  // DATE filter removed: include all pending TX with dns_cycle_id=NULL (including carryover from the previous day)
+  //   advanceBulk does not set dns_cycle_id, so kickDns is the only assigning authority
   await db
     .prepare(
       `UPDATE Transactions SET dns_cycle_id = ?
@@ -88,7 +88,7 @@ export async function kickDns(
     .bind(cycle.cycle_id)
     .run();
 
-  // ネットポジション計算（割当後の全TX対象）
+  // Compute net positions (targeting all TX after assignment)
   const txRows = await db
     .prepare(
       `SELECT payer_bank_id, payee_bank_id, amount_value
@@ -98,8 +98,8 @@ export async function kickDns(
     .bind(cycle.cycle_id)
     .all<{ payer_bank_id: string; payee_bank_id: string; amount_value: number }>();
 
-  // 単一パスで net / grossSend / grossReceive を同時集計（O(n) / O(participants)）。
-  // 以前は filter+reduce で O(n*participants) かつ中間配列を毎回確保していた。
+  // Aggregate net / grossSend / grossReceive together in a single pass (O(n) / O(participants)).
+  // Previously it used filter+reduce, which was O(n*participants) and allocated intermediate arrays each time.
   const netPositions: Record<string, number> = {};
   const grossSendByBank: Record<string, number> = {};
   const grossReceiveByBank: Record<string, number> = {};
@@ -113,7 +113,7 @@ export async function kickDns(
     grossReceiveByBank[payee] = (grossReceiveByBank[payee] ?? 0) + amt;
   }
 
-  // DnsNetPositions に保存
+  // Save to DnsNetPositions
   const netStmts: ReturnType<typeof db.prepare>[] = [];
   for (const bankId in netPositions) {
     netStmts.push(
@@ -133,7 +133,7 @@ export async function kickDns(
     );
   }
 
-  // サイクルを KICKED に更新
+  // Update cycle to KICKED
   await db.batch([
     ...netStmts,
     db
@@ -158,7 +158,7 @@ export async function kickDns(
 }
 
 // ---------------------------------------------------------------------------
-// DNS 清算完了: KICKED → SETTLED
+// DNS settlement complete: KICKED → SETTLED
 // ---------------------------------------------------------------------------
 export async function settleDns(cycleId: string, env: Env): Promise<void> {
   const db = env.DB;
@@ -171,9 +171,9 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
   if (!cycle || cycle.state !== "KICKED") return;
 
   // ---------------------------------------------------------------------------
-  // 事前BOJ残高充足確認: ネット支払超行の BOJ 残高を検証（プレファンドRTGS要件）
-  // 報告書「論点7: 資金清算・決済のあり方」—プレファンドRTGS方式では
-  // 清算前に各参加行の事前拠出残高が支払超額をカバーできるか確認する
+  // Pre-check BOJ balance sufficiency: validate BOJ balance of net payer banks (prefunded RTGS requirement)
+  // Report "Issue 7: Approach to fund settlement and clearing" — under the prefunded RTGS scheme,
+  // before settlement, verify that each participant bank's prefunded balance covers its payment excess
   // ---------------------------------------------------------------------------
   const debitPositions = await db
     .prepare(
@@ -185,22 +185,22 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
   const bojShortfalls: Array<{ bank_id: string; shortfall: number }> = [];
   for (const row of debitPositions.results) {
     const bojBalance = await calcBalance(`${row.bank_id}-BOJ`, db);
-    const requiredDebit = -row.net_position; // net_position < 0 なので正の値
+    const requiredDebit = -row.net_position; // positive value since net_position < 0
 
-    // NOTE: BOJ残高チェックロジック（偽陽性検査済み）
-    // 符号規則: bojBalance は負値で表現される（負債会計: 日銀当座預金は負資産）
-    //   例: 預金残高 100万円 → bojBalance = -1,000,000
-    // 不足判定: bojBalance + requiredDebit > 0
-    //   例1: bojBalance=-1,000,000, requiredDebit=900,000 → -100,000 ≤ 0 → OK
-    //   例2: bojBalance=-100,000, requiredDebit=900,000 → 800,000 > 0 → 不足 ✓
-    // このロジックは正しい。算出結果が直感的でないため、明示的に記述。
+    // NOTE: BOJ balance check logic (false-positive verified)
+    // Sign convention: bojBalance is expressed as a negative value (liability accounting: BOJ current deposit is a negative asset)
+    //   e.g.: deposit balance 1,000,000 yen → bojBalance = -1,000,000
+    // Insufficiency check: bojBalance + requiredDebit > 0
+    //   e.g. 1: bojBalance=-1,000,000, requiredDebit=900,000 → -100,000 ≤ 0 → OK
+    //   e.g. 2: bojBalance=-100,000, requiredDebit=900,000 → 800,000 > 0 → insufficient ✓
+    // This logic is correct. Written out explicitly because the computed result is not intuitive.
     if (bojBalance + requiredDebit > 0) {
       bojShortfalls.push({ bank_id: row.bank_id, shortfall: bojBalance + requiredDebit });
     }
   }
 
   if (bojShortfalls.length > 0) {
-    // BOJ残高不足: サイクルを HOLD_ACTIVE に遷移して手動対処を待つ
+    // BOJ balance insufficient: transition cycle to HOLD_ACTIVE and await manual handling
     await db
       .prepare(
         `UPDATE DnsCycles SET state='HOLD_ACTIVE', hold_reason=?, updated_at=? WHERE cycle_id=?`
@@ -227,7 +227,7 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
     return;
   }
 
-  // 各銀行の別段預金を清算
+  // Settle each bank's segregated deposit (suspense)
   const participants = await db
     .prepare(`SELECT DISTINCT bank_id FROM DnsNetPositions WHERE cycle_id = ?`)
     .bind(cycleId)
@@ -237,19 +237,19 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
     await settleSuspenseForDns(bank_id, cycleId, db);
   }
 
-  // DNS清算仕訳: 支払側の別段(PAY)を gross_send 分だけ ZC清算勘定へ振替
+  // DNS settlement journal entry: transfer the payer-side segregated deposit (PAY) to the ZC settlement account by gross_send
   //
-  //   支払行 (gross_send > 0):
+  //   Payer bank (gross_send > 0):
   //     Suspense(−gross_send) / ZCS(+gross_send) = 0 ✓
-  //     → 別段が解消され、ZCへの支払義務が計上される
+  //     → segregated deposit is cleared, and the payment obligation to ZC is recorded
   //
-  //   受取行 (gross_send = 0):
-  //     仕訳不要 — Hard Landing + execute-credit 時点で
-  //     ZCS(−) / Suspense(+) → Suspense(−) / Customer(+) が完結済み
+  //   Payee bank (gross_send = 0):
+  //     no journal entry needed — at Hard Landing + execute-credit,
+  //     ZCS(−) / Suspense(+) → Suspense(−) / Customer(+) is already completed
   //
-  //   両建て行 (gross_send > 0 かつ gross_receive > 0):
-  //     送金分だけ Suspense(−gross_send) / ZCS(+gross_send)
-  //     受取分は Hard Landing 済みのため ZCS残高は net に収束する
+  //   Two-sided bank (gross_send > 0 and gross_receive > 0):
+  //     for the send portion only, Suspense(−gross_send) / ZCS(+gross_send)
+  //     since the receive portion is already Hard Landed, the ZCS balance converges to net
   const netPositions = await db
     .prepare(
       `SELECT bank_id, net_position, gross_send FROM DnsNetPositions WHERE cycle_id = ? AND is_settled = 0`
@@ -290,11 +290,11 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
 
   // ---------------------------------------------------------------------------
   // Phase 2: BOJ Settlement
-  //   ZCS残高 = gross_send − gross_receive = −net_position
-  //   仕訳: ZCS(−zcsBalance) / BOJ_CURRENT(+zcsBalance) ← ゼロサム ✓
-  //   ・支払超行 (zcsBalance>0): ZCS(−X) / BOJ(+X) [ZCS義務解消、BOJ当座減]
-  //   ・受取超行 (zcsBalance<0): ZCS(+Y) / BOJ(−Y) [ZCS権利解消、BOJ当座増]
-  //   全銀行の BOJ 合計 = Σ(gross_send − gross_receive) = 0 ✓
+  //   ZCS balance = gross_send − gross_receive = −net_position
+  //   Journal entry: ZCS(−zcsBalance) / BOJ_CURRENT(+zcsBalance) ← zero-sum ✓
+  //   - Payer-excess bank (zcsBalance>0): ZCS(−X) / BOJ(+X) [ZCS obligation cleared, BOJ current decreased]
+  //   - Payee-excess bank (zcsBalance<0): ZCS(+Y) / BOJ(−Y) [ZCS claim cleared, BOJ current increased]
+  //   Total BOJ across all banks = Σ(gross_send − gross_receive) = 0 ✓
   // ---------------------------------------------------------------------------
   const allPositions = await db
     .prepare(
@@ -303,7 +303,7 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
     .bind(cycleId)
     .all<{ bank_id: string; net_position: number; gross_send: number; gross_receive: number }>();
 
-  // A. ZCSゼロクリア仕訳（各銀行）
+  // A. ZCS zero-clear journal entry (each bank)
   for (const row of allPositions.results) {
     const zcsBalance = row.gross_send - row.gross_receive; // = −net_position
     if (zcsBalance === 0) continue;
@@ -328,8 +328,8 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
     });
   }
 
-  // B. BOJ Settlement GTID（状態機械を経由せず GT_SETTLED で直接生成）
-  //    net payer行 → PAYER leg、net receiver行 → PAYEE leg
+  // B. BOJ Settlement GTID (generated directly at GT_SETTLED without going through the state machine)
+  //    net payer bank → PAYER leg, net receiver bank → PAYEE leg
   const payerBanks = allPositions.results.filter((r) => r.net_position < 0);
   const payeeBanks = allPositions.results.filter((r) => r.net_position > 0);
   const totalPayerAmt = payerBanks.reduce((s, r) => s + -r.net_position, 0);
@@ -401,13 +401,13 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
   }
   // ---------------------------------------------------------------------------
 
-  // サイクルを SETTLED に
+  // Update cycle to SETTLED
   await db
     .prepare(`UPDATE DnsCycles SET state='SETTLED', settled_at=? WHERE cycle_id=?`)
     .bind(now, cycleId)
     .run();
 
-  // DNS_CYCLE_SETTLED でH予約を解放（仕様: DNS決済完了後に解放）
+  // Release H-reserve at DNS_CYCLE_SETTLED (spec: release after DNS settlement completes)
   const hReservations = await db
     .prepare(
       `SELECT h.reservation_id FROM HReservations h
@@ -429,8 +429,8 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
     txid_or_gtid: cycleId,
   });
 
-  // BULK Execution: DNS清算完了を契機に DECIDED_TO_SETTLE な BULK TX をキューへ投入
-  // （EOD経由・直接呼び出しのどちらでも確実に実行されるようここに配置）
+  // BULK Execution: triggered by DNS settlement completion, enqueue BULK TX in DECIDED_TO_SETTLE
+  // (placed here so it runs reliably whether invoked via EOD or directly)
   const bulkSettleReady = await db
     .prepare(
       `SELECT txid, payer_bank_id, payee_bank_id, amount_value, decision_proof_ref
@@ -465,18 +465,18 @@ export async function settleDns(cycleId: string, env: Env): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// 当日 DNS サイクルを取得または作成（共有ヘルパー: 各レーンが dns_cycle_id を設定するために使用）
+// Get or create the current-day DNS cycle (shared helper: used by each lane to set dns_cycle_id)
 // ---------------------------------------------------------------------------
 export async function getOrCreateDnsCycle(db: D1Database, now: string): Promise<string> {
   const today = now.slice(0, 10);
-  // OPEN サイクルのみ返す（KICKED は既にネッティング計算済みのため新規TX割当不可）
+  // Return only OPEN cycles (KICKED has already been netted, so no new TX can be assigned)
   const existing = await db
     .prepare(`SELECT cycle_id FROM DnsCycles WHERE business_date = ? AND state = 'OPEN'`)
     .bind(today)
     .first<{ cycle_id: string }>();
   if (existing) return existing.cycle_id;
 
-  // 標準サイクル ID で INSERT を試みる
+  // Attempt INSERT with the standard cycle ID
   const cycleId = `DNS-${today}`;
   const result = await db
     .prepare(
@@ -488,8 +488,8 @@ export async function getOrCreateDnsCycle(db: D1Database, now: string): Promise<
 
   if ((result.meta.changes ?? 0) > 0) return cycleId;
 
-  // INSERT IGNORE 失敗 = 当日サイクルが既に SETTLED
-  // → 後着 TX 用に新規 OPEN サイクルを suffix 付きで作成
+  // INSERT IGNORE failure = the current-day cycle is already SETTLED
+  // → create a new OPEN cycle with a suffix for late-arriving TX
   const lateId = `DNS-${today}-${now.slice(11, 19).replace(/:/g, "")}`;
   await db
     .prepare(
@@ -515,7 +515,7 @@ export async function holdDns(businessDate: string, reason: string, env: Env): P
     .bind(reason, businessDate)
     .run();
 
-  // 後着サイクル（suffix付き cycle_id）に対応するため DB から実際の cycle_id を取得
+  // Fetch the actual cycle_id from the DB to handle late-arriving cycles (suffixed cycle_id)
   const updated = await db
     .prepare(
       `SELECT cycle_id FROM DnsCycles WHERE business_date=? AND state='HOLD_ACTIVE' ORDER BY created_at DESC LIMIT 1`
@@ -535,7 +535,7 @@ export async function holdDns(businessDate: string, reason: string, env: Env): P
 }
 
 // ---------------------------------------------------------------------------
-// DNS ステータス照会
+// DNS status query
 // ---------------------------------------------------------------------------
 export async function getDnsStatus(
   businessDate: string,
@@ -581,8 +581,8 @@ export async function getDnsNetPositions(
 }
 
 // ---------------------------------------------------------------------------
-// 各銀行の日銀預け金勘定（BOJ）残高照会
-// account_type='BOJ' の口座に積み上がった仕訳を集計する
+// Query each bank's BOJ deposit account (BOJ) balance
+// Aggregate the journal entries accumulated in accounts where account_type='BOJ'
 // ---------------------------------------------------------------------------
 export async function getBojPositions(
   db: D1Database

@@ -7,9 +7,9 @@ import { nowISO } from "../../../types";
 import { insertTxWithLog } from "../_helpers";
 
 /**
- * RTP応答処理（ACCEPTED / REJECTED）
+ * RTP response processing (ACCEPTED / REJECTED)
  *
- * 支払人が承認した場合、RTP 紐づき送金取引を自動生成して ZC に投入する。
+ * If the payer approves, automatically generate the RTP-linked transfer transaction and submit it to ZC.
  */
 export async function respondToRtp(
   db: D1Database,
@@ -37,7 +37,7 @@ export async function respondToRtp(
     return { result: "NOT_FOUND" };
   }
 
-  // 既に応答済みの場合
+  // Case where already responded
   const alreadyDone: RtpRequestRow["state"][] = [
     "ACCEPTED",
     "DECLINED",
@@ -50,7 +50,7 @@ export async function respondToRtp(
     return { result: "ALREADY_RESPONDED", txid: rtp.linked_txid ?? undefined };
   }
 
-  // 期限チェック
+  // Expiry check
   if (new Date(rtp.expires_at) <= new Date(now)) {
     await db
       .prepare(`
@@ -75,14 +75,14 @@ export async function respondToRtp(
     return { result: "DECLINED" };
   }
 
-  // ACCEPTED: 送金取引を自動生成
+  // ACCEPTED: automatically generate the transfer transaction
   const linkedTxid = `TX-${crypto.randomUUID()}`;
 
-  // 送金 Transaction 作成 + FinalityLog + RtpRequests の TX_CREATED 化を
-  // 1 つの db.batch() に統合する。旧実装は INSERT/UPDATE をバッチ、FinalityLog を別 await
-  // していたため「Transactions 行はあるが RtpAccepted ログが残らない」窓が存在した。
-  // insertTxWithLog は ALLOWED_ENTRY_STATES = ['RECEIVED', ...] を強制するので、
-  // RTP は canonical な RECEIVED 入口で他レーンと合流する。
+  // Combine creating the transfer Transaction + FinalityLog + transitioning RtpRequests to TX_CREATED
+  // into a single db.batch(). The old implementation batched INSERT/UPDATE but awaited FinalityLog separately,
+  // so there was a window where "the Transactions row exists but the RtpAccepted log is missing".
+  // insertTxWithLog enforces ALLOWED_ENTRY_STATES = ['RECEIVED', ...], so
+  // RTP joins the other lanes at the canonical RECEIVED entry point.
   await insertTxWithLog(db, {
     txid: linkedTxid,
     lane: "RTP",
@@ -108,7 +108,7 @@ export async function respondToRtp(
     ],
   });
 
-  // オーケストレーターへ送信（STANDARD フローで精算処理を進める）
+  // Send to the orchestrator (advance settlement processing in the STANDARD flow)
   await env.QUEUE.send({
     type: "ZC_STATE_ADVANCE",
     payload: { txid: linkedTxid, action: "ADVANCE_STANDARD" },

@@ -11,8 +11,8 @@ import type {
 } from "../types";
 
 // ---------------------------------------------------------------------------
-// プロキシ登録 (電話番号/メール/マイナンバー → 口座)
-// 重複登録は既存を更新 (INSERT OR REPLACE)
+// Proxy registration (phone number/email/My Number → account)
+// Duplicate registration updates the existing record (INSERT OR REPLACE)
 // ---------------------------------------------------------------------------
 export async function registerProxy(
   db: D1Database,
@@ -66,7 +66,7 @@ export async function registerProxy(
       .run();
   }
 
-  // 更新の場合は DB から正しい registered_at を取得する
+  // On update, fetch the correct registered_at from the DB
   const saved = await db
     .prepare(`SELECT registered_at FROM ProxyDirectory WHERE proxy_id = ?`)
     .bind(proxyId)
@@ -89,7 +89,7 @@ export async function registerProxy(
 }
 
 // ---------------------------------------------------------------------------
-// プロキシ解決 (エイリアス → bank_id + account_id)
+// Proxy resolution (alias → bank_id + account_id)
 // ---------------------------------------------------------------------------
 export async function resolveProxy(
   db: D1Database,
@@ -118,7 +118,7 @@ export async function resolveProxy(
 }
 
 // ---------------------------------------------------------------------------
-// プロキシ無効化
+// Proxy deactivation
 // ---------------------------------------------------------------------------
 export async function deactivateProxy(db: D1Database, proxyId: string): Promise<void> {
   const now = new Date().toISOString();
@@ -131,7 +131,7 @@ export async function deactivateProxy(db: D1Database, proxyId: string): Promise<
 }
 
 // ---------------------------------------------------------------------------
-// 口座のプロキシ一覧取得
+// Get the list of proxies for an account
 // ---------------------------------------------------------------------------
 export async function listProxiesForAccount(
   db: D1Database,
