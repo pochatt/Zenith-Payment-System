@@ -63,7 +63,7 @@ export async function verifySignature(
   secret: string
 ): Promise<boolean> {
   const expected = await signPayload(payload, secret);
-  // Timing attack mitigation: always compare even if lengths differ
+  // Timing-attack countermeasure: always compare even when lengths differ
   if (expected.length !== signature.length) return false;
   // Hex strings are ASCII, so charCodeAt comparison is constant-time without
   // needing a TextEncoder allocation per call.

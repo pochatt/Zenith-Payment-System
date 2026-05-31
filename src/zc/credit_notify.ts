@@ -11,8 +11,8 @@ import { newUUID } from "../shared/idempotency";
 // createCreditNotification
 // ---------------------------------------------------------------------------
 /**
- * CreditNotifications レコードをcreateする。
- * status = PENDING、delivery_attempts = 0、max_attempts = 5。
+ * Creates a CreditNotifications record.
+ * status = PENDING, delivery_attempts = 0, max_attempts = 5.
  *
  * @returns notification_id
  */
@@ -49,7 +49,7 @@ export async function createCreditNotification(
       purpose,
       ediSummary,
       now,
-      now // First delivery immediate
+      now // First attempt is delivered immediately
     )
     .run();
 
@@ -60,10 +60,10 @@ export async function createCreditNotification(
 // deliverNotification
 // ---------------------------------------------------------------------------
 /**
- * 指定された通知を payee bankの credit-notify endpointに配信する。
- * 成功: status = DELIVERED
- * 失敗: delivery_attempts < max_attempts なら RETRY に遷移し next_retry_at をset
- *       delivery_attempts >= max_attempts なら FAILED
+ * Delivers the specified notification to the payee bank's credit-notify endpoint.
+ * Success: status = DELIVERED
+ * Failure: if delivery_attempts < max_attempts, transition to RETRY and set next_retry_at
+ *          if delivery_attempts >= max_attempts, FAILED
  */
 export async function deliverNotification(
   db: D1Database,
@@ -83,7 +83,7 @@ export async function deliverNotification(
   }
 
   if (notif.status === "DELIVERED" || notif.status === "FAILED") {
-    // idempotent: skip if terminal state
+    // Idempotent: skip if in a terminal state
     return;
   }
 
@@ -92,8 +92,8 @@ export async function deliverNotification(
 
   const idemKey = `CN-${notif.notification_id}-${newAttempts}`;
 
-  // Call handleBankIngress directly as BankCreditNotifyIngressRequest
-  // (Same-Worker: works even if env.BANK_BASE_URL empty)
+  // Call handleBankIngress directly as a BankCreditNotifyIngressRequest
+  // (intra-Worker call: works even if env.BANK_BASE_URL is empty)
   const ingressPayload = {
     request_id: idemKey,
     notification_id: notif.notification_id,
@@ -136,7 +136,7 @@ export async function deliverNotification(
     return;
   }
 
-  // Delivery failure: retry schedule or FAILED
+  // Delivery failure: schedule a retry or FAILED
   if (newAttempts >= notif.max_attempts) {
     await db
       .prepare(
@@ -164,7 +164,7 @@ export async function deliverNotification(
 // retryPendingNotifications
 // ---------------------------------------------------------------------------
 /**
- * cron から呼ばれる。next_retry_at <= now の PENDING / RETRY 通知を再配信する。
+ * Called from cron. Redelivers PENDING / RETRY notifications where next_retry_at <= now.
  */
 export async function retryPendingNotifications(db: D1Database, env: Env): Promise<void> {
   const now = nowISO();
@@ -192,7 +192,7 @@ export async function retryPendingNotifications(db: D1Database, env: Env): Promi
 // ---------------------------------------------------------------------------
 // getNotificationStatus
 // ---------------------------------------------------------------------------
-/** Return CreditNotifications linked to notification_id */
+/** Return the CreditNotifications record associated with notification_id. */
 export async function getNotificationStatus(
   db: D1Database,
   notificationId: string
@@ -207,12 +207,12 @@ export async function getNotificationStatus(
 // Helpers
 // ---------------------------------------------------------------------------
 /**
- * 試行回数に応じた指数バックオフで次回再試行時刻を計算する。
+ * Compute the next retry time using exponential backoff based on the attempt count.
  * attempt 1: +30s
  * attempt 2: +2m (120s)
  * attempt 3: +10m (600s)
  * attempt 4: +1h (3600s)
- * attempt 5+: +1h (3600s) — max_attempts に達する前に FAILED になる
+ * attempt 5+: +1h (3600s) — becomes FAILED before reaching max_attempts
  */
 function calcNextRetryAt(nowStr: string, attempt: number): string {
   const backoffSeconds: Record<number, number> = {

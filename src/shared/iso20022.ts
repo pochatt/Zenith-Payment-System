@@ -42,13 +42,13 @@ const ZENGIN_RECORD_LENGTH = 120;
 
 /** Zengin account type code to ISO 20022 account type label mapping. */
 const ZENGIN_ACCOUNT_TYPE_LABEL: Record<string, string> = {
-  "1": "SAVINGS", // Savings
-  "2": "CURRENT", // Checking account
-  "4": "SAVINGS", // Savings deposit
+  "1": "SAVINGS", // Ordinary deposit
+  "2": "CURRENT", // Current account
+  "4": "SAVINGS", // Savings
 };
 
 // ---------------------------------------------------------------------------
-// pacs.008 generate
+// Generate pacs.008
 // ---------------------------------------------------------------------------
 
 /**
@@ -123,7 +123,7 @@ export function buildPacs008(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pacs.002 generate
+// Generate pacs.002
 // ---------------------------------------------------------------------------
 
 /**
@@ -160,7 +160,7 @@ export function buildPacs002(params: {
 }
 
 // ---------------------------------------------------------------------------
-// acmt.023 generate
+// Generate acmt.023
 // ---------------------------------------------------------------------------
 
 /**
@@ -196,7 +196,7 @@ export function buildAcmt023(params: {
 }
 
 // ---------------------------------------------------------------------------
-// acmt.024 generate
+// Generate acmt.024
 // ---------------------------------------------------------------------------
 
 /**
@@ -240,7 +240,7 @@ export function buildAcmt024(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pacs.004 generate
+// Generate pacs.004
 // ---------------------------------------------------------------------------
 
 /**
@@ -287,7 +287,7 @@ export function buildPacs004(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pacs.028 generate
+// Generate pacs.028
 // ---------------------------------------------------------------------------
 
 /**
@@ -314,7 +314,7 @@ export function buildPacs028(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pain.013 generate
+// Generate pain.013
 // ---------------------------------------------------------------------------
 
 /**
@@ -358,7 +358,7 @@ export function buildPain013(params: {
 }
 
 // ---------------------------------------------------------------------------
-// pain.014 generate
+// Generate pain.014
 // ---------------------------------------------------------------------------
 
 /**
@@ -406,10 +406,10 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
   const now = new Date().toISOString();
   const msgId = `ZG-${record.originator_bank_code}-${Date.now()}`;
 
-  // Convert Zengin account number to internal format
-  // Zengin: 4-digit institution code + 3-digit branch code + 7-digit account number
+  // Convert a Zengin account number to the internal format
+  // Zengin: 4-digit financial institution code + 3-digit branch code + 7-digit account number
   const payeeAccountId = `${record.bank_code}${record.account_number.replace(/\s/g, "").padStart(7, "0")}`;
-  const payerAccountId = `${record.originator_bank_code}0000000`; // Originating account is suspense account
+  const payerAccountId = `${record.originator_bank_code}0000000`; // The originating account is a segregated deposit (suspense) account
 
   const payerBic = bankIdToBicLocal(record.originator_bank_code);
   const payeeBic = bankIdToBicLocal(record.bank_code);
@@ -458,20 +458,20 @@ export function zenginToIso20022(record: ZenginFixedRecord): Pacs008Message {
  * @returns Equivalent ZenginFixedRecord
  */
 export function iso20022ToZengin(msg: Pacs008Message): ZenginFixedRecord {
-  // Decompose bank_code / branch_code from creditor.bank_id
-  // Internal format: 3 or 4-digit bankId corresponds to bank_code
+  // Split bank_code / branch_code out of creditor.bank_id
+  // Internal format: a 3-digit (or 4-digit) bankId corresponds to bank_code
   const payeeBankId = msg.creditor.bank_id;
   const payerBankId = msg.debtor.bank_id;
 
-  // Convert account number to Zengin format (7-digit fixed)
-  // Internal account format: bankCode + 7-digit seq → extract last 7 digits as account number
+  // Convert the account number to Zengin format (fixed 7 digits)
+  // Internal account format: bankCode + 7-digit seq → take the last 7 digits as the account number
   const rawAccountId = msg.creditor.account_id;
   const accountNumber =
     rawAccountId.length >= 7
       ? rawAccountId.slice(-7).padStart(7, "0")
       : rawAccountId.padStart(7, "0");
 
-  // Recover branch code and account type from remittance_info.unstructured if available
+  // Recover the branch code and account type from remittance_info's unstructured field (when possible)
   let branchCode = "000";
   let accountType: "1" | "2" | "4" = "1";
 
@@ -504,7 +504,7 @@ export function iso20022ToZengin(msg: Pacs008Message): ZenginFixedRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Zengin fixed-length text parsing
+// Parse Zengin fixed-length text
 // ---------------------------------------------------------------------------
 
 /**
@@ -565,7 +565,7 @@ export function parseZenginRecord(line: string): ZenginFixedRecord {
 }
 
 // ---------------------------------------------------------------------------
-// Zengin fixed-length text generation
+// Generate Zengin fixed-length text
 // ---------------------------------------------------------------------------
 
 /**
@@ -587,7 +587,7 @@ export function formatZenginRecord(record: ZenginFixedRecord): string {
     padZenginKana(record.originator_name, 40), // 40 characters
     record.originator_bank_code.padStart(4, "0").substring(0, 4), //  4 characters
     record.originator_branch_code.padStart(3, "0").substring(0, 3), // 3 characters
-    "".padEnd(17, " "), // 17 characters（予備）
+    "".padEnd(17, " "), // 17 characters (reserved)
   ];
 
   const result = parts.join("");

@@ -11,8 +11,8 @@ import type {
 } from "../types";
 
 // ---------------------------------------------------------------------------
-// Register proxy (phone/email/national ID → account)
-// Duplicate registration updates existing (INSERT OR REPLACE)
+// Proxy registration (phone number/email/My Number → account)
+// Duplicate registration updates the existing record (INSERT OR REPLACE)
 // ---------------------------------------------------------------------------
 export async function registerProxy(
   db: D1Database,
@@ -66,7 +66,7 @@ export async function registerProxy(
       .run();
   }
 
-  // If update, get correct registered_at from DB
+  // On update, fetch the correct registered_at from the DB
   const saved = await db
     .prepare(`SELECT registered_at FROM ProxyDirectory WHERE proxy_id = ?`)
     .bind(proxyId)
@@ -89,7 +89,7 @@ export async function registerProxy(
 }
 
 // ---------------------------------------------------------------------------
-// Resolve proxy (alias → bank_id + account_id)
+// Proxy resolution (alias → bank_id + account_id)
 // ---------------------------------------------------------------------------
 export async function resolveProxy(
   db: D1Database,
@@ -118,7 +118,7 @@ export async function resolveProxy(
 }
 
 // ---------------------------------------------------------------------------
-// Invalidate proxy
+// Proxy deactivation
 // ---------------------------------------------------------------------------
 export async function deactivateProxy(db: D1Database, proxyId: string): Promise<void> {
   const now = new Date().toISOString();
@@ -131,7 +131,7 @@ export async function deactivateProxy(db: D1Database, proxyId: string): Promise<
 }
 
 // ---------------------------------------------------------------------------
-// Get account proxy list
+// Get the list of proxies for an account
 // ---------------------------------------------------------------------------
 export async function listProxiesForAccount(
   db: D1Database,

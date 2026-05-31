@@ -25,7 +25,7 @@ export interface ExpressResult {
 }
 
 /**
- * Expresslane: 同期で Decision まで完結
+ * Express lane: completes synchronously through Decision
  * RECEIVED → PRECHECKED → H_RESERVED → DECIDED_TO_SETTLE
  */
 export async function processExpress(
@@ -53,8 +53,8 @@ export async function processExpress(
     };
   }
 
-  // 2. AML/Authority Check（payerBank）
-  // 決定論的 request_id（同一 txid なら同一 request_id をgenerate）
+  // 2. AML/Authority Check (payerBank)
+  // Deterministic request_id (the same txid generates the same request_id)
   const authResult = await callBankAuthorityCheck(
     req.payer.bank_id,
     {
@@ -78,7 +78,7 @@ export async function processExpress(
     };
   }
 
-  // 3. Name Check (PSPR or payeeAccount)
+  // 3. Name Check (via PSPR reference or payeeAccount)
   const nameResult = await callBankNameCheck(
     req.payee.bank_id,
     {
@@ -99,7 +99,7 @@ export async function processExpress(
     };
   }
 
-  // 4. H-reserved
+  // 4. H reservation
   const hResult = await reserveH(req.payer.bank_id, txid, req.amount.value, db);
   if (!hResult.ok) {
     await cancelInFlightTx(db, { txid, reasonCode: hResult.reason });
@@ -130,7 +130,7 @@ export async function processExpress(
     };
   }
 
-  // 5. Call bank reserve-funds
+  // 5. Call Bank reserve-funds
   const reserveResult = await callBankReserveFunds(
     req.payer.bank_id,
     {
@@ -151,10 +151,10 @@ export async function processExpress(
     };
   }
 
-  // 6. Decision finalized
+  // 6. Finalize Decision
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();
-  // Set dns_cycle_id at DECIDED_TO_SETTLE (needed for H release)
+  // Set dns_cycle_id on DECIDED_TO_SETTLE (needed for H release)
   const dnsCycleId = await getOrCreateDnsCycle(db, now);
   const decided = await transitionWithLog(db, {
     txid,
@@ -177,10 +177,10 @@ export async function processExpress(
     };
   }
 
-  // Switch H-reserved RESERVED → LOCKED (hold until DNS settlement)
+  // Switch H reservation RESERVED → LOCKED (held until DNS settlement)
   await lockH(reservationId, db);
 
-  // 7. 非同期で Enqueue Execution
+  // 7. Enqueue Execution asynchronously
   await env.QUEUE.send({
     type: "ZC_BANK_DEBIT",
     payload: {

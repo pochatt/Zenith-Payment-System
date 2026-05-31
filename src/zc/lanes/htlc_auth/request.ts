@@ -13,7 +13,7 @@ import { nowISO } from "../../../types";
 import { logTxEvent } from "../../trace";
 
 /**
- * receipt側（加盟店）がオーソリリクエストをsendする。
+ * The receiving side (merchant) sends an authorization request.
  * POST /api/htlc/auth-request
  */
 export async function createAuthRequest(
@@ -23,7 +23,7 @@ export async function createAuthRequest(
   const db = env.DB;
   const now = nowISO();
 
-  // idempotentcheck
+  // Idempotency check
   const existing = await db
     .prepare(`SELECT auth_id, status FROM HtlcAuthRequests WHERE idempotency_key=?`)
     .bind(req.idempotency_key)
@@ -32,7 +32,7 @@ export async function createAuthRequest(
     return { result: "AUTH_REQUESTED", auth_id: existing.auth_id };
   }
 
-  // whitelist confirmation
+  // Whitelist check
   const whitelist = await db
     .prepare(
       `SELECT * FROM HtlcAuthWhitelist
@@ -56,12 +56,12 @@ export async function createAuthRequest(
     return { result: "ERROR", reason_code: "PAYEE_NOT_WHITELISTED" };
   }
 
-  // amount limit check
+  // Amount limit check
   if (whitelist.max_amount !== null && req.amount.value > whitelist.max_amount) {
     return { result: "ERROR", reason_code: "AMOUNT_EXCEEDS_AUTH_LIMIT" };
   }
 
-  // purpose check
+  // Purpose check
   if (whitelist.allowed_purposes && req.purpose) {
     const allowed = JSON.parse(whitelist.allowed_purposes) as string[];
     if (!allowed.includes(req.purpose)) {
@@ -69,7 +69,7 @@ export async function createAuthRequest(
     }
   }
 
-  // deadlinecheck
+  // Expiry check
   if (new Date(req.auth_expires_at) <= new Date(now)) {
     return { result: "ERROR", reason_code: "AUTH_EXPIRES_IN_PAST" };
   }
@@ -77,7 +77,7 @@ export async function createAuthRequest(
     return { result: "ERROR", reason_code: "CAPTURE_EXPIRES_BEFORE_AUTH" };
   }
 
-  // HtlcAuthRequests create
+  // Create HtlcAuthRequests
   const authId = req.auth_id;
   await db
     .prepare(
@@ -125,7 +125,7 @@ export async function createAuthRequest(
 }
 
 /**
- * fund transfer側がオーソリリクエストをdenialする。
+ * The originator declines the authorization request.
  * POST /api/htlc/auth/:auth_id/decline
  */
 export async function declineAuthRequest(

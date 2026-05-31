@@ -22,7 +22,7 @@ type SeqActor = "Customer" | "ZC" | "PayerBank" | "PayeeBank" | "IGS";
 
 interface EventRender {
   arrows: (ctx: NarrativeCtx) => ArrowKind[];
-  /** Short narrative fragment, e.g. "事前validationを通過". Joined with dates around it. */
+  /** Short narrative fragment, e.g. "passed pre-validation". Joined with dates around it. */
   blurb: string;
 }
 

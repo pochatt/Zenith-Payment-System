@@ -22,8 +22,8 @@ export interface TxEventParams {
 }
 
 /**
- * TxEventLog にeventをrecordする（INSERT ONLY・失敗しても握りつぶす）
- * audit logの書き込み失敗が本処理をブlockしないよう try/catch で保護する。
+ * Record an event in TxEventLog (INSERT ONLY; swallow failures)
+ * Protected with try/catch so that an audit log write failure does not block the main processing.
  */
 export async function logTxEvent(db: D1Database, params: TxEventParams): Promise<void> {
   try {
@@ -52,14 +52,14 @@ export async function logTxEvent(db: D1Database, params: TxEventParams): Promise
       )
       .run();
   } catch (err) {
-    // Don't let log fail affect main
+    // A log write failure must not affect the main processing
     console.error("[trace] TxEventLog write failed:", err);
   }
 }
 
 /**
- * ZC→Bank 呼び出しをラップし、自動的に TxEventLog をrecordするHelpers。
- * duration_ms も自動計測する。
+ * Helper that wraps a ZC→Bank call and automatically records a TxEventLog.
+ * It also automatically measures duration_ms.
  */
 export async function tracedBankCall<T extends { result: string }>(
   db: D1Database,
@@ -114,10 +114,10 @@ export async function tracedBankCall<T extends { result: string }>(
 }
 
 // ---------------------------------------------------------------------------
-// TxEventLog inquiry
+// TxEventLog query
 // ---------------------------------------------------------------------------
 
-/** transactionに紐付く全eventを時系列でreturn（TxEventLog + FinalityLog マージ） */
+/** Return all events linked to a transaction in chronological order (TxEventLog + FinalityLog merged) */
 export async function getTxEvents(txid: string, db: D1Database): Promise<unknown[]> {
   const [evRows, flRows] = await Promise.all([
     db
@@ -153,7 +153,7 @@ export async function getTxEvents(txid: string, db: D1Database): Promise<unknown
   return combined;
 }
 
-/** Return all FinalityLog events linked to GTID chronologically */
+/** Return all FinalityLog events linked to a GTID in chronological order */
 export async function getGtidEvents(gtid: string, db: D1Database): Promise<unknown[]> {
   const flRows = await db
     .prepare(
@@ -174,7 +174,7 @@ export async function getGtidEvents(gtid: string, db: D1Database): Promise<unkno
   return flRows.results;
 }
 
-/** 最近 N 件の全event（dashboard用） */
+/** The most recent N events across all types (for the dashboard) */
 export async function getRecentEvents(db: D1Database, limit = 100, offset = 0): Promise<unknown[]> {
   const rows = await db
     .prepare(

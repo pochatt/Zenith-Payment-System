@@ -7,9 +7,9 @@ import { nowISO } from "../../../types";
 import { insertTxWithLog } from "../_helpers";
 
 /**
- * RTP応答処理（ACCEPTED / REJECTED）
+ * RTP response processing (ACCEPTED / REJECTED)
  *
- * 支払人がapprovalした場合、RTP 紐づきfund transfertransactionを自動generateして ZC に投入する。
+ * If the payer approves, automatically generate the RTP-linked transfer transaction and submit it to ZC.
  */
 export async function respondToRtp(
   db: D1Database,
@@ -37,7 +37,7 @@ export async function respondToRtp(
     return { result: "NOT_FOUND" };
   }
 
-  // If already responded
+  // Case where already responded
   const alreadyDone: RtpRequestRow["state"][] = [
     "ACCEPTED",
     "DECLINED",
@@ -50,7 +50,7 @@ export async function respondToRtp(
     return { result: "ALREADY_RESPONDED", txid: rtp.linked_txid ?? undefined };
   }
 
-  // deadlinecheck
+  // Expiry check
   if (new Date(rtp.expires_at) <= new Date(now)) {
     await db
       .prepare(`
@@ -75,14 +75,14 @@ export async function respondToRtp(
     return { result: "DECLINED" };
   }
 
-  // ACCEPTED: auto-generate fund transfer transaction
+  // ACCEPTED: automatically generate the transfer transaction
   const linkedTxid = `TX-${crypto.randomUUID()}`;
 
-  // fund transfer Transaction + FinalityLog + RtpRequests TX_CREATED
-  // Integrate into single db.batch(). Old implementation batched INSERT/UPDATE, FinalityLog separately
-  // So 'row exists but no log' window existed
-  // insertTxWithLog enforces ALLOWED_ENTRY_STATES
-  // RTP merges with other lanes at canonical RECEIVED entry
+  // Combine creating the transfer Transaction + FinalityLog + transitioning RtpRequests to TX_CREATED
+  // into a single db.batch(). The old implementation batched INSERT/UPDATE but awaited FinalityLog separately,
+  // so there was a window where "the Transactions row exists but the RtpAccepted log is missing".
+  // insertTxWithLog enforces ALLOWED_ENTRY_STATES = ['RECEIVED', ...], so
+  // RTP joins the other lanes at the canonical RECEIVED entry point.
   await insertTxWithLog(db, {
     txid: linkedTxid,
     lane: "RTP",
@@ -108,7 +108,7 @@ export async function respondToRtp(
     ],
   });
 
-  // Send to orchestrator (progress settlement in STANDARD flow)
+  // Send to the orchestrator (advance settlement processing in the STANDARD flow)
   await env.QUEUE.send({
     type: "ZC_STATE_ADVANCE",
     payload: { txid: linkedTxid, action: "ADVANCE_STANDARD" },

@@ -1,34 +1,34 @@
 // =============================================================================
-// src/shared/constants.ts  System constants and configuration values
+// src/shared/constants.ts  system constants and configuration values
 // =============================================================================
 // Centrally managed to eliminate magic numbers and improve maintainability.
-// Each module imports constants from here instead of using hardcoded values.
+// Each module imports from here instead of hardcoding numeric values.
 // =============================================================================
 
 // ---------------------------------------------------------------------------
 // Timeout constants (seconds)
 // ---------------------------------------------------------------------------
 
-/** T2: Originating execution → Destination execution timeout (5 minutes) */
+/** T2: timeout from originating execution → destination execution (5 minutes) */
 export const TIMEOUT_T2_EXEC_SEC = 300;
 
-/** T3: Destination proof waiting timeout (5 minutes) */
+/** T3: timeout waiting for destination proof (5 minutes) */
 export const TIMEOUT_T3_PAYEE_PROOF_SEC = 300;
 
-/** Grace period from SUSPENDED state to FAILED_EXECUTION transition (1 hour) */
+/** Grace period before transitioning from the SUSPENDED state to FAILED_EXECUTION (1 hour) */
 export const TIMEOUT_SUSPENDED_TO_FAILED_SEC = 3600;
 
-/** GTID stalled recovery: GT_DECIDED_TO_SETTLE stall timeout (10 minutes) */
+/** GTID stalled recovery: stall timeout for GT_DECIDED_TO_SETTLE (10 minutes) */
 export const TIMEOUT_GTID_STALLED_SEC = 600;
 
 // ---------------------------------------------------------------------------
 // Notification retry constants
 // ---------------------------------------------------------------------------
 
-/** Credit notification retry interval (seconds): exponential backoff */
+/** Retry interval for credit notifications (seconds): exponential backoff */
 export const NOTIFICATION_BACKOFF_SEC = [30, 120, 600, 3600] as const;
 
-/** Maximum retry attempts for credit notification */
+/** Maximum number of retries for credit notifications */
 export const NOTIFICATION_MAX_ATTEMPTS = 5;
 
 // ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ export const NOTIFICATION_MAX_ATTEMPTS = 5;
 /** FATF R.16 application threshold (JPY): equivalent to 1,000 USD */
 export const FATF_THRESHOLD_JPY = 150_000;
 
-/** Exchange rate: each currency → JPY conversion */
+/** Exchange rates: each currency → JPY conversion */
 export const EXCHANGE_RATE_TO_JPY: Record<string, number> = {
   JPY: 1,
   USD: 150,
@@ -56,13 +56,13 @@ export const EXCHANGE_RATE_TO_JPY: Record<string, number> = {
 // Amount and count limits
 // ---------------------------------------------------------------------------
 
-/** Maximum number of statements in D1 batch */
+/** Maximum number of statements per D1 batch */
 export const D1_BATCH_MAX_STMTS = 100;
 
 /** Default LIMIT for query results */
 export const DEFAULT_QUERY_LIMIT = 50;
 
-/** Approval request expiry (milliseconds): 24 hours */
+/** Authorization request expiry (milliseconds): 24 hours */
 export const APPROVAL_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ export const CRON_TIMEOUT_SWEEP = "* * * * *";
 /** Zengin fixed-length record size (bytes) */
 export const ZENGIN_RECORD_LENGTH = 120;
 
-/** Standard BIC code length (8 or 11 digits) */
+/** Standard length of a BIC code (8 or 11 digits) */
 export const BIC_LENGTH_SHORT = 8;
 export const BIC_LENGTH_FULL = 11;
 
@@ -90,17 +90,17 @@ export const BIC_LENGTH_FULL = 11;
 // Rich data constants
 // ---------------------------------------------------------------------------
 
-/** R2 offload threshold (bytes): payloads exceeding 50KB are stored in R2 */
+/** R2 offload threshold (bytes): payloads over 50KB are stored in R2 */
 export const R2_OFFLOAD_THRESHOLD = 50 * 1024;
 
-/** Default retention days for rich data */
+/** Default retention period for rich data (days) */
 export const RICHDATA_DEFAULT_RETENTION_DAYS = 365;
 
 // ---------------------------------------------------------------------------
 // QR code constants
 // ---------------------------------------------------------------------------
 
-/** Dynamic QR default expiry (milliseconds): 15 minutes */
+/** Default expiry for dynamic QR (milliseconds): 15 minutes */
 export const QR_DYNAMIC_EXPIRY_MS = 15 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
@@ -111,8 +111,8 @@ export const QR_DYNAMIC_EXPIRY_MS = 15 * 60 * 1000;
 export const DNS_CYCLE_PREFIX = "DNS";
 
 // ---------------------------------------------------------------------------
-// BOJ prefund constants
+// BOJ prefunding constants
 // ---------------------------------------------------------------------------
 
-/** Initial prefund amount (JPY): 100 billion yen */
+/** Initial prefunding amount (JPY): 100 billion yen */
 export const BOJ_INITIAL_PREFUND = 100_000_000_000;

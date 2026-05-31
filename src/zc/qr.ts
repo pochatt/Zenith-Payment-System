@@ -7,8 +7,8 @@ import type { QrCodeRow, QrGenerateRequest, QrPayRequest } from "../types";
 import { signPayload, verifySignature } from "../shared/hmac";
 
 // ---------------------------------------------------------------------------
-// Generate QR code
-// Signature is HMAC-SHA256(qr_ref + payee_bank_id + amount, QR_SECRET)
+// QR code generation
+// signature is HMAC-SHA256(qr_ref + payee_bank_id + amount, QR_SECRET)
 // ---------------------------------------------------------------------------
 export async function generateQrCode(
   db: D1Database,
@@ -66,7 +66,7 @@ export async function generateQrCode(
 }
 
 // ---------------------------------------------------------------------------
-// QRinquiry
+// QR lookup
 // ---------------------------------------------------------------------------
 export async function getQrCode(db: D1Database, qrRef: string): Promise<QrCodeRow | null> {
   const row = await db
@@ -79,7 +79,7 @@ export async function getQrCode(db: D1Database, qrRef: string): Promise<QrCodeRo
 }
 
 // ---------------------------------------------------------------------------
-// QR execution (signature validation → mark used → return txid)
+// Execute QR payment (signature validation → mark used → return txid)
 // ---------------------------------------------------------------------------
 export async function processQrPayment(
   db: D1Database,
@@ -91,7 +91,7 @@ export async function processQrPayment(
     return { valid: false, error: "QR_NOT_FOUND" };
   }
 
-  // expiredcheck
+  // Expiry check
   if (qrRow.expires_at) {
     const expiresMs = new Date(qrRow.expires_at).getTime();
     if (expiresMs < Date.now()) {
@@ -99,19 +99,19 @@ export async function processQrPayment(
     }
   }
 
-  // usage check (DYNAMIC QR single-use)
+  // Used check (DYNAMIC QR is single-use)
   if (qrRow.qr_type === "DYNAMIC" && qrRow.is_used === 1) {
     return { valid: false, error: "QR_ALREADY_USED" };
   }
 
-  // DYNAMIC QR prefers fixed amount, else req.amount. STATIC QR requires req.amount
+  // Amount validation: DYNAMIC QR prefers the fixed amount, falling back to req.amount; STATIC QR requires req.amount
   const effectiveAmount =
     qrRow.qr_type === "DYNAMIC" ? (qrRow.amount_value ?? req.amount) : req.amount;
   if (effectiveAmount == null || effectiveAmount <= 0) {
     return { valid: false, error: "QR_AMOUNT_REQUIRED" };
   }
 
-  // signaturevalidation
+  // Signature validation
   const sigOk = await verifyQrSignature(
     qrRow.qr_ref,
     qrRow.payee_bank_id,
@@ -123,7 +123,7 @@ export async function processQrPayment(
     return { valid: false, error: "QR_INVALID_SIGNATURE" };
   }
 
-  // Set DYNAMIC QR as used
+  // Set DYNAMIC QR to used
   if (qrRow.qr_type === "DYNAMIC") {
     await db
       .prepare(`
@@ -134,12 +134,12 @@ export async function processQrPayment(
     return { valid: true, qrRow: { ...qrRow, is_used: 1 }, effectiveAmount };
   }
 
-  // Return STATIC QR as-is (reusable)
+  // Return STATIC QR as-is (reusable any number of times)
   return { valid: true, qrRow, effectiveAmount };
 }
 
 // ---------------------------------------------------------------------------
-// QRsignaturevalidation
+// QR signature validation
 // ---------------------------------------------------------------------------
 export async function verifyQrSignature(
   qrRef: string,
@@ -153,7 +153,7 @@ export async function verifyQrSignature(
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers: construct signature payload
+// Internal helper: build the signature payload string
 // ---------------------------------------------------------------------------
 function buildSigPayload(qrRef: string, payeeBankId: string, amountValue?: number): string {
   const amountStr = amountValue !== undefined ? String(amountValue) : "";

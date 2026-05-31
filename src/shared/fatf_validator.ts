@@ -22,7 +22,7 @@ import type { FatfR16Data, FatfParty, FatfInstitution } from "../types";
 import { FATF_THRESHOLD_JPY, EXCHANGE_RATE_TO_JPY } from "./constants";
 
 // ---------------------------------------------------------------------------
-// FATF R16 applicability judgment
+// FATF R16 applicability check
 // ---------------------------------------------------------------------------
 
 /**
@@ -87,7 +87,7 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
   const beneficiaryInstErrors = validateInstitution(data.beneficiary_institution);
   beneficiaryInstErrors.forEach((e) => errors.push(`beneficiary_institution: ${e}`));
 
-  // Cross-border transaction consistency confirmation
+  // Consistency check that the transaction is cross-border
   // NOTE: This validator checks consistency between fatf16_applicable and is_cross_border flags.
   // The fatf16_applicable flag should logically only be true when is_cross_border is true.
   // Amount threshold checking (JPY 150,000) occurs in ingress.ts, not here, so this validator
@@ -96,7 +96,7 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
     errors.push("fatf16_applicable=true だが is_cross_border=false: 矛盾した設定です");
   }
 
-  // Validation if intermediary exists
+  // Validation when an intermediary is present
   if (data.intermediary) {
     if (!data.intermediary.name || data.intermediary.name.trim().length === 0) {
       errors.push("intermediary.name: 仲介機関名は必須です");
@@ -114,7 +114,7 @@ export function validateFatfR16(data: FatfR16Data): { valid: boolean; errors: st
 }
 
 // ---------------------------------------------------------------------------
-// Originator (fund transfer person) information validation
+// originator (remitter) information validation
 // ---------------------------------------------------------------------------
 
 /**
@@ -134,14 +134,14 @@ function validateOriginator(party: FatfParty): string[] {
   if (!party.name || party.name.trim().length === 0) {
     errors.push(`${prefix}.name: 送金人氏名は必須です`);
   } else if (party.name.trim().length > 140) {
-    errors.push(`${prefix}.name: 送金人氏名は140 characters以内にしてください`);
+    errors.push(`${prefix}.name: 送金人氏名は140文字以内にしてください`);
   }
 
   if (!party.account_id || party.account_id.trim().length === 0) {
     errors.push(`${prefix}.account_id: 送金人口座番号は必須です`);
   }
 
-  // Additional identification information (address OR national ID number OR birth date + birthplace) - at least one required
+  // One of the additional identifiers is required (address OR national ID number OR date of birth + place of birth)
   const hasAddress = Boolean(party.address?.trim());
   const hasNationalId = Boolean(party.national_id?.trim());
   const hasDob = Boolean(party.date_of_birth?.trim());
@@ -156,7 +156,7 @@ function validateOriginator(party: FatfParty): string[] {
     );
   }
 
-  // Birth date format validation (YYYY-MM-DD)
+  // Date-of-birth format validation (YYYY-MM-DD)
   if (hasDob && party.date_of_birth) {
     if (!isValidDateFormat(party.date_of_birth)) {
       errors.push(`${prefix}.date_of_birth: YYYY-MM-DD 形式で入力してください (例: 1985-04-15)`);
@@ -167,7 +167,7 @@ function validateOriginator(party: FatfParty): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// beneficiary (payee) informationvalidation
+// beneficiary (recipient) information validation
 // ---------------------------------------------------------------------------
 
 /**
@@ -186,7 +186,7 @@ function validateBeneficiary(party: FatfParty): string[] {
   if (!party.name || party.name.trim().length === 0) {
     errors.push(`${prefix}.name: 受取人氏名は必須です`);
   } else if (party.name.trim().length > 140) {
-    errors.push(`${prefix}.name: 受取人氏名は140 characters以内にしてください`);
+    errors.push(`${prefix}.name: 受取人氏名は140文字以内にしてください`);
   }
 
   if (!party.account_id || party.account_id.trim().length === 0) {
@@ -228,10 +228,10 @@ function validateInstitution(inst: FatfInstitution): string[] {
     );
   }
 
-  // Format validation if BIC exists
+  // Format validation when a BIC is present
   if (inst.bic) {
     if (!isValidBicFormat(inst.bic)) {
-      errors.push(`bic: 無効な BIC フォーマット '${inst.bic}' (8文字または11 characterが必要)`);
+      errors.push(`bic: 無効な BIC フォーマット '${inst.bic}' (8文字または11文字が必要)`);
     }
   }
 
@@ -239,7 +239,7 @@ function validateInstitution(inst: FatfInstitution): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Serialization / Deserialization
+// Serialize / deserialize
 // ---------------------------------------------------------------------------
 
 /**
@@ -345,7 +345,7 @@ export function createFatfDataSkeleton(params: {
 
 /** Validate ISO 3166-1 alpha-2 country code format (regex only in mock). */
 function isValidCountryCode(country: string): boolean {
-  // Normalize to uppercase before validation (accepts lowercase input but assumes normalized)
+  // Normalize to uppercase before validation (lowercase input is accepted, but normalized form is assumed)
   return /^[A-Z]{2}$/.test(country.toUpperCase());
 }
 

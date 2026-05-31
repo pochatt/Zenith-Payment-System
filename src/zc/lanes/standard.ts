@@ -27,16 +27,16 @@ export interface StandardIngressResult {
 }
 
 /**
- * Standardlane受付: RECEIVED をreturn（同期）
- * 後続処理（PreCheck → NameCheck → AuthorityCheck）はqueueで非同期実行
+ * Standard lane intake: return RECEIVED (synchronous)
+ * Subsequent processing (PreCheck → NameCheck → AuthorityCheck) runs asynchronously via the queue
  */
 export function processStandardIngress(req: PaymentInitiatedRequest): StandardIngressResult {
   return { result: "INGRESS_ACCEPTED", txid: req.txid, state: "RECEIVED" };
 }
 
 /**
- * Standard非同期処理: RECEIVED → PRECHECKED → (PRECHECKED_SUSPENDED) → H_RESERVED → DECIDED_TO_SETTLE
- * Queueコンシューマーから呼ばれる
+ * Standard asynchronous processing: RECEIVED → PRECHECKED → (PRECHECKED_SUSPENDED) → H_RESERVED → DECIDED_TO_SETTLE
+ * Called from the queue consumer
  */
 export async function advanceStandard(txid: string, env: Env): Promise<void> {
   const db = env.DB;
@@ -57,7 +57,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
       purpose: string | null;
     }>();
   if (!tx) return;
-  if (tx.state !== "RECEIVED") return; // If already progressed
+  if (tx.state !== "RECEIVED") return; // Already advanced
 
   // 1. PRECHECKED
   const prechecked = await transitionWithLog(db, {
@@ -67,7 +67,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     eventType: "PreCheckPassed",
     payload: { txid },
   });
-  if (!prechecked.applied) return; // Other call already transitioned
+  if (!prechecked.applied) return; // Another call already performed the transition first
 
   // 2. AML Authority Check
   const authResult = await callBankAuthorityCheck(
@@ -88,7 +88,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 3. Name Check (Standard shows account info → name result)
+  // 3. Name Check (Standard presents account info → account holder name result)
   const nameResult = await callBankNameCheck(
     tx.payee_bank_id,
     {
@@ -100,7 +100,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     env
   );
   if (nameResult.result === "MISMATCH") {
-    // Transition name confirmation to PRECHECKED_SUSPENDED, await (final customer confirmation)
+    // Transition the account holder name verification result to PRECHECKED_SUSPENDED and wait (customer final confirmation)
     await transitionWithLog(db, {
       txid,
       fromState: "PRECHECKED",
@@ -112,7 +112,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 4. H-reserved
+  // 4. H reservation
   const hResult = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db);
   if (!hResult.ok) {
     await cancelInFlightTx(db, { txid, reasonCode: hResult.reason, fromStates: ["PRECHECKED"] });
@@ -150,18 +150,18 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 6. Final payer pending auth (Standard-specific)
-  // REFUND purpose has no natural approver from OPS; auto-authorize
-  // Other transactions: party calls POST /api/transfers/:txid/authorize
-  // 呼び出すまで H_RESERVED 状態で待機する。
-  // Principle: ZC is not decision authority but state relay. Final fund transfer authorization vested in party
+  // 6. Awaiting payer final authorization (Standard-specific)
+  // A REFUND purpose (Reversal TX) originates from OPS and has no natural approver, so it is auto-authorized.
+  // Other transactions wait in the H_RESERVED state until the originating bank (or customer) calls
+  // POST /api/transfers/:txid/authorize.
+  // Core principle: ZC is not a decision maker but a state relay. The final authorization of a transfer is delegated to the originating bank.
   if (tx.purpose === "REFUND") {
     await authorizeStandard(txid, true, env);
   }
 }
 
 /**
- * /authorize endpointから呼ばれる: H_RESERVED → DECIDED_TO_SETTLE
+ * Called from the /authorize endpoint: H_RESERVED → DECIDED_TO_SETTLE
  */
 export async function authorizeStandard(
   txid: string,
@@ -188,7 +188,7 @@ export async function authorizeStandard(
 
   if (!authorized) {
     await cancelInFlightTx(db, { txid, reasonCode: "CANCEL_BY_PAYER", fromStates: ["H_RESERVED"] });
-    // On H_RESERVED cancellation, release bank segregated deposit (reserve-funds succeeded)
+    // On H_RESERVED cancellation, reserve-funds already succeeded, so release the bank's segregated deposit
     const suspense = await db
       .prepare(
         `SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' AND direction='PAY' LIMIT 1`
@@ -227,7 +227,7 @@ export async function authorizeStandard(
   });
   if (!decided.applied) return { ok: false, state: decided.previousState ?? "STATE_CONFLICT" };
 
-  // Switch H-reserved RESERVED → LOCKED (hold until DNS settlement)
+  // Switch H reservation RESERVED → LOCKED (held until DNS settlement)
   if (tx.h_reservation_id) {
     await lockH(tx.h_reservation_id, db);
   }
@@ -252,8 +252,8 @@ export async function authorizeStandard(
 }
 
 /**
- * 名義不一致サスペンド後の再開: PRECHECKED_SUSPENDED → PRECHECKED → H_RESERVED
- * fund transfer行がcustomerconfirmationを経て /resume-namecheck を呼び出した際に実行される。
+ * Resume after an account holder name mismatch suspension: PRECHECKED_SUSPENDED → PRECHECKED → H_RESERVED
+ * Runs when the originating bank calls /resume-namecheck after customer confirmation.
  */
 export async function resumeFromNameCheckSuspended(
   txid: string,
@@ -274,7 +274,7 @@ export async function resumeFromNameCheckSuspended(
   if (!tx) return { ok: false, state: "NOT_FOUND" };
   if (tx.state !== "PRECHECKED_SUSPENDED") return { ok: false, state: tx.state };
 
-  // PRECHECKED_SUSPENDED → PRECHECKED (name check override)
+  // PRECHECKED_SUSPENDED → PRECHECKED (account holder name check override approval)
   const resumed = await transitionWithLog(db, {
     txid,
     fromState: "PRECHECKED_SUSPENDED",
@@ -285,7 +285,7 @@ export async function resumeFromNameCheckSuspended(
   });
   if (!resumed.applied) return { ok: false, state: "STATE_CONFLICT" };
 
-  // H-reserved
+  // H reservation
   const hResult = await reserveH(tx.payer_bank_id, txid, tx.amount_value, db);
   if (!hResult.ok) {
     await cancelInFlightTx(db, { txid, reasonCode: hResult.reason, fromStates: ["PRECHECKED"] });

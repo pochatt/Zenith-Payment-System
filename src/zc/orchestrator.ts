@@ -56,7 +56,7 @@ export {
 export type { FinalityLogEntry };
 
 // ---------------------------------------------------------------------------
-// State transition after Execution completes
+// State transition processing after Execution completes
 // ---------------------------------------------------------------------------
 
 /**
@@ -110,15 +110,15 @@ export async function onPayerExecConfirmed(
     event_type: "PayerExecConfirmed",
     state_from: tx.state,
     state_to: "PAYER_EXEC_CONFIRMED",
-    // bankProofRefJson already stringified; skip re-parse
-    // 文字列連結で payload をconstructし、中間オブジェクト確保を回避する。
+    // bankProofRefJson is already JSON.stringify'd by the caller. Without going through parse→stringify,
+    // build the payload via string concatenation to avoid allocating intermediate objects.
     payload_json: `{"payer_bank_proof_ref":${bankProofRefJson}}`,
     txid_or_gtid: txid,
   });
 
   await autoResolveCaseForTx(db, txid);
 
-  // HIGH_VALUE lane receives ZC_BANK_CREDIT via IGS callback (handleIgsCallback)
+  // In the HIGH_VALUE lane, the IGS callback (handleIgsCallback) enqueues ZC_BANK_CREDIT
   if (tx.lane !== "HIGH_VALUE") {
     await env.QUEUE.send({
       type: "ZC_BANK_CREDIT",
@@ -171,8 +171,8 @@ export async function onPayeeExecConfirmed(
 
   if (!isValidTransition(tx.state, "PAYEE_EXEC_CONFIRMED")) return;
 
-  // HIGH_VALUE invariant: deny confirmation unless external_settlement_status = 'SETTLED'
-  // (spec: Transition to PAYEE_EXEC_CONFIRMED(b) only when external_settlement_status == SETTLED)
+  // HIGH_VALUE invariant: reject the b confirmation unless external_settlement_status = 'SETTLED'
+  // (spec: "transition to PAYEE_EXEC_CONFIRMED(b) is allowed only when external_settlement_status == SETTLED")
   if (tx.lane === "HIGH_VALUE" && tx.external_settlement_status !== "SETTLED") {
     console.error(
       `[orchestrator] HV invariant violated for ${txid}: external_settlement_status=${tx.external_settlement_status}, expected SETTLED`
@@ -195,14 +195,14 @@ export async function onPayeeExecConfirmed(
     event_type: "PayeeExecConfirmed",
     state_from: tx.state,
     state_to: "PAYEE_EXEC_CONFIRMED",
-    // Same: avoid parse→stringify (valid JSON)
+    // Same as above: avoid parse→stringify (bankProofRefJson is already a valid JSON string)
     payload_json: `{"payee_bank_proof_ref":${bankProofRefJson}}`,
     txid_or_gtid: txid,
   });
 
   await autoResolveCaseForTx(db, txid);
 
-  // SETTLED への遷移（CAS version guard 付き）
+  // Transition to SETTLED (with CAS version guard)
   const txAfterPayee = await db
     .prepare(`SELECT version FROM Transactions WHERE txid = ? AND state = 'PAYEE_EXEC_CONFIRMED'`)
     .bind(txid)

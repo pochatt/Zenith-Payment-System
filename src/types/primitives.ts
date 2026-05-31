@@ -27,7 +27,7 @@ export interface Env {
   /**
    * System-wide HIGH_VALUE auto-routing threshold in JPY (integer string).
    * Payments at or above this amount are automatically escalated to HIGH_VALUE lane.
-   * Default: 100000000 (¥100,000,000 = 100M yen). Per-bank override via Participants.hv_threshold.
+   * Default: 100000000 (¥100,000,000 = 100 million yen). Per-bank override via Participants.hv_threshold.
    */
   ZC_HV_THRESHOLD?: string;
   R2_BUCKET?: R2Bucket;
@@ -110,37 +110,37 @@ export interface FatfR16Data {
 // Account Number Utilities
 // ---------------------------------------------------------------------------
 
-/** Get bank code (3-digit) from account number */
+/** Get the bank code (3 digits) from an account number */
 export function bankCodeFromAccount(accountId: string): string {
   return accountId.slice(0, 3);
 }
 
-/** Generate suspense account from bank code */
+/** Generate a segregated deposit (suspense) account number from a bank code */
 export function suspenseAccountId(bankCode: string): string {
   return `${bankCode}0000000`;
 }
 
-/** Generate ZC settlement account from bank code */
+/** Generate the ZC settlement account number from a bank code */
 export function nostroAccountId(bankCode: string): string {
   return `${bankCode}-ZCS`;
 }
 
-/** Generate Retained Earnings account from bank code */
+/** Generate the Retained Earnings account number from a bank code */
 export function retainedEarningsAccountId(bankCode: string): string {
   return `${bankCode}-RE`;
 }
 
-/** Generate Cash account number from bank code */
+/** Generate the Cash account number from a bank code */
 export function cashAccountId(bankCode: string): string {
   return `${bankCode}-CASH`;
 }
 
-/** Whether account is segregated deposit */
+/** Whether the account number is a segregated deposit (suspense) account */
 export function isSuspenseAccount(accountId: string): boolean {
   return accountId.endsWith("0000000");
 }
 
-/** Generate next account number */
+/** Generate the next account number */
 export function generateAccountId(bankCode: string, seq: number): string {
   return `${bankCode}${String(seq).padStart(7, "0")}`;
 }

@@ -96,7 +96,7 @@ export function validatePaymentInitiated(req: Partial<PaymentInitiatedRequest>):
 export function validateHtlcCreate(req: Partial<HtlcCreateRequest>): ValidationResult {
   if (!req.htlc_id || !/^HTLC-/.test(req.htlc_id))
     return fail("INVALID_HTLC_ID", "htlc_id must start with HTLC-");
-  // hashlock allows empty string (auto-generated on server side)
+  // hashlock allows an empty string (auto-generated on the server side)
   if (req.hashlock && !/^[0-9a-f]{64}$/.test(req.hashlock))
     return fail(
       "INVALID_HASHLOCK",

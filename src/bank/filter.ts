@@ -5,10 +5,10 @@
  * @module bank/filter
  */
 //
-// Future extension points for customer approval flow:
-//   - When HOLD_CONFIRM triggers, generate and return approval_id
-//   - Add customer smartphone push notification sending here
-//   - Similar mechanism for customer callback to ZC after approval/denial
+// Future extension point for the customer approval flow:
+//   - When HOLD_CONFIRM fires, generate and return an approval_id
+//   - Sending push notifications to the customer's smartphone goes here
+//   - The mechanism for the customer to call back to ZC after approval/rejection goes here too
 import type {
   FilterEvalResult,
   PaymentFilterRow,
@@ -23,17 +23,17 @@ import { newUUID } from "../shared/idempotency";
 import { filterByEdiCondition } from "../zc/edi";
 
 // ---------------------------------------------------------------------------
-// filterevaluate
+// Filter evaluation
 // ---------------------------------------------------------------------------
 
 /**
- * Evaluate credit filter.
- * Called before execute-credit; return action of first matched filter.
+ * Evaluate incoming credit filters.
+ * Called before execute-credit; returns the action of the first matching filter.
  *
  * @param bankId        credit bank ID
- * @param accountId     receiving account ID (internal)
- * @param senderBankId  payer bank ID
- * @param senderAccountHash payee account hash
+ * @param accountId     credit account ID (internal ID)
+ * @param senderBankId  sender bank ID
+ * @param senderAccountHash sender account hash
  * @param amountValue   transfer amount
  * @param ediData       message EDI data (nullable)
  * @param txid          ZC transaction ID
@@ -48,7 +48,7 @@ export async function evaluatePaymentFilters(
   txid: string,
   db: D1Database
 ): Promise<FilterEvalResult> {
-  // Get bank-wide + account filter (priority: ACCOUNT > BANK_WIDE)
+  // Fetch bank-wide filters + account filters (priority: ACCOUNT > BANK_WIDE)
   const rows = await db
     .prepare(
       `SELECT * FROM PaymentFilters
@@ -69,7 +69,7 @@ export async function evaluatePaymentFilters(
     });
     if (!matched) continue;
 
-    // matched filter
+    // Matched a filter
     if (filter.action === "REJECT") {
       return {
         matched: true,
@@ -79,7 +79,7 @@ export async function evaluatePaymentFilters(
       };
     }
 
-    // HOLD_CONFIRM / HOLD_MANUAL: generate approval request
+    // HOLD_CONFIRM / HOLD_MANUAL: generate an approval request
     const approvalId = await createApprovalRequest(db, {
       bankId,
       accountId,
@@ -89,7 +89,7 @@ export async function evaluatePaymentFilters(
       senderAccountHash,
       amountValue,
       ediData,
-      // approval deadline: 24 hours from credit hold
+      // Approval deadline: 24 hours from the credit hold
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     });
 
@@ -137,11 +137,11 @@ function matchFilter(
       }
     }
 
-    // EDI_STRUCTURED: structured match by EdiFilterCondition
-    // condition is EdiFilterCondition format: { field, operator, value }
-    // Synchronous call from evaluatePaymentFilters cannot access DB;
-    // Simple evaluate: string match conditions against ediData (purpose text)
-    // Use applyEdiFilter() for complete DB match.
+    // EDI_STRUCTURED: structured matching via EdiFilterCondition
+    // condition is in the EdiFilterCondition format { field, operator, value }
+    // Since DB access is not available in the synchronous call from evaluatePaymentFilters,
+    // perform a simplified evaluation that string-matches the condition against ediData (purpose text).
+    // Use applyEdiFilter() for full DB matching.
     case "EDI_STRUCTURED": {
       const cond = condition as Partial<EdiFilterCondition>;
       if (!cond.field || !cond.operator || cond.value === undefined) return false;
@@ -169,7 +169,7 @@ function matchFilter(
     }
 
     case "REQUIRE_APPROVAL":
-      return true; // Unconditionally triggered
+      return true; // Unconditional trigger
 
     default:
       return false;
@@ -224,7 +224,7 @@ async function createApprovalRequest(
   return approvalId;
 }
 
-/** Record customer approval/denial */
+/** Record the customer's approval/rejection */
 export async function respondToApproval(
   bankId: string,
   approvalId: string,
@@ -240,7 +240,7 @@ export async function respondToApproval(
   if (!approval) return { ok: false, reason: "NOT_FOUND" };
   if (approval.status !== "PENDING") return { ok: false, reason: "ALREADY_RESPONDED" };
 
-  // Execute expiry check and response atomically (single UPDATE to avoid TOCTOU)
+  // Perform the expiry check and response atomically (a single UPDATE avoids TOCTOU)
   const newStatus = req.approved ? "APPROVED" : "REJECTED";
   const respondResult = await db
     .prepare(
@@ -252,7 +252,7 @@ export async function respondToApproval(
     .run();
 
   if (respondResult.meta.changes === 0) {
-    // If expires_at <= now, expired → mark as TIMEOUT
+    // If expires_at <= now it has expired → mark as TIMEOUT
     const timeoutResult = await db
       .prepare(
         `UPDATE PaymentApprovalRequests SET status='TIMEOUT', updated_at=?
@@ -270,7 +270,7 @@ export async function respondToApproval(
   return { ok: true, txid: approval.txid };
 }
 
-/** Update expired approval to TIMEOUT (from timeout_sweep.ts) */
+/** Update expired approval requests to TIMEOUT (called from timeout_sweep.ts) */
 export async function sweepExpiredApprovals(db: D1Database): Promise<number> {
   const now = nowISO();
   const result = await db
@@ -284,7 +284,7 @@ export async function sweepExpiredApprovals(db: D1Database): Promise<number> {
   return result.meta.changes ?? 0;
 }
 
-/** List approval-pending requests */
+/** List of pending approval requests for an account */
 export async function listApprovalRequests(
   bankId: string,
   accountId: string | null,
@@ -407,17 +407,17 @@ export async function deleteFilter(
 }
 
 // ---------------------------------------------------------------------------
-// EDI structured filter: join EdiRecords + Transactions, match conditions
+// EDI structured filter: join EdiRecords + Transactions and match against the conditions
 // ---------------------------------------------------------------------------
 
 /**
- * Search EdiRecords based on EdiFilterCondition;
- * return list of matching transaction IDs.
+ * Search EdiRecords based on the EdiFilterCondition and
+ * return the list of matching transaction IDs.
  *
  * @param db              D1 database
- * @param bankId          filter target bank ID (EdiRecords.created_by_bank_id)
+ * @param bankId          Bank ID to filter on (EdiRecords.created_by_bank_id)
  * @param filterCondition EdiFilterCondition (field / operator / value)
- * @returns array of matching EdiRecordRow (linkable to Transactions by txid)
+ * @returns Array of matching EdiRecordRow (can be linked to Transactions by txid)
  */
 export async function applyEdiFilter(
   db: D1Database,

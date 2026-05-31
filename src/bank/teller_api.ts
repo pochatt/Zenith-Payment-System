@@ -26,7 +26,7 @@ function getTellerHeaders(req: Request): { bankId: string; tellerId: string } | 
 }
 
 // ---------------------------------------------------------------------------
-// POST deposit cash
+// POST /bank/:bankId/v1/teller/cash/deposit  cash deposit
 // ---------------------------------------------------------------------------
 export async function handleCashDeposit(req: Request, bankId: string, env: Env): Promise<Response> {
   const headers = getTellerHeaders(req);
@@ -39,7 +39,7 @@ export async function handleCashDeposit(req: Request, bankId: string, env: Env):
     return jsonError(400, "INVALID_JSON", "invalid json");
   }
 
-  // amountValidation: positive integers only (prevent balance check bypass)
+  // Amount validation: allow only positive integers (prevents bypassing the balance check with a negative amount)
   if (typeof body.amount !== "number" || !Number.isInteger(body.amount) || body.amount <= 0) {
     return jsonError(400, "INVALID_AMOUNT", "amount must be a positive integer");
   }
@@ -52,7 +52,7 @@ export async function handleCashDeposit(req: Request, bankId: string, env: Env):
   if (!account) return jsonError(404, "NOT_FOUND", "account not found");
 
   const txGroupId = `CASH-DEP-${newUUID()}`;
-  // Cash deposit counterpart: Cash(-) / Customer(+)
+  // The counterpart of a cash deposit is the cash (Cash) account -- Cash(-) / Customer(+)
   await insertJournalGroup(env.DB, {
     bankId,
     txGroupId,
@@ -83,7 +83,7 @@ export async function handleCashDeposit(req: Request, bankId: string, env: Env):
 }
 
 // ---------------------------------------------------------------------------
-// POST withdraw cash
+// POST /bank/:bankId/v1/teller/cash/withdrawal  cash withdrawal
 // ---------------------------------------------------------------------------
 export async function handleCashWithdrawal(
   req: Request,
@@ -100,7 +100,7 @@ export async function handleCashWithdrawal(
     return jsonError(400, "INVALID_JSON", "invalid json");
   }
 
-  // amountValidation: positive integers only
+  // Amount validation: only positive integers allowed
   if (typeof body.amount !== "number" || !Number.isInteger(body.amount) || body.amount <= 0) {
     return jsonError(400, "INVALID_AMOUNT", "amount must be a positive integer");
   }
@@ -116,7 +116,7 @@ export async function handleCashWithdrawal(
   if (balance < body.amount) return jsonError(400, "INSUFFICIENT_FUNDS", "insufficient balance");
 
   const txGroupId = `CASH-WD-${newUUID()}`;
-  // Cash withdrawal counterpart: Cash(+) / Customer(-)
+  // The counterpart of a cash withdrawal is the cash (Cash) account -- Cash(+) / Customer(-)
   await insertJournalGroup(env.DB, {
     bankId,
     txGroupId,
@@ -147,7 +147,7 @@ export async function handleCashWithdrawal(
 }
 
 // ---------------------------------------------------------------------------
-// GET /bank/:bankId/v1/teller/accounts/:accountId/journals  journal entryinquiry
+// GET /bank/:bankId/v1/teller/accounts/:accountId/journals  journal entry lookup
 // ---------------------------------------------------------------------------
 export async function handleGetJournals(
   req: Request,
@@ -173,7 +173,7 @@ export async function handleGetJournals(
 }
 
 // ---------------------------------------------------------------------------
-// POST resolve segregated deposit
+// POST /bank/:bankId/v1/teller/suspense/:suspenseId/resolve  segregated deposit (suspense) resolution
 // ---------------------------------------------------------------------------
 export async function handleSuspenseResolve(
   req: Request,
@@ -206,7 +206,7 @@ export async function handleSuspenseResolve(
   const suspAcctId = suspenseAccountId(bankId);
 
   if (body.action === "SETTLE") {
-    // suspense → Savings account
+    // Segregated (suspense) -> ordinary deposit
     await insertJournalGroup(env.DB, {
       bankId,
       txGroupId,
@@ -234,7 +234,7 @@ export async function handleSuspenseResolve(
       .run();
     return json(200, { result: "SETTLED", suspense_id: suspenseId });
   } else {
-    // On RETURN, create journal entry to clear suspense balance
+    // On RETURN, create a journal entry that clears the segregated (suspense) balance
     await insertJournalGroup(env.DB, {
       bankId,
       txGroupId: `SUSP-RETURN-${suspenseId}`,
@@ -266,7 +266,7 @@ export async function handleSuspenseResolve(
 }
 
 // ---------------------------------------------------------------------------
-// GET batch status inquiry
+// GET /bank/:bankId/v1/teller/batch/status  batch processing status lookup
 // ---------------------------------------------------------------------------
 export async function handleBatchStatus(req: Request, bankId: string, env: Env): Promise<Response> {
   const headers = getTellerHeaders(req);
@@ -292,7 +292,7 @@ export async function handleBatchStatus(req: Request, bankId: string, env: Env):
 }
 
 // ---------------------------------------------------------------------------
-// GET teller full account list
+// GET /bank/:bankId/v1/teller/accounts  list of all accounts for tellers
 // ---------------------------------------------------------------------------
 export async function handleTellerListAccounts(
   req: Request,
@@ -341,7 +341,7 @@ export async function handleTellerListAccounts(
 }
 
 // ---------------------------------------------------------------------------
-// POST create account (all-numeric account number)
+// POST /bank/:bankId/v1/teller/accounts  create a new account (all-numeric account number)
 // ---------------------------------------------------------------------------
 export async function handleCreateAccount(
   req: Request,
@@ -376,9 +376,9 @@ export async function handleCreateAccount(
 
   const now = nowISO();
 
-  // Calculate next account: max account in bank + 1
-  // Limit to SAVINGS/CURRENT — exclude system accounts
-  //           Prevent parseInt('-ZCS') = NaN → NaN+1 = NaN breaking account number
+  // Compute the next account number: max account number for the same bank + 1
+  // Restrict to IN ('SAVINGS','CURRENT') -- exclude system accounts such as '003-ZCS' and
+  //           prevent the issue where parseInt('-ZCS') = NaN -> NaN+1 = NaN corrupts the account number
   const maxAcct = await env.DB.prepare(
     `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS', 'CURRENT') ORDER BY CAST(SUBSTR(account_id, 4) AS INTEGER) DESC LIMIT 1`
   )
@@ -392,7 +392,7 @@ export async function handleCreateAccount(
   }
   const accountId = generateAccountId(bankId, nextSeq);
 
-  // Auto-generate customer ID
+  // Auto-generate the customer ID
   const customerId = `C${newUUID().replace(/-/g, "").slice(0, 12)}`;
 
   await env.DB.prepare(
@@ -434,7 +434,7 @@ export async function handleCreateAccount(
 }
 
 // ---------------------------------------------------------------------------
-// PATCH account status change
+// PATCH /bank/:bankId/v1/teller/accounts/:accountId  change account status
 // ---------------------------------------------------------------------------
 export async function handleUpdateAccountStatus(
   req: Request,
@@ -493,7 +493,7 @@ export async function handleUpdateAccountStatus(
 }
 
 // ---------------------------------------------------------------------------
-// GET segregated deposit list
+// GET /bank/:bankId/v1/teller/suspense  segregated deposit (suspense) list
 // ---------------------------------------------------------------------------
 export async function handleListSuspense(
   req: Request,
@@ -526,7 +526,7 @@ export async function handleListSuspense(
 }
 
 // ---------------------------------------------------------------------------
-// GET full journal (accountID as param)
+// GET /bank/:bankId/v1/teller/journals  full journal ledger (account ID is a query parameter)
 // ---------------------------------------------------------------------------
 export async function handleGetAllJournals(
   req: Request,
@@ -558,8 +558,8 @@ export async function handleGetAllJournals(
 }
 
 // ---------------------------------------------------------------------------
-// POST batch create accounts
-// Max 200/request. Also generate journal with initial_deposit
+// POST /bank/:bankId/v1/teller/accounts/batch  bulk account creation
+// Max 200 accounts/request. With initial_deposit, journal entries are also generated at the same time.
 // ---------------------------------------------------------------------------
 export async function handleBatchCreateAccounts(
   req: Request,
@@ -585,8 +585,8 @@ export async function handleBatchCreateAccounts(
   const today = now.slice(0, 10);
   const allowed = ["SAVINGS", "CURRENT"];
 
-  // Get current max account (common)
-  // UUID suffix for uniqueness in concurrency
+  // Fetch the current max account number (shared with existing logic)
+  // To prevent ID collisions from concurrent execution, make it unique with a UUID suffix
   const maxAcct = await env.DB.prepare(
     `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS', 'CURRENT') ORDER BY CAST(SUBSTR(account_id, 4) AS INTEGER) DESC LIMIT 1`
   )
@@ -597,7 +597,7 @@ export async function handleBatchCreateAccounts(
     const currentSeq = parseInt(maxAcct.account_id.slice(3), 10);
     nextSeq = isNaN(currentSeq) ? 1 : currentSeq + 1;
   }
-  // Add random offset to avoid seq collision
+  // To avoid seq collisions from concurrent requests, add a random offset
   nextSeq += Math.floor(Math.random() * 1000000);
 
   const stmts: ReturnType<D1Database["prepare"]>[] = [];
@@ -666,7 +666,7 @@ export async function handleBatchCreateAccounts(
     nextSeq++;
   }
 
-  // D1 batch: 200 accounts × 3 statements = max 600 (within limit)
+  // D1 batch: 200 accounts x 3 statements = max 600 (within the limit)
   if (stmts.length > 0) await env.DB.batch(stmts);
 
   return json(201, { result: "BATCH_CREATED", count: created.length, created });

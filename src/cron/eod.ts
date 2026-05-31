@@ -4,7 +4,7 @@
  * limit reset, and audit logging.
  * @module cron/eod
  */
-// 3. Bank side: interest calc, daily snapshot
+// 3. Bank side: interest calculation, daily snapshot
 // 4. Zero-sum validation
 import type { Env } from "../types";
 import { todayJST } from "../types";
@@ -24,7 +24,7 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
 
   try {
     // 1. BULK preprocessing: RECEIVED → DECIDED_TO_SETTLE
-    // Execute before kickDns so today's OPEN cycle gets correct dns_cycle_id
+    // Running this before kickDns ensures the dns_cycle_id of the day's OPEN cycle is assigned correctly
     const bulkReceived = await db
       .prepare(`SELECT txid FROM Transactions WHERE lane='BULK' AND state='RECEIVED'`)
       .all<{ txid: string }>();
@@ -38,14 +38,14 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
     const kickResult = await kickDns(today, env);
     log.push(`DNS Kick: cycle=${kickResult.cycle_id} state=${kickResult.state}`);
 
-    // 3. DNS settlement (mock: immediate SETTLED)
-    // settleDns executes through enqueuing ZC_BANK_DEBIT for BULK
+    // 3. DNS settlement (mock: immediately SETTLED)
+    // settleDns internally goes as far as enqueuing ZC_BANK_DEBIT for BULK DECIDED_TO_SETTLE TX
     if (kickResult.state === "KICKED") {
       await settleDns(kickResult.cycle_id, env);
       log.push(`DNS Settled: ${kickResult.cycle_id}`);
     }
 
-    // 4. HTLC expiredcheck
+    // 4. HTLC expiry check
     const expiredHtlcs = await db
       .prepare(
         `SELECT htlc_id, txid FROM HtlcContracts WHERE state IN ('HTLC_RECEIVED','HTLC_LOCKED') AND timelock < ?`
@@ -54,12 +54,12 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
       .all<{ htlc_id: string; txid: string }>();
 
     for (const htlc of expiredHtlcs.results) {
-      // Pass env; also notify bank-side suspense release
+      // Pass env to also send the bank-side suspense release notification (reserve-funds has already run when HTLC_LOCKED)
       await cancelHtlc(htlc.htlc_id, htlc.txid, "TIMELOCK_EXPIRED", db, env);
       log.push(`HTLC expired: ${htlc.htlc_id}`);
     }
 
-    // 5. Interest calc + balance snapshot
+    // 5. Interest calculation + balance snapshot
     const accounts = await db
       .prepare(`SELECT DISTINCT bank_id, account_id FROM BankAccounts WHERE status='NORMAL'`)
       .all<{ bank_id: string; account_id: string }>();
@@ -91,7 +91,7 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
       }
     }
 
-    // 7. Daily fund transfer total reset (tx_amount_limit/daily_amount_limit)
+    // 7. Reset participating banks' daily cumulative transfer totals (for tx_amount_limit/daily_amount_limit)
     try {
       const today = todayJST();
       await db
@@ -107,16 +107,16 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
       }
     }
 
-    // 8. Notification/IGS retries, SSE event pruning
+    // 8. Notification retry / IGS retry / SSE event pruning
     await retryPendingNotifications(db, env);
     await retryFailedIgs(db, env);
     await pruneDeliveredEvents(db);
     log.push("Notification retry, IGS retry, event prune: done");
 
-    // 9. Daily FinalityLog hash chain audit
-    // Scan chain; detect tampering (prev_hash break, entry_hash mismatch)
-    // Converge to CASE. Preserve FinalityLog's single truth
-    // Confirm daily without waiting for inquiry
+    // 9. FinalityLog hash chain daily audit
+    // Scan the entire chain, and if tampering (prev_hash break / entry_hash mismatch) is detected,
+    // converge to CASE. The integrity of FinalityLog, the single source of truth for explainability,
+    // is verified daily, without waiting for someone to look up an individual txid.
     const audit = await runFinalityChainAudit(env);
     log.push(
       `Finality audit: ${audit.chains_checked} chains / ${audit.entries_checked} entries, ` +

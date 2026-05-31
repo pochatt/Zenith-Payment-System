@@ -118,8 +118,8 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
     return json(200, existing);
   }
 
-  // Amount limit check / RECEIVE_ONLY participation mode check
-  // If migration is not applied and 'no such column' error occurs, log details and fallback
+  // Amount limit check / RECEIVE_ONLY participation type check
+  // On a 'no such column' error caused by an unapplied migration, log details and fall back
   let participant: {
     tx_amount_limit?: number | null;
     daily_amount_limit?: number | null;
@@ -144,7 +144,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       }>();
   } catch (e: any) {
     if (e.message && e.message.includes("no such column")) {
-      // If migration not applied: limits not enforced, no RECEIVE_ONLY check
+      // When the migration is unapplied: limits are not enforced and the RECEIVE_ONLY check is not performed
       console.error(
         `[ingress] Schema incomplete: missing columns in Participants table. Migration 0010+ may not have been applied. Error: ${e.message}`
       );
@@ -160,7 +160,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
     }
   }
 
-  // Receive-only participating banks cannot initiate fund transfer
+  // A destination-only participating bank (RECEIVE_ONLY) cannot be a remittance originator
   if (participant?.participation_mode === "RECEIVE_ONLY") {
     await completeIdempotency(
       idempKey,
@@ -197,9 +197,9 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
     try {
       const today = nowISO().slice(0, 10); // 'YYYY-MM-DD'
 
-      // Even if EOD cron fails, auto-reset on first request of day
-      // daily_amount_last_reset_date が今日以前であれば used を 0 にリセットしてから加算。
-      // Date check + addition in 1 statement to prevent TOCTOU
+      // Auto-reset on the day's first request even if the EOD cron failed or was delayed.
+      // If daily_amount_last_reset_date is on or before today, reset used to 0 before adding.
+      // Perform the date check and the addition in a single statement to prevent TOCTOU.
       if (participant.daily_amount_last_reset_date !== today) {
         const upd = await db
           .prepare(
@@ -222,7 +222,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
           success = upd2.meta.changes > 0;
         }
       } else {
-        // atomicに加算し、超過時は rows=0 になる
+        // Add atomically; on overflow rows=0
         const upd = await db
           .prepare(
             `UPDATE Participants SET daily_amount_used = daily_amount_used + ?
@@ -234,7 +234,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       }
     } catch (e: any) {
       if (e.message && e.message.includes("no such column")) {
-        // If schema incomplete: warn, continue unrestricted (dev convenience)
+        // When the schema is incomplete: log a warning and continue with no limits (for convenience in dev environments)
         console.error(
           `[ingress] Schema incomplete: daily_amount_used column missing. Migration 0010+ may not have been applied. Daily limits will be ignored. Error: ${e.message}`
         );
@@ -259,8 +259,8 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
   }
 
   // HIGH_VALUE auto-escalation
-  // If amount ≥ threshold in STANDARD/EXPRESS, auto-switch to HIGH_VALUE
-  // Threshold priority: bank set > env var > default (100M)
+  // For STANDARD or EXPRESS, when the amount is at or above the threshold, automatically switch to the HIGH_VALUE lane.
+  // Threshold priority: participating bank setting (hv_threshold) > environment variable (ZC_HV_THRESHOLD) > default (100 million yen)
   const DEFAULT_HV_THRESHOLD = 100_000_000;
   const hvThreshold =
     participant?.hv_threshold ??
@@ -270,7 +270,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
     body.lane = "HIGH_VALUE";
   }
 
-  // Transactions レコード挿入
+  // Insert Transactions record
   const now = nowISO();
   const isCrossBorder = body.is_cross_border === 1 || body.is_cross_border === true ? 1 : 0;
   const fatfDataJson = isCrossBorder && body.fatf_data ? JSON.stringify(body.fatf_data) : null;
@@ -352,11 +352,11 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       break;
     case "RTP":
       result = { result: "INGRESS_ACCEPTED", txid: body.txid, state: "RECEIVED" };
-      // RTP: Link RTP invoice and fund transfer TX (REQUESTED → ATTEMPTED)
+      // RTP: link the RTP request to the remittance TX (REQUESTED → ATTEMPTED)
       if (body.pspr_ref) {
         await attemptRtp(body.pspr_ref, body.txid, env);
       }
-      // Proceed settlement in STANDARD flow
+      // Proceed with settlement processing using the same flow as STANDARD
       await env.QUEUE.send({
         type: "ZC_STATE_ADVANCE",
         payload: { txid: body.txid, action: "ADVANCE_STANDARD" },
@@ -366,7 +366,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       });
       break;
     case "HTLC":
-      // HTLC uses dedicated endpoint POST /api/htlc/create
+      // HTLC uses the dedicated endpoint POST /api/htlc/create
       await completeIdempotency(
         idempKey,
         { result: "REJECTED", reason_code: "USE_HTLC_ENDPOINT" },
@@ -381,7 +381,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       result = { result: "INGRESS_ACCEPTED", txid: body.txid, state: "RECEIVED" };
   }
 
-  // EDI linkage: if edi_ref specified, link to transaction
+  // EDI integration: if edi_ref is specified, link it to the transaction
   const bodyAny3 = body as any;
   if (bodyAny3.edi_ref) {
     await linkEdiToTransaction(db, body.txid, bodyAny3.edi_ref).catch((e) =>
@@ -535,8 +535,8 @@ export async function handlePostCancel(req: Request, txid: string, env: Env): Pr
     return jsonError(409, "INVALID_STATE", `Cannot cancel tx in state ${tx.state}`);
   }
 
-  // CAS + FinalityLog + H release + finalize consolidated in cancelInFlightTx
-  // Only bank suspense release is ingress-specific; call separately
+  // CAS + FinalityLog + H release + finalize are consolidated into cancelInFlightTx.
+  // Only the bank-side segregated deposit release is ingress-specific, so it is called separately.
   const cancelled = await cancelInFlightTx(db, {
     txid,
     reasonCode: body.reason_code,
@@ -605,14 +605,14 @@ export async function handlePostParticipantRegister(req: Request, env: Env): Pro
 }
 
 // ---------------------------------------------------------------------------
-// POST seed Full reset → load initial data
+// POST /internal/seed  reset all data → load initial data
 // ---------------------------------------------------------------------------
 export async function handleSeed(env: Env): Promise<Response> {
   const db = env.DB;
   const now = nowISO();
 
-  // 1) Delete all tables (ZC → Bank dependency order)
-  // Execute individually so continue if table missing
+  // 1) Drop all tables (in ZC → Bank dependency order)
+  // Execute individually so it can continue even if a table does not exist
   const deleteTargets = [
     "TxEventLog",
     "BankAuditLog",
@@ -640,7 +640,7 @@ export async function handleSeed(env: Env): Promise<Response> {
     "BankJournals",
     "BankAccounts",
     "InterestRates",
-    // table added in migration 0003+
+    // Tables added in migration 0003+
     "AccountVerifications",
     "CreditNotifications",
     "CrossBorderTransactions",
@@ -651,7 +651,7 @@ export async function handleSeed(env: Env): Promise<Response> {
     "QrCodes",
     "RichDataStore",
   ];
-  // Hardcoded table names only (prevent SQL identifier injection)
+  // Only table names from the hardcoded list are allowed (to prevent SQL identifier injection)
   const ALLOWED_TABLES = new Set(deleteTargets);
   for (const t of deleteTargets) {
     if (!ALLOWED_TABLES.has(t) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) continue;
@@ -662,9 +662,9 @@ export async function handleSeed(env: Env): Promise<Response> {
     }
   }
 
-  // 2) Load initial data (all-numeric system: BBBAAAAAAA)
+  // 2) Load initial data (all-numeric account number scheme: BBBAAAAAAA)
   await db.batch([
-    // Participants（ZCparticipating bank）
+    // Participants (ZC participating banks)
     db
       .prepare(`INSERT INTO Participants (bank_id, bank_name, ingress_base_url, h_limit, h_used, is_active, registered_at)
       VALUES ('001','長岡銀行','/bank/001',100000000,0,1,?)`)
@@ -674,14 +674,14 @@ export async function handleSeed(env: Env): Promise<Response> {
       VALUES ('002','尾張銀行','/bank/002',100000000,0,1,?)`)
       .bind(now),
 
-    // BankAccounts (3-digit bank code + 7-digit serial; suspense=BBB0000000, ZCS=BBB-ZCS)
+    // BankAccounts (account number: 3-digit bank code + 7-digit sequence, segregated=BBB0000000, ZCS=BBB-ZCS)
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('0010000001','001','C001','田中 太郎','SAVINGS','NORMAL','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('0010000002','001','C002','佐藤 花子','SAVINGS','NORMAL','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('0010000000','001','SYSTEM','別段預金','SUSPENSE','NORMAL','2025-01-01T00:00:00Z')`),
-    // ZC settlement (BOJ Checking equiv): negative = ZC owes (bank asset)
+    // ZC settlement account (equivalent to a BOJ current account): negative balance = ZC owes this bank (this bank's settlement asset)
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('001-ZCS','001','SYSTEM','ZC清算勘定','SETTLEMENT','NORMAL','2025-01-01T00:00:00Z')`),
     // Cash account
@@ -704,10 +704,10 @@ export async function handleSeed(env: Env): Promise<Response> {
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('002-BOJ','002','BOJ','日本銀行（預け金勘定）','BOJ','NORMAL','2025-01-01T00:00:00Z')`),
 
-    // BankJournals (init: 1M yen each)
-    // Zero-sum: customer account(+) / ZC settlement(−) pair
-    //   ZCS(−) = 'ZC owes 2M' = bank's settlement asset (BOJ current equiv)
-    //   Suspense starts 0 (balance moves only during fund transfer; intermediate account)
+    // BankJournals (initial balance 1 million yen each)
+    // Zero-sum: customer account (+) / ZC settlement account (−) pair
+    //   ZCS(−) = "ZC owes this bank 2M" = this bank's initial settlement asset (equivalent to a BOJ current account)
+    //   Suspense starts at 0 (an intermediate account whose balance only moves during a transfer)
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
       VALUES ('JNL-INIT-001-1','001','0010000001',1000000,'CASH','INIT-001','初期残高','2025-01-01','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
@@ -725,9 +725,9 @@ export async function handleSeed(env: Env): Promise<Response> {
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
       VALUES ('JNL-INIT-002-2X','002','002-ZCS',-1000000,'CASH','INIT-002','初期ZC清算残高 offset','2025-01-01','2025-01-01T00:00:00Z')`),
 
-    // BOJ initial prefunding (HIGH_VALUE RTGS: 100 billion per bank)
-    // Zero-sum: BOJ(-1000B) / ZCS(+1000B) pairing
-    // calcBalance negative = balance exists. Positive = BOJ_INSUFFICIENT_FUNDS
+    // BOJ initial prefunding (for HIGH_VALUE RTGS: 100 billion yen per bank)
+    // Zero-sum: BOJ(-1000B) / ZCS(+1000B) offsetting
+    // calcBalance('BBB-BOJ') negative = funded balance exists. If it becomes positive, BOJ_INSUFFICIENT_FUNDS
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
       VALUES ('JNL-INIT-001-BOJ','001','001-BOJ',-100000000000,'CASH','INIT-001-BOJ','BOJ初期プレファンド','2025-01-01','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
@@ -752,7 +752,7 @@ export async function handleSeed(env: Env): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/banks/add Add new bank
+// POST /api/banks/add  add a new bank
 // ---------------------------------------------------------------------------
 export async function handleAddBank(req: Request, env: Env): Promise<Response> {
   const body = await parseBody<{ bank_name: string; h_limit?: number }>(req);
@@ -762,13 +762,13 @@ export async function handleAddBank(req: Request, env: Env): Promise<Response> {
   const db = env.DB;
   const now = nowISO();
 
-  // Auto-assign next bank code: max bank_id + 1
+  // Auto-assign the next bank code: existing maximum bank_id + 1
   const maxBank = await db
     .prepare(`SELECT bank_id FROM Participants ORDER BY bank_id DESC LIMIT 1`)
     .first<{ bank_id: string }>();
   const nextCode = String(parseInt(maxBank?.bank_id ?? "000", 10) + 1).padStart(3, "0");
 
-  // ZC 側: participating bank登録のみ（account管理はbankの責任）
+  // ZC side: register the participating bank only (account management is the bank's responsibility)
   await db
     .prepare(
       `INSERT INTO Participants (bank_id, bank_name, ingress_base_url, h_limit, h_used, is_active, registered_at)
@@ -777,7 +777,7 @@ export async function handleAddBank(req: Request, env: Env): Promise<Response> {
     .bind(nextCode, body.bank_name, `/bank/${nextCode}`, body.h_limit ?? 100000000, now)
     .run();
 
-  // Bank-side: request init via bank ingress (bank accountable for account mgmt)
+  // Bank side: request account and journal entry initialization via the bank ingress (core principle: each financial institution is responsible for managing its own accounts)
   const { handleBankIngress } = await import("../bank/ingress");
   await handleBankIngress(
     nextCode,
@@ -790,12 +790,12 @@ export async function handleAddBank(req: Request, env: Env): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
-// DELETE /api/banks/:bankId  bankdelete
+// DELETE /api/banks/:bankId  delete a bank
 // ---------------------------------------------------------------------------
 export async function handleDeleteBank(bankId: string, env: Env): Promise<Response> {
   const db = env.DB;
 
-  // Confirm no valid transaction
+  // Check whether there are any active transactions
   const activeTx = await db
     .prepare(
       `SELECT COUNT(*) AS cnt FROM Transactions WHERE (payer_bank_id=? OR payee_bank_id=?) AND state NOT IN ('SETTLED','CANCELLED','FAILED_EXECUTION')`
@@ -810,11 +810,11 @@ export async function handleDeleteBank(bankId: string, env: Env): Promise<Respon
     );
   }
 
-  // Bank-side: request delete via bank ingress (bank accountable for account mgmt)
+  // Bank side: request account and journal entry deletion via the bank ingress (core principle: each financial institution is responsible for managing its own accounts)
   const { handleBankIngress } = await import("../bank/ingress");
   await handleBankIngress(bankId, "cleanup-bank", {}, env);
 
-  // ZC 側: participating bankデータのみdelete
+  // ZC side: delete the participating bank data only
   await db.batch([
     db.prepare("DELETE FROM SuspenseDetails WHERE bank_id=?").bind(bankId),
     db.prepare("DELETE FROM ZcRequests WHERE bank_id=?").bind(bankId),
@@ -825,7 +825,7 @@ export async function handleDeleteBank(bankId: string, env: Env): Promise<Respon
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/banks  bank一覧
+// GET /api/banks  bank list
 // ---------------------------------------------------------------------------
 export async function handleListBanks(env: Env): Promise<Response> {
   const rows = await env.DB.prepare(`SELECT * FROM Participants ORDER BY bank_id ASC`).all();
@@ -833,7 +833,7 @@ export async function handleListBanks(env: Env): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/banks/:bankId/accounts  bankの全account（名義confirmation用）
+// GET /api/banks/:bankId/accounts  all accounts of a bank (for account holder name verification)
 // ---------------------------------------------------------------------------
 export async function handleBankAccounts(bankId: string, env: Env): Promise<Response> {
   const rows = await env.DB.prepare(
@@ -845,7 +845,7 @@ export async function handleBankAccounts(bankId: string, env: Env): Promise<Resp
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/accounts/:accountId/name  account名義inquiry（account number→名義人名）
+// GET /api/accounts/:accountId/name  account holder name lookup (account number → holder name)
 // ---------------------------------------------------------------------------
 export async function handleAccountNameLookup(accountId: string, env: Env): Promise<Response> {
   const { bankCodeFromAccount } = await import("../types");
@@ -862,11 +862,11 @@ export async function handleAccountNameLookup(accountId: string, env: Env): Prom
       account_type: string;
     }>();
   if (!account) return jsonError(404, "NOT_FOUND", "account not found");
-  // System accounts cannot be transfer destinations
+  // System accounts (segregated deposit, settlement account, etc.) cannot be used as transfer destinations
   if (account.account_type !== "SAVINGS") {
     return jsonError(422, "ACCOUNT_NOT_TRANSFERABLE", "this account cannot receive transfers");
   }
-  // Also get bank name
+  // Also fetch the bank name
   const bank = await env.DB.prepare(`SELECT bank_name FROM Participants WHERE bank_id=?`)
     .bind(bankCode)
     .first<{ bank_name: string }>();
@@ -880,7 +880,7 @@ export async function handleAccountNameLookup(accountId: string, env: Env): Prom
 }
 
 // ---------------------------------------------------------------------------
-// POST sim setup Large-scale simulator init
+// POST /internal/sim/setup  large-scale simulator initialization (server-side bulk processing)
 // ---------------------------------------------------------------------------
 export async function handleSimSetup(req: Request, env: Env): Promise<Response> {
   const t0 = Date.now();
@@ -891,19 +891,19 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
     /* use defaults */
   }
 
-  const bankCount = Math.min(params.bank_count ?? 18, 50); // 003~020 (max 50)
-  const accountsPerBank = Math.min(params.accounts_per_bank ?? 200, 500); // Max 500
+  const bankCount = Math.min(params.bank_count ?? 18, 50); // 003–020 (max 50)
+  const accountsPerBank = Math.min(params.accounts_per_bank ?? 200, 500); // max 500
   const personalRatio = Math.max(0, Math.min(params.personal_ratio ?? 0.9, 1));
   const db = env.DB;
   const now = nowISO();
   const today = now.slice(0, 10);
 
-  // Step 1: seed reset (init 001/002)
+  // Step 1: seed reset (initialize 001/002)
   const seedReq = new Request("http://internal/internal/seed", { method: "POST" });
-  await handleSeed(env); // Ignore return (goal: DB init)
+  await handleSeed(env); // Ignore the return value (the goal is DB initialization)
 
-  // Step 2: add banks 003~(002+count)
-  // handleAddBank uses 'max+1'; execute sequentially
+  // Step 2: add banks 003–(002+bankCount)
+  // handleAddBank assigns numbers as "existing maximum + 1", so run sequentially
   const bankIds: string[] = [];
   for (let i = 0; i < bankCount; i++) {
     const maxBank = await db
@@ -948,7 +948,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
          VALUES (?, ?, 'SAVINGS', 0.001, ?)`
         )
         .bind(`RATE-${nextCode}-SAVINGS`, nextCode, today),
-      // BOJ initial prefunding (HIGH_VALUE RTGS: 100 billion yen)
+      // BOJ initial prefunding (for HIGH_VALUE RTGS: 100 billion yen)
       db
         .prepare(
           `INSERT OR IGNORE INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
@@ -979,8 +979,8 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
     bankIds.push(nextCode);
   }
 
-  // Step 3: batch create accounts per bank (+ init deposit)
-  // D1 batch ~1000 statements/call; 200 accounts = max 400 stmts → fits 1 bank
+  // Step 3: bulk-create accountsPerBank accounts for each bank (+ initial deposit)
+  // D1 batch handles ~1000 statements per call, so 200 accounts = max 400 stmt → fits in one batch
   let totalAccounts = 0;
   const personalCount = Math.round(accountsPerBank * personalRatio);
   const corporateCount = accountsPerBank - personalCount;
@@ -1001,7 +1001,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
 
   for (const bankId of bankIds) {
     const stmts: ReturnType<D1Database["prepare"]>[] = [];
-    // Get max serial (common)
+    // Get the maximum sequence number of existing accounts (shared with existing logic)
     const maxAcct = await db
       .prepare(
         `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS','CURRENT') ORDER BY CAST(SUBSTR(account_id, 4) AS INTEGER) DESC LIMIT 1`
@@ -1023,7 +1023,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
       const customerName = `${nameBase}${(j + 1).toString().padStart(3, "0")}`;
       const customerId = `C${bankId}${seq.toString().padStart(6, "0")}`;
       const accountId = `${bankId}${seq.toString().padStart(7, "0")}`;
-      const deposit = isPersonal ? 1_000_000 : 5_000_000; // Individual 1M / Corporate 5M
+      const deposit = isPersonal ? 1_000_000 : 5_000_000; // Individual 1,000,000 / Corporate 5,000,000
 
       stmts.push(
         db
@@ -1073,7 +1073,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
 
       seq++;
     }
-    // Split every 300 stmts to avoid D1 batch limit
+    // Split into chunks of 300 stmt to avoid the D1 batch limit
     for (let k = 0; k < stmts.length; k += 300) {
       await db.batch(stmts.slice(k, k + 300));
     }
@@ -1089,8 +1089,8 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
 }
 
 // ---------------------------------------------------------------------------
-// POST sim setup-bank Batch create 1 bank's accounts
-// Frontend controls progress by calling bank_index sequentially
+// POST /internal/sim/setup-bank  Simulator: bulk-create accounts for one bank
+// The frontend controls progress by calling bank_index=0..N-1 in sequence
 // ---------------------------------------------------------------------------
 export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Response> {
   const t0 = Date.now();
@@ -1109,9 +1109,9 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
   const today = now.slice(0, 10);
 
   // bank_index=0 → bank 003, bank_index=1 → bank 004 …
-  // Calculate by index, not max + 1 (post-seed: 001/002 only)
+  // Compute directly from index rather than max existing bank_id + 1 (after seeding, only 001/002 exist)
   const nextCode = String(3 + bankIndex).padStart(3, "0");
-  // Same bank name mapping as frontend SIM_BANKS
+  // Same bank name mapping as the frontend's SIM_BANKS
   const BANK_NAMES: Record<string, string> = {
     "003": "加賀銀行",
     "004": "肥前銀行",
@@ -1172,7 +1172,7 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
        VALUES (?, ?, 'SAVINGS', 0.001, ?)`
       )
       .bind(`RATE-${nextCode}-SAVINGS`, nextCode, today),
-    // BOJ initial prefunding (HIGH_VALUE RTGS: 100 billion yen)
+    // BOJ initial prefunding (for HIGH_VALUE RTGS: 100 billion yen)
     db
       .prepare(
         `INSERT OR IGNORE INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
@@ -1201,7 +1201,7 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
       ),
   ]);
 
-  // Batch create customer accounts every 300 stmts
+  // Batch-create customer accounts in chunks of 300 stmt
   const personalCount = Math.round(accountsPerBank * personalRatio);
   const corporateCount = accountsPerBank - personalCount;
   const personalNames = [
@@ -1278,13 +1278,13 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
     );
   }
 
-  // Execute batch + confirm created count
+  // Execute the batch + verify the actual number created
   let actualCreated = 0;
   for (let k = 0; k < stmts.length; k += 300) {
     await db.batch(stmts.slice(k, k + 300));
   }
 
-  // Confirm actual account creation count
+  // Verify the actual number of accounts created
   const checkResult = await db
     .prepare(
       `SELECT COUNT(*) AS cnt FROM BankAccounts WHERE bank_id = ? AND account_type IN ('SAVINGS', 'CURRENT')`
@@ -1303,10 +1303,10 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
 }
 
 // ---------------------------------------------------------------------------
-// HTLC Auth (payee-initiated authorization) handler group
+// HTLC Auth (payee-initiated, authorization-style) handlers
 // ---------------------------------------------------------------------------
 
-/** POST /api/htlc/auth-request  receipt側がオーソリリクエストをsend */
+/** POST /api/htlc/auth-request  Payee sends an authorization request */
 export async function handleHtlcAuthRequest(req: Request, env: Env): Promise<Response> {
   const body = await parseBody<HtlcAuthRequestInput>(req);
   if (!body) return jsonError(400, "INVALID_JSON", "invalid body");
@@ -1332,7 +1332,7 @@ export async function handleHtlcAuthRequest(req: Request, env: Env): Promise<Res
   return json(201, result);
 }
 
-/** POST /api/htlc/auth/:auth_id/approve  fund transfer側がapproval */
+/** POST /api/htlc/auth/:auth_id/approve  Payer approves */
 export async function handleHtlcAuthApprove(
   req: Request,
   authId: string,
@@ -1345,7 +1345,7 @@ export async function handleHtlcAuthApprove(
   return json(200, result);
 }
 
-/** POST /api/htlc/auth/:auth_id/decline  fund transfer側がdenial */
+/** POST /api/htlc/auth/:auth_id/decline  Payer declines */
 export async function handleHtlcAuthDecline(
   req: Request,
   authId: string,
@@ -1362,7 +1362,7 @@ export async function handleHtlcAuthDecline(
   return json(200, result);
 }
 
-/** POST /api/htlc/:htlc_id/capture  receipt側がキャプチャ（Vault からpreimagegetして自動claim） */
+/** POST /api/htlc/:htlc_id/capture  Payee captures (fetches preimage from Vault and auto-claims) */
 export async function handleHtlcCapture(req: Request, htlcId: string, env: Env): Promise<Response> {
   const body = await parseBody<{ idempotency_key: string }>(req);
   if (!body?.idempotency_key) return jsonError(400, "MISSING_FIELDS", "idempotency_key required");
@@ -1371,7 +1371,7 @@ export async function handleHtlcCapture(req: Request, htlcId: string, env: Env):
   return json(200, result);
 }
 
-/** POST /api/htlc/:htlc_id/void  receipt側またはfund transfer側がボイド（cancelled） */
+/** POST /api/htlc/:htlc_id/void  Payee or payer voids (cancels) */
 export async function handleHtlcVoid(req: Request, htlcId: string, env: Env): Promise<Response> {
   const body = await parseBody<{ reason?: string; idempotency_key: string }>(req);
   if (!body?.idempotency_key) return jsonError(400, "MISSING_FIELDS", "idempotency_key required");
@@ -1384,7 +1384,7 @@ export async function handleHtlcVoid(req: Request, htlcId: string, env: Env): Pr
   return json(200, result);
 }
 
-/** GET /api/htlc/auth-requests  オーソリリクエスト一覧 */
+/** GET /api/htlc/auth-requests  List authorization requests */
 export async function handleListHtlcAuthRequests(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const rows = await listAuthRequests(env.DB, {
@@ -1396,7 +1396,7 @@ export async function handleListHtlcAuthRequests(req: Request, env: Env): Promis
   return json(200, { auth_requests: rows });
 }
 
-/** GET /api/htlc/auth/:auth_id  オーソリリクエストdetail */
+/** GET /api/htlc/auth/:auth_id  Authorization request details */
 export async function handleGetHtlcAuthRequest(authId: string, env: Env): Promise<Response> {
   const row = await getAuthRequest(authId, env.DB);
   if (!row) return jsonError(404, "NOT_FOUND", `auth_id ${authId} not found`);
@@ -1416,7 +1416,7 @@ function isAdminAuthorized(req: Request, env: Env): boolean {
   return !!adminKey && provided === adminKey;
 }
 
-/** POST /api/htlc/auth-whitelist  ホワイトlist登録（管理者専用） */
+/** POST /api/htlc/auth-whitelist  Register whitelist entry (admin only) */
 export async function handleRegisterAuthWhitelist(req: Request, env: Env): Promise<Response> {
   if (!isAdminAuthorized(req, env)) {
     return jsonError(403, "FORBIDDEN", "X-Admin-Key required for whitelist registration");
@@ -1429,7 +1429,7 @@ export async function handleRegisterAuthWhitelist(req: Request, env: Env): Promi
   return json(201, result);
 }
 
-/** DELETE /api/htlc/auth-whitelist/:whitelist_id  ホワイトlistdelete */
+/** DELETE /api/htlc/auth-whitelist/:whitelist_id  Delete whitelist entry */
 export async function handleRevokeAuthWhitelist(
   whitelistId: string,
   req: Request,
@@ -1443,7 +1443,7 @@ export async function handleRevokeAuthWhitelist(
   return json(200, { result: "REVOKED", whitelist_id: whitelistId });
 }
 
-/** GET /api/htlc/auth-whitelist  ホワイトlist一覧 */
+/** GET /api/htlc/auth-whitelist  List whitelist entries */
 export async function handleListAuthWhitelist(env: Env): Promise<Response> {
   const rows = await listAuthWhitelist(env.DB);
   return json(200, { whitelist: rows });

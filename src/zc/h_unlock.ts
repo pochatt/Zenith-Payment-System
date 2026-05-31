@@ -5,7 +5,7 @@
  * is promoted to LOCKED and normally only released when the DNS cycle settles.
  * But if execution never completes (the row ends up SUSPENDED → FAILED_EXECUTION
  * with `a` never confirmed), that locked capacity would otherwise pin the payer
- * bank's sending limit forever — an operational deadlock the spec calls "詰み".
+ * bank's sending limit forever — an operational deadlock the spec calls a "stalemate".
  *
  * Two release paths exist, and both share one non-negotiable money-safety gate:
  *

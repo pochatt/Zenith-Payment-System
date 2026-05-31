@@ -9,8 +9,8 @@ import type { RichDataStoreRow, RichDataStoreRequest, RichDataType } from "../ty
 const R2_THRESHOLD_BYTES = 50 * 1024;
 
 // ---------------------------------------------------------------------------
-// Register rich data
-// Large data (>50KB) in R2; content_json has summary only
+// Rich data registration
+// Large data (>50KB) is stored in R2; content_json holds only the summary
 // ---------------------------------------------------------------------------
 export async function storeRichData(
   db: D1Database,
@@ -86,7 +86,7 @@ export async function storeRichData(
 }
 
 // ---------------------------------------------------------------------------
-// Get rich data (data_ref)
+// Fetch rich data (data_ref)
 // ---------------------------------------------------------------------------
 export async function getRichData(
   db: D1Database,
@@ -102,7 +102,7 @@ export async function getRichData(
 }
 
 // ---------------------------------------------------------------------------
-// List rich data linked to txid
+// List of rich data linked to a txid
 // ---------------------------------------------------------------------------
 export async function listRichDataByTxid(
   db: D1Database,
@@ -118,7 +118,7 @@ export async function listRichDataByTxid(
 }
 
 // ---------------------------------------------------------------------------
-// Content hash calc (SHA-256 of JSON)
+// Compute content hash (SHA-256 of JSON)
 // ---------------------------------------------------------------------------
 export async function computeContentHash(content: object): Promise<string> {
   const json = JSON.stringify(content);
@@ -128,7 +128,7 @@ export async function computeContentHash(content: object): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers: generate D1 summary for R2
+// Internal helper: generate the D1 summary when storing to R2
 // ---------------------------------------------------------------------------
 function buildSummary(
   content: Record<string, unknown>,
@@ -185,7 +185,7 @@ function buildSummary(
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers: ArrayBuffer → hex
+// Internal helper: ArrayBuffer → hex string
 // ---------------------------------------------------------------------------
 function bufToHex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf))

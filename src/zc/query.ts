@@ -66,19 +66,19 @@ export async function handleGetTransaction(txid: string, env: Env): Promise<Resp
           : "WAIT";
 
   // ---------------------------------------------------------------------------
-  // inquiry metadata (spec: operations > metadata)
+  // Query meta information (spec: Operational Design > Query Meta Information)
   // ---------------------------------------------------------------------------
 
-  // watermark: latest event_seq in FinalityLog for this tx
-  // 窓口が「どこまで反映されたinformationか」をconfirmationできる
+  // watermark: the latest event_seq of the FinalityLog for this transaction
+  // Lets the teller verify "how up-to-date the information is"
   const watermarkRow = await db
     .prepare(`SELECT MAX(event_seq) AS wm FROM FinalityLog WHERE txid = ?`)
     .bind(txid)
     .first<{ wm: number | null }>();
   const watermark = watermarkRow?.wm ?? 0;
 
-  // next_retry_at: 次回inquiry推奨時刻（状態に応じて算出）
-  // Terminal null (won't change); intermediate: recommend 5-30 sec later
+  // next_retry_at: recommended time for the next query (computed based on state)
+  // Terminal states are null (no further change); intermediate states recommend 5-30 seconds later
   const now = new Date();
   let nextRetryAt: string | null = null;
   if (["SETTLED", "CANCELLED", "FAILED_EXECUTION"].includes(tx.state)) {
@@ -93,7 +93,7 @@ export async function handleGetTransaction(txid: string, env: Env): Promise<Resp
     nextRetryAt = new Date(now.getTime() + 10_000).toISOString(); // 10s — default
   }
 
-  // freshness_level: GREEN=latest, YELLOW=stale, RED=major delay
+  // freshness_level: GREEN=latest, YELLOW=slightly stale, RED=significantly delayed
   const updatedAgo = now.getTime() - new Date(tx.updated_at).getTime();
   const freshness = updatedAgo < 10_000 ? "GREEN" : updatedAgo < 60_000 ? "YELLOW" : "RED";
 
@@ -216,7 +216,7 @@ export async function handleGetCase(caseId: string, env: Env): Promise<Response>
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/transactions  (一覧: dashboard用)
+// GET /api/transactions  (list: for the dashboard)
 // ---------------------------------------------------------------------------
 export async function handleListTransactions(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -281,7 +281,7 @@ export async function handleListTransactions(req: Request, env: Env): Promise<Re
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/htlc  (HTLC一覧: dashboard用)
+// GET /api/htlc  (HTLC list: for the dashboard)
 // ---------------------------------------------------------------------------
 export async function handleListHtlcs(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -307,7 +307,7 @@ export async function handleListHtlcs(req: Request, env: Env): Promise<Response>
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/gtid  (GTID一覧: dashboard用)
+// GET /api/gtid  (GTID list: for the dashboard)
 // ---------------------------------------------------------------------------
 export async function handleListGtids(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);

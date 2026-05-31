@@ -90,17 +90,18 @@ export type CaseState = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "ESCALATED";
 /**
  * Request-to-Pay lifecycle state.
  *
- * Old `state` (REQUESTED|ATTEMPTED|SETTLED|EXPIRED|FAILED) and
- * old `rtp_status` (CREATED|NOTIFIED|...) were consolidated
- * in 0025_rtp_consolidate.sql into single `state` column.
- *  - CREATED      : RtpRequests row created, bank not notified
- *  - NOTIFIED     : rtp-notify to paying bank successful
- *  - ACCEPTED     : Payer approved (transient state before TX creation — usually skipped)
- *  - TX_CREATED   : Linked fund transfer Transaction created
- *  - COMPLETED    : fund transfer SETTLED finalized
- *  - DECLINED     : Payer declined
+ * The single, authoritative set of states that resulted from consolidating the
+ * old `state` (REQUESTED|ATTEMPTED|SETTLED|EXPIRED|FAILED) and the old
+ * `rtp_status` (CREATED|NOTIFIED|...) into a single `state` column in
+ * 0025_rtp_consolidate.sql.
+ *  - CREATED      : RtpRequests row created, bank not yet notified
+ *  - NOTIFIED     : rtp-notify to the payer bank succeeded
+ *  - ACCEPTED     : payer approved (transient state before TX creation — usually not passed through)
+ *  - TX_CREATED   : the linked transfer Transaction has been created
+ *  - COMPLETED    : the transfer is confirmed SETTLED
+ *  - DECLINED     : payer declined
  *  - EXPIRED      : expires_at elapsed
- *  - FAILED       : Other failure (max_attempts exceeded, etc)
+ *  - FAILED       : other failure such as exceeding max_attempts
  */
 export type RtpState =
   | "CREATED"
@@ -212,8 +213,8 @@ export type NotificationStatus = "PENDING" | "DELIVERED" | "FAILED" | "EXPIRED";
 export type QrType = "STATIC" | "DYNAMIC";
 
 /**
- * @deprecated Use {@link RtpState} instead. In 0025_rtp_consolidate.sql
- * RtpState is unified state set after consolidating RtpRequests.state and rtp_status.
+ * @deprecated Use {@link RtpState} instead. As a result of consolidating
+ * RtpRequests.state and rtp_status in 0025_rtp_consolidate.sql, RtpState is the only state set.
  */
 export type RtpFullStatus = RtpState;
 

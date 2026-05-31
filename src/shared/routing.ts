@@ -14,15 +14,15 @@
 import type { LaneType, MessageFormat } from "../types";
 
 // ---------------------------------------------------------------------------
-// BIC ↔ bank_id mapping (mock fixed values)
+// BIC ↔ bank_id mapping (fixed mock values)
 // ---------------------------------------------------------------------------
 
 /**
  * BIC code → internal bank_id mapping table.
- * In mock implementation, values are fixed. In production, query DB or external directory.
+ * Fixed values in the mock implementation. In production, refer to the DB or an external directory.
  */
 const BIC_TO_BANK_ID: Record<string, string> = {
-  // Participating banks in Japan
+  // Domestic participating banks in Japan
   MHCBJPJT: "001", // Nagaoka Bank
   BOTKJPJT: "002", // Owari Bank
   SMTBJPJT: "003", // Kaga Bank
@@ -32,7 +32,7 @@ const BIC_TO_BANK_ID: Record<string, string> = {
   YUKBJPJT: "007", // Sanuki Bank (international BIC)
   SFJPJPJT: "008", // Bingo Bank
   AOZOBJPJT: "009", // Awaji Bank
-  OKHBJPJT: "010", // Hyuga Bank (temporary)
+  OKHBJPJT: "010", // Hyuga Bank (tentative)
   HOKBJPJT: "011",
   TOHOJPJT: "012",
   CHUBJPJT: "013",
@@ -58,22 +58,22 @@ const BANK_ID_TO_BIC: Record<string, string> = Object.fromEntries(
 );
 
 // ---------------------------------------------------------------------------
-// lane → message format selection
+// Lane → message format selection
 // ---------------------------------------------------------------------------
 
 /**
- * Select message format based on lane type and cross-border status.
+ * Selects the message format from the lane type and whether the transaction is cross-border.
  *
  * Selection rules:
- * - Cross-border transaction always uses ISO20022 (pacs.008)
- * - HIGH_VALUE lane uses ISO20022 (large-value fund payment regulation compliance)
+ * - Cross-border transactions always use ISO20022 (pacs.008)
+ * - HIGH_VALUE lane uses ISO20022 (large-value settlement regulation compliance)
  * - EXPRESS / RTP use ZENITH_NATIVE (low-latency priority)
  * - STANDARD uses ZENITH_NATIVE
- * - BULK / DEFERRED use ZENGIN_FIXED (Zengin batch compatible)
- * - HTLC uses ZENITH_NATIVE (carries hashlock information natively)
+ * - BULK / DEFERRED use ZENGIN_FIXED (Zengin batch compatibility)
+ * - HTLC uses ZENITH_NATIVE (carries hash-lock information natively)
  *
  * @param lane - lane type
- * @param isCrossBorder - whether it is a cross-border transaction
+ * @param isCrossBorder - whether the transaction is cross-border
  * @returns MessageFormat
  */
 export function selectMessageFormat(lane: LaneType, isCrossBorder: boolean): MessageFormat {
@@ -103,8 +103,8 @@ export function selectMessageFormat(lane: LaneType, isCrossBorder: boolean): Mes
 // ---------------------------------------------------------------------------
 
 /**
- * Return internal bank_id from BIC code.
- * Return null if not found in mapping.
+ * Returns the internal bank_id from a BIC code.
+ * Returns null if not present in the mapping.
  *
  * @param bic - SWIFT BIC code (8 or 11 characters)
  * @returns internal bank_id or null
@@ -117,18 +117,18 @@ export function bicToBankId(bic: string): string | null {
 }
 
 /**
- * Return BIC code from internal bank_id.
- * Generate and return dummy BIC if not found in mapping.
+ * Returns the BIC code from an internal bank_id.
+ * Generates and returns a dummy BIC if not present in the mapping.
  *
- * @param bankId - internal bank_id (e.g., '001', '002')
+ * @param bankId - internal bank_id (e.g. '001', '002')
  * @returns SWIFT BIC code (8 characters)
  */
 export function bankIdToBic(bankId: string): string {
   if (!bankId) return "UNKNJPJT";
   const bic = BANK_ID_TO_BIC[bankId];
   if (bic) return bic;
-  // If not registered: generate dummy BIC in ZXXXXXXT format
-  // X = embed digits of bankId (up to 4 characters)
+  // If unregistered: generate a dummy BIC in ZXXXXXXT format
+  // X = embeds the digits of bankId (up to 4 characters)
   const paddedId = bankId.slice(0, 4).padStart(4, "0");
   return `Z${paddedId}JPJT`;
 }
@@ -138,15 +138,15 @@ export function bankIdToBic(bankId: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Determine if transaction is cross-border from payer and payee bank_id.
+ * Determine whether a transfer is cross-border from the originating and destination bank_id.
  *
  * Determination rules:
- * - Both are numeric bank_id with 3 or fewer digits → domestic transaction (false)
- * - Either contains "-" (e.g., JPMC-US, DEUT-DE) → cross-border (true)
- * - One is empty or unregistered → conservatively determine as cross-border (true)
+ * - Both are numeric bank_id of 3 digits or fewer → domestic transaction (false)
+ * - Either one contains "-" (e.g. JPMC-US, DEUT-DE) → cross-border (true)
+ * - One is empty or unregistered → conservatively treated as cross-border (true)
  *
- * @param payerBankId - payer bank_id
- * @param payeeBankId - payee bank_id
+ * @param payerBankId - originating bank_id
+ * @param payeeBankId - destination bank_id
  * @returns true if cross-border
  */
 export function isCrossBorderTransfer(payerBankId: string, payeeBankId: string): boolean {
@@ -154,7 +154,7 @@ export function isCrossBorderTransfer(payerBankId: string, payeeBankId: string):
 
   const isDomestic = (id: string): boolean => /^\d{1,3}$/.test(id);
 
-  // Domestic only if both are domestic bank_id (1-3 digit numbers)
+  // Domestic only when both are domestic bank_id (1 to 3 digit numbers)
   if (isDomestic(payerBankId) && isDomestic(payeeBankId)) {
     return false;
   }
@@ -163,17 +163,17 @@ export function isCrossBorderTransfer(payerBankId: string, payeeBankId: string):
 }
 
 // ---------------------------------------------------------------------------
-// Proxy-resolved payment account hash
+// Hash the proxy-resolved account information
 // ---------------------------------------------------------------------------
 
 /**
- * Hash resolved account information with SHA-256.
- * Uses Web Crypto API (globalThis.crypto).
+ * Hash the proxy-resolved account information with SHA-256.
+ * Uses the Web Crypto API (globalThis.crypto).
  *
- * Purpose: avoid storing account number in plain text, compare and reference by hash value.
+ * Purpose: avoid holding account numbers in plaintext; compare and reference by hash value.
  *
- * @param accountId - plain text account number (e.g., '0010001234')
- * @returns SHA-256 hash as hexadecimal string (64 characters)
+ * @param accountId - plaintext account number (e.g. '0010001234')
+ * @returns hexadecimal string of the SHA-256 hash (64 characters)
  */
 export async function hashAccountId(accountId: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -188,11 +188,11 @@ export async function hashAccountId(accountId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Return BIC mapping for each bank_id in the list.
- * For admin screen and debugging purposes.
+ * Return the BIC mapping for each entry from a list of bank_id.
+ * For the admin console and debugging.
  *
  * @param bankIds - array of bank_id
- * @returns bank_id → BIC mapping object
+ * @returns mapping object of bank_id → BIC
  */
 export function resolveBicsForBanks(bankIds: string[]): Record<string, string> {
   const result: Record<string, string> = {};
@@ -203,7 +203,7 @@ export function resolveBicsForBanks(bankIds: string[]): Record<string, string> {
 }
 
 /**
- * Return list of registered BICs (for test and simulator).
+ * Return the list of registered BICs (for tests and the simulator).
  *
  * @returns array of BIC codes
  */

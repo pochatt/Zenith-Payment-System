@@ -2,7 +2,7 @@
  * @file Reversal — post-settlement compensation transactions.
  *
  * Implements the spec's Reversal requirement:
- *   "b（receipt側完了）後のcancelledは禁止。救済はReversal（別transaction）で行う。"
+ *   "Cancellation after b (receiving side complete) is prohibited. Remedy is performed via Reversal (a separate transaction)."
  *
  * A Reversal is a NEW transaction that compensates a previously settled
  * transaction. It does NOT modify the original transaction's state (which
@@ -18,9 +18,9 @@
  *   5. ReversalRecords table links original ↔ reversal for audit trail
  *
  * Terminology alignment with the spec:
- *   - cancelled (Cancel): Decision前のcancelled → DECIDED_CANCEL → CANCELLED
- *   - 失敗 (Failure): Decision後だが未実行で終端 → FAILED_EXECUTION
- *   - 救済 (Reversal): b後の補償 → 別transactionとして新規create
+ *   - Cancel: cancellation before Decision → DECIDED_CANCEL → CANCELLED
+ *   - Failure: terminal after Decision but unexecuted → FAILED_EXECUTION
+ *   - Reversal: compensation after b → created anew as a separate transaction
  *
  * @module zc/reversal
  */
@@ -49,9 +49,9 @@ export type ReversalStatus = "REQUESTED" | "APPROVED" | "TX_CREATED" | "COMPLETE
 
 /**
  * Reasons that require an explicit approval reference per spec §2.2:
- *   (a) payee同意 — payee consent ref
- *   (b) 法令・裁判所命令 — legal/court order ref
- *   (c) 当局要請 — authority request ref
+ *   (a) payee consent — payee consent ref
+ *   (b) legal/court order — legal/court order ref
+ *   (c) authority request — authority request ref
  *
  * DUPLICATE_PAYMENT and OPERATIONAL_ERROR may be self-certified by the
  * requesting bank (no external approval needed).

@@ -12,12 +12,12 @@ import { nowISO } from "../types";
 // ---------------------------------------------------------------------------
 
 /**
- * EventStream tableへeventを INSERT し event_id をreturn。
+ * INSERT an event into the EventStream table and return the event_id.
  *
- * @param db           - D1 データベース
- * @param targetBankId - 配信先bank ID
- * @param eventType    - event種別
- * @param payload      - ペイロードオブジェクト（JSON シリアライズされる）
+ * @param db           - D1 database
+ * @param targetBankId - Delivery target bank ID
+ * @param eventType    - Event type
+ * @param payload      - Payload object (JSON serialized)
  * @returns event_id (UUID)
  */
 export async function publishEvent(
@@ -46,12 +46,12 @@ export async function publishEvent(
 // ---------------------------------------------------------------------------
 
 /**
- * 未配信eventをポーリング用にgetする。
- * afterEventId が指定された場合、そのevent以降（created_at 昇順）の未配信をreturn。
+ * Get undelivered events for polling.
+ * If afterEventId is specified, return undelivered events from that event onward (created_at ascending).
  *
- * @param db           - D1 データベース
- * @param targetBankId - 配信先bank ID
- * @param afterEventId - このeventID以降をget（オプション）
+ * @param db           - D1 database
+ * @param targetBankId - Delivery target bank ID
+ * @param afterEventId - Get events after this event ID (optional)
  * @returns EventStreamRow[]
  */
 export async function getPendingEvents(
@@ -60,7 +60,7 @@ export async function getPendingEvents(
   afterEventId?: string
 ): Promise<EventStreamRow[]> {
   if (afterEventId) {
-    // afterEventId の created_at をgetしてカーソルとして使う
+    // Fetch the created_at of afterEventId and use it as the cursor
     const cursor = await db
       .prepare(`
       SELECT created_at FROM EventStream WHERE event_id = ?
@@ -96,14 +96,14 @@ export async function getPendingEvents(
 }
 
 // ---------------------------------------------------------------------------
-// Mark event delivered (single)
+// Mark event as delivered (single)
 // ---------------------------------------------------------------------------
 
 /**
- * 単一eventを配信済みにする。
+ * Mark a single event as delivered.
  *
- * @param db      - D1 データベース
- * @param eventId - eventID
+ * @param db      - D1 database
+ * @param eventId - Event ID
  */
 export async function markEventDelivered(db: D1Database, eventId: string): Promise<void> {
   await db
@@ -115,20 +115,20 @@ export async function markEventDelivered(db: D1Database, eventId: string): Promi
 }
 
 // ---------------------------------------------------------------------------
-// Mark event delivered (batch)
+// Mark events as delivered (batch)
 // ---------------------------------------------------------------------------
 
 /**
- * 複数eventを一括で配信済みにする。
- * D1 の batch API を使用して 1 ラウンドトリップで完結させる。
+ * Mark multiple events as delivered in bulk.
+ * Uses D1's batch API to complete in a single round trip.
  *
- * @param db       - D1 データベース
- * @param eventIds - eventIDのarray
+ * @param db       - D1 database
+ * @param eventIds - Array of event IDs
  */
 export async function markEventsDelivered(db: D1Database, eventIds: string[]): Promise<void> {
   if (eventIds.length === 0) return;
 
-  // D1 cannot use IN clauses with parameter expansion; handle via batch
+  // D1 cannot use an IN clause via parameter expansion, so process with batch
   const stmts = eventIds.map((id) =>
     db.prepare(`UPDATE EventStream SET is_delivered = 1 WHERE event_id = ?`).bind(id)
   );
@@ -136,21 +136,21 @@ export async function markEventsDelivered(db: D1Database, eventIds: string[]): P
 }
 
 // ---------------------------------------------------------------------------
-// SSE Response generate
+// Generate SSE Response
 // ---------------------------------------------------------------------------
 
 /**
- * Cloudflare Workers ReadableStream を使って SSE レスポンスをgenerateする。
+ * Generate an SSE response using a Cloudflare Workers ReadableStream.
  *
- * 動作:
- * 1. ReadableStream をgenerate
- * 2. getPendingEvents を 2 秒ごとにポーリング
- * 3. 各eventを SSE フォーマット (`data: {...}\n\n`) でエンqueue
- * 4. send後にMark delivered
+ * Behavior:
+ * 1. Create a ReadableStream
+ * 2. Poll getPendingEvents every 2 seconds
+ * 3. Enqueue each event in SSE format (`data: {...}\n\n`)
+ * 4. Mark as delivered after sending
  *
- * @param db           - D1 データベース
- * @param targetBankId - 配信先bank ID
- * @returns SSE レスポンス
+ * @param db           - D1 database
+ * @param targetBankId - Delivery target bank ID
+ * @returns SSE response
  */
 export function createSseResponse(db: D1Database, targetBankId: string): Response {
   let lastEventId: string | undefined;
@@ -158,11 +158,11 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
 
   const stream = new ReadableStream({
     async start(controller) {
-      // First connection notification
+      // Initial connection notification
       const connectMsg = `data: ${JSON.stringify({ type: "CONNECTED", bank_id: targetBankId })}\n\n`;
       controller.enqueue(new TextEncoder().encode(connectMsg));
 
-      // Polling group (2 sec interval)
+      // Polling loop (2-second interval)
       const poll = async () => {
         try {
           const events = await getPendingEvents(db, targetBankId, lastEventId);
@@ -174,7 +174,7 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
               lastEventId = ev.event_id;
             }
 
-            // Mark delivered
+            // Mark as delivered
             await markEventsDelivered(
               db,
               events.map((e) => e.event_id)
@@ -182,13 +182,13 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
           }
         } catch (err) {
           console.error("[stream] SSE poll error:", err);
-          // Notify client of error; stream continues
+          // Notifying the client of an error does not stop the stream
           const errMsg = `data: ${JSON.stringify({ type: "ERROR", message: "poll failed" })}\n\n`;
           try {
             controller.enqueue(new TextEncoder().encode(errMsg));
           } catch {
-            // Ignore if controller closed
-            // Discard stream → stop timer
+            // Ignore if the controller is already closed
+            // Discard the stream → stop the timer
             if (timerId) {
               clearInterval(timerId);
               timerId = null;
@@ -197,11 +197,11 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
         }
       };
 
-      // Poll every 2 seconds (within Workers event loop)
+      // Polling every 2 seconds (runs inside the Workers event loop)
       timerId = setInterval(poll, 2000);
     },
     cancel() {
-      // クライアント切断時にtimerを停止（リソースリーク＆誤Mark delivered防止）
+      // Stop the timer on client disconnect (prevents resource leaks and erroneous delivered marks)
       if (timerId) {
         clearInterval(timerId);
         timerId = null;
@@ -224,10 +224,10 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
 // ---------------------------------------------------------------------------
 
 /**
- * 24 時間以上経過した配信済みeventをdeleteする（cron 用）。
+ * Delete delivered events older than 24 hours (for cron).
  *
- * @param db - D1 データベース
- * @returns 削除件数
+ * @param db - D1 database
+ * @returns number of deleted rows
  */
 export async function pruneDeliveredEvents(db: D1Database): Promise<number> {
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -244,14 +244,14 @@ export async function pruneDeliveredEvents(db: D1Database): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// 内部Utilities
+// Internal utilities
 // ---------------------------------------------------------------------------
 
 /**
- * EventStreamRow を SSE フォーマット文字列に変換する。
+ * Convert an EventStreamRow into an SSE-formatted string.
  *
- * @param ev - event行
- * @returns SSE フォーマット文字列 (`id: ...\ndata: ...\n\n`)
+ * @param ev - event row
+ * @returns SSE-formatted string (`id: ...\ndata: ...\n\n`)
  */
 function formatSseEvent(ev: EventStreamRow): string {
   let payload: object;

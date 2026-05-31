@@ -1,50 +1,50 @@
 // =============================================================================
 // src/shared/request-id.ts  Deterministic request ID generation
 // =============================================================================
-// Centrally manage request IDs used in ZC → Bank Ingress API calls.
-// For idempotency control, must always generate the same ID for the same command × same transaction.
+// Centrally manages the request IDs used in ZC → Bank Ingress API calls.
+// For idempotency control, the same ID must always be generated for the same command × same transaction.
 //
 // Naming convention: {COMMAND_PREFIX}-{primary_key}
-//   - primary_key is usually txid, but use leg_id for GTID legs
+//   - primary_key is usually txid, but for a GTID leg, leg_id is used
 // =============================================================================
 
 /**
- * Bank Ingress command prefix constants.
- * Corresponds to the request_id column in the ZcRequests table.
+ * Prefix constants for Bank Ingress commands.
+ * Corresponds to the request_id column of the ZcRequests table.
  */
 export const REQUEST_PREFIX = {
   /** AML/sanctions screening */
   AUTHORITY_CHECK: "AUTH",
-  /** Account name confirmation */
+  /** Account holder name verification */
   NAME_CHECK: "NAME",
-  /** Funds reserved */
+  /** Fund reservation */
   RESERVE_FUNDS: "RESERVE",
   /** Originating execution (a) */
   EXECUTE_DEBIT: "DEBIT",
   /** Destination execution (b) */
   EXECUTE_CREDIT: "CREDIT",
-  /** 資金reserved解放 */
+  /** Fund reservation release */
   RELEASE_RESERVE: "RELEASE",
   /** HTLC recheck */
   RECHECK: "RECHECK",
-  /** fund transfercancelled */
+  /** Transfer cancellation */
   CANCEL: "CANCEL",
-  /** cancelled時のreserved解放 */
+  /** Reservation release on cancellation */
   CANCEL_RELEASE: "CANCEL-RELEASE",
-  /** Credit 再開 (credit / incoming paymentapproval後) */
+  /** Credit resumption (after incoming credit approval) */
   CREDIT_RESUME: "CREDIT-RESUME",
-  /** GTID leg readiness confirmation */
+  /** GTID leg readiness check */
   LEG_READY: "LEG-READY",
 } as const;
 
 export type RequestPrefix = (typeof REQUEST_PREFIX)[keyof typeof REQUEST_PREFIX];
 
 /**
- * 決定論的リクエストIDをgenerateする。
+ * Generate a deterministic request ID.
  *
- * @param prefix - コマンド種別プレフィックス ({@link REQUEST_PREFIX})
- * @param key    - 主キー (txid, leg_id 等)
- * @returns `{prefix}-{key}` 形式の文字列
+ * @param prefix - command type prefix ({@link REQUEST_PREFIX})
+ * @param key    - primary key (txid, leg_id, etc.)
+ * @returns a string in the form `{prefix}-{key}`
  *
  * @example
  * ```ts

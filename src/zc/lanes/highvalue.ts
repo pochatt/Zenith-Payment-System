@@ -28,9 +28,9 @@ export function processHighValueIngress(req: PaymentInitiatedRequest) {
 }
 
 /**
- * HIGH_VALUE 非同期処理:
- * RECEIVED → PRECHECKED → DECIDED_TO_SETTLE → (a_HV (high-value)) → IGS待ち → b
- * （H_RESERVED はスキップ。中央bank RTGS = BOJ プレファンドで担保するため）
+ * HIGH_VALUE asynchronous processing:
+ * RECEIVED → PRECHECKED → DECIDED_TO_SETTLE → (a_HV) → waiting for IGS → b
+ * (H_RESERVED is skipped, because it is backed by central-bank RTGS = BOJ prefunding)
  */
 export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   const db = env.DB;
@@ -69,7 +69,7 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
       txid,
       reasonCode: authResult.reason_code ?? "AUTHORITY_CHECK_NG",
       fromStates: ["PRECHECKED"],
-      skipReleaseH: true, // Because HV doesn't take H reservation
+      skipReleaseH: true, // Because HV does not take an H reservation
     });
     return;
   }
@@ -99,8 +99,8 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 4. BOJbalancecheck（プレファンドRTGS）
-  // BOJ balance negative (liability). Balance insufficient if `bojBalance + amount > 0`
+  // 4. BOJ balance check (prefunded RTGS)
+  // The BOJ balance is negative because of liability accounting. `bojBalance + amount > 0` means insufficient funds.
   const bojBalance = await calcBalance(`${tx.payer_bank_id}-BOJ`, db);
   if (bojBalance + tx.amount_value > 0) {
     await cancelInFlightTx(db, {
@@ -118,7 +118,7 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   }
 
   // 5. PRECHECKED → DECIDED_TO_SETTLE (skip H_RESERVED)
-  // Direct transition explicitly listed in ALLOWED_TRANSITIONS
+  // This direct transition is explicitly listed in ALLOWED_TRANSITIONS.PRECHECKED.
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();
   const decided = await transitionWithLog(db, {
@@ -134,9 +134,9 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   });
   if (!decided.applied) return;
 
-  // 6. ExecuteDebit（a_HV: proof_type=PAYER_HV_ISOLATION_PROOF）
-  // Pass payer_account_hash (HV bypasses reserve-funds; bank can't ID account)
-  // IGS payment starts after debit confirmation (onPayerExecConfirmed)
+  // 6. ExecuteDebit (a_HV: proof_type=PAYER_HV_ISOLATION_PROOF)
+  // Pass payer_account_hash (HV does not go through reserve-funds, so the Bank side cannot identify the account)
+  // Start IGS settlement after the debit is confirmed (onPayerExecConfirmed).
   await env.QUEUE.send({
     type: "ZC_BANK_DEBIT",
     payload: {

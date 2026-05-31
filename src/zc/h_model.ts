@@ -17,7 +17,7 @@ import { nowISO } from "../types";
 import { newUUID } from "../shared/idempotency";
 
 // ---------------------------------------------------------------------------
-// H-reservedget（optimistic locking）
+// Acquire H-reserve (optimistic lock)
 // ---------------------------------------------------------------------------
 
 /**
@@ -86,8 +86,8 @@ export async function reserveH(
     .run();
 
   if ((upd.meta.changes ?? 0) === 0) {
-    // changes=0 means (a) no bank, (b) inactive, or (c) h_limit exceeded
-    // Get is_active and h_limit/h_used in 1 query; return specific reason
+    // changes=0 means one of (a) no participant bank, (b) inactive, (c) h_limit exceeded.
+    // Fetch is_active and h_limit/h_used in a single query to return the specific reason.
     const bankRow = await db
       .prepare(`SELECT is_active, h_limit, h_used FROM Participants WHERE bank_id = ?`)
       .bind(bankId)
@@ -105,7 +105,7 @@ export async function reserveH(
     };
   }
 
-  // Step 2: h_used 増加成功後に HReservations をcreate
+  // Step 2: create HReservations after successfully increasing h_used
   await db
     .prepare(
       `INSERT INTO HReservations
@@ -115,7 +115,7 @@ export async function reserveH(
     .bind(reservationId, txid, bankId, amount, now)
     .run();
 
-  // Get success snapshot (h_used_after, h_limit) in 1 query
+  // Fetch the success snapshot (h_used_after, h_limit) in a single query
   const after = await db
     .prepare(`SELECT h_used, h_limit FROM Participants WHERE bank_id = ?`)
     .bind(bankId)
@@ -159,9 +159,9 @@ export async function lockH(reservationId: string, db: D1Database): Promise<bool
  * @returns true if released, false if already released or not found
  */
 export async function releaseH(reservationId: string, db: D1Database): Promise<boolean> {
-  // TOCTOU prevention: execute single batch with CAS guard
-  // HReservations is_released=0 guard prevents double release
-  // Participants h_used subtraction depends on guard success
+  // TOCTOU prevention: execute in a single batch with a CAS guard
+  // The is_released=0 guard on HReservations prevents double release,
+  // and the h_used decrement on Participants depends on that guard succeeding
   const row = await db
     .prepare(`SELECT bank_id, amount, is_released FROM HReservations WHERE reservation_id = ?`)
     .bind(reservationId)
@@ -170,10 +170,10 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
   if (!row || row.is_released === 1) return false;
 
   const now = nowISO();
-  // Execute HReservations CAS update and Participants h_used subtract in same txn
-  // If HReservations UPDATE is changes=0 (already is_released=1)
-  // Participants UPDATE also in same txn
-  // Detect changes=0; return false to caller
+  // Within the batch, perform the HReservations CAS update and the Participants h_used decrement in the same transaction
+  // If the HReservations UPDATE yields changes=0 (already is_released=1),
+  // the Participants UPDATE also runs within the same transaction, but
+  // detect changes=0 in the return value and return false to the caller
   const stmts = [
     db
       .prepare(
@@ -181,11 +181,11 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
          WHERE reservation_id = ? AND is_released = 0`
       )
       .bind(now, reservationId),
-    // h_used subtraction only if HReservations CAS succeeds
-    // D1 batch executes within transaction; on CAS failure, subsequent stmts included
-    // Won't rollback; caller detects changes=0
-    // Note: if h_used < amount, warning log (mismatch)
-    // Keep MAX(0) as floor, but prevent hiding inconsistencies
+    // The h_used decrement is only meaningful if the HReservations CAS succeeds
+    // Since a D1 batch executes within a transaction, on CAS failure the subsequent stmts included
+    // are not rolled back, but the caller decides based on changes=0
+    // Note: if h_used < amount, emit a warning log because of an accounting inconsistency.
+    // Keep MAX(0, ...) as floor protection, but prevent it from hiding the inconsistency.
     db
       .prepare(
         `UPDATE Participants SET h_used = CASE
@@ -203,14 +203,14 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
   const results = await db.batch(stmts);
   const released = (results[0]?.meta.changes ?? 0) > 0;
   if (released) {
-    // If h_used < amount, mismatch (h_used clamped to 0)
+    // If h_used < amount, this is an accounting inconsistency (h_used is clamped to 0)
     const p = await db
       .prepare(`SELECT h_used FROM Participants WHERE bank_id = ?`)
       .bind(row.bank_id)
       .first<{ h_used: number }>();
     if (p && p.h_used === 0) {
-      // 解放後 h_used=0 が期待通りでない可能性がある場合のwarning
-      // (If 0 despite other reserved entries existing, floor protection activated)
+      // Warning for cases where h_used=0 after release may not be as expected
+      // (if it became 0 while other reservations exist, that is a sign the floor protection kicked in)
       const otherActive = await db
         .prepare(`SELECT COUNT(*) as cnt FROM HReservations WHERE bank_id = ? AND is_released = 0`)
         .bind(row.bank_id)

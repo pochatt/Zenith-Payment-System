@@ -6,7 +6,7 @@
 import type { EdiRecordRow, EdiRegisterRequest, EdiLineItem, EdiFilterCondition } from "../types";
 
 // ---------------------------------------------------------------------------
-// EDI registration: INSERT into EdiRecords table
+// EDI registration: INSERT into the EdiRecords table
 // ---------------------------------------------------------------------------
 export async function registerEdiRecord(
   db: D1Database,
@@ -62,7 +62,7 @@ export async function registerEdiRecord(
 }
 
 // ---------------------------------------------------------------------------
-// txid からEDIレコードget
+// Get the EDI record from txid
 // ---------------------------------------------------------------------------
 export async function getEdiByTxid(db: D1Database, txid: string): Promise<EdiRecordRow | null> {
   const row = await db
@@ -75,7 +75,7 @@ export async function getEdiByTxid(db: D1Database, txid: string): Promise<EdiRec
 }
 
 // ---------------------------------------------------------------------------
-// Get EDI record from edi_ref
+// Get the EDI record from edi_ref
 // ---------------------------------------------------------------------------
 export async function getEdiByRef(db: D1Database, ediRef: string): Promise<EdiRecordRow | null> {
   const row = await db
@@ -88,7 +88,7 @@ export async function getEdiByRef(db: D1Database, ediRef: string): Promise<EdiRe
 }
 
 // ---------------------------------------------------------------------------
-// Update Transactions edi_ref (link EDI during fund transfer)
+// Update the edi_ref column of Transactions (links the EDI at transfer time)
 // ---------------------------------------------------------------------------
 export async function linkEdiToTransaction(
   db: D1Database,
@@ -104,7 +104,7 @@ export async function linkEdiToTransaction(
 }
 
 // ---------------------------------------------------------------------------
-// EDI filter: join EdiRecords + Transactions based on EdiFilterCondition
+// EDI filter: join-query EdiRecords + Transactions based on EdiFilterCondition
 // ---------------------------------------------------------------------------
 export async function filterByEdiCondition(
   db: D1Database,
@@ -144,9 +144,9 @@ export async function filterByEdiCondition(
       predicate = `${fieldExpr} LIKE ?`;
       break;
     case "REGEX":
-      // SQLite no regex; LIKE doesn't do patterns
-      // App layer regex; SQL narrows with wildcard
-      // Complete REGEX support planned for future SQLite extension
+      // SQLite has no native REGEX; regular expressions do not work with LIKE.
+      // Perform regex matching in the application layer, and use SQL wildcard approximation to narrow candidates.
+      // Full REGEX support is planned via a future SQLite extension.
       predicate = `${fieldExpr} LIKE ?`;
       break;
     case "GT":
@@ -181,7 +181,7 @@ export async function filterByEdiCondition(
   const result = await db.prepare(sql).bind(bankId, bindValue).all<EdiRecordRow>();
   let rows = result.results ?? [];
 
-  // REGEX: narrow with SQL LIKE, apply regex in app
+  // REGEX: after narrowing candidates with SQL LIKE, apply regex matching in the application layer
   if (condition.operator === "REGEX") {
     try {
       const re = new RegExp(condition.value);
@@ -190,7 +190,7 @@ export async function filterByEdiCondition(
         return typeof val === "string" && re.test(val);
       });
     } catch {
-      // If invalid regex, return fallback as-is
+      // For an invalid regular expression, return the fallback result as is
     }
   }
 

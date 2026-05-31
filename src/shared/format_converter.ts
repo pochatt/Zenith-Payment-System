@@ -1,39 +1,40 @@
 /**
  * @file format_converter.ts — Legacy Zengin format ↔ New payment format converter.
  *
- * Bridges the existing flat fixed-length Zenginmessageフォーマット to the
+ * Bridges the existing flat fixed-length Zengin message format to the
  * new API-first payment initiation format used by Zenith Coordinator.
  *
- * Background (Zengin Future Vision SG 2026-03, 論点5):
- *   "既存フォーマットとのcompatibilityを確保しつつ、国際標準（ISO20022）に準拠可能な
- *    設計。message設計は拡張性を重視。" (section 3.(3) 設計思想 c)
+ * Background (Zengin Future Vision SG 2026-03, topic 5):
+ *   "A design that ensures compatibility with the existing format while
+ *    being able to conform to the international standard (ISO20022). Message
+ *    design emphasizes extensibility." (section 3.(3) design philosophy c)
  *
- * ## コード体系の違いについて（重要）
+ * ## About the differences in code systems (important)
  *
- * ### bankコード桁数
- * | 系統               | 桁数 | 例     |
+ * ### Bank code digit count
+ * | System              | Digits | Example |
  * |--------------------|------|--------|
- * | 全銀フォーマット    | 4桁  | `0001` |
- * | zenith-mock DB     | 3桁  | `001`  |
+ * | Zengin format       | 4 digits | `0001` |
+ * | zenith-mock DB     | 3 digits | `001`  |
  *
- * zenith-mock の `Participants.bank_id` は実際の全銀bankコードと1桁異なる。
- * 変換時は `zenginCodeToMockBankId` / `mockBankIdToZenginCode` を必ず使うこと。
+ * zenith-mock's `Participants.bank_id` differs by one digit from the actual Zengin bank code.
+ * Always use `zenginCodeToMockBankId` / `mockBankIdToZenginCode` when converting.
  *
- * ### 支店コード
- * 全銀フォーマットは仕向・被仕向ともに3桁支店コードを持つ。
- * zenith-mock には支店概念がなく、`BankAccounts` は支店なしのaccountIDのみ管理する。
- * よって支店コードは変換時に「informationとして保持するが、DBmatchには使わない」として扱う。
+ * ### Branch code
+ * The Zengin format has a 3-digit branch code for both originating and destination sides.
+ * zenith-mock has no concept of branches, and `BankAccounts` manages only branchless account IDs.
+ * Therefore the branch code is treated as "retained as information but not used for DB matching" during conversion.
  *
- * ### account識別子
- * | 系統               | 形式                    | 例                    |
+ * ### Account identifier
+ * | System              | Format                  | Example               |
  * |--------------------|-------------------------|-----------------------|
- * | 全銀フォーマット    | 7桁数字account number          | `1234567`             |
- * | zenith-mock        | `h:{UUID}` hash形式 | `h:acct-001-0001`     |
+ * | Zengin format       | 7-digit numeric account number | `1234567`     |
+ * | zenith-mock        | `h:{UUID}` hash format  | `h:acct-001-0001`     |
  *
- * 全銀account numberから account_hash への変換は zenith-mock の bank-side にしか
- * 知識がない（逆変換も不可）。変換器は `unresolved:` プレフィックスを付与した
- * ペンディング識別子をgenerateし、呼び出し元が `account-verify` endpointで
- * 解決してから使用する設計とする。
+ * Conversion from a Zengin account number to an account_hash is known only to
+ * zenith-mock's bank-side (and the reverse conversion is also impossible). The converter
+ * generates a pending identifier with an `unresolved:` prefix, and the design requires
+ * the caller to resolve it via the `account-verify` endpoint before use.
  *
  * @module shared/format_converter
  */
@@ -43,27 +44,27 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Zengin 4-digit codebankコード → zenith-mock 3桁 bank_id 変換。
+ * Convert a 4-digit Zengin bank code → zenith-mock 3-digit bank_id.
  *
- * 全銀コードの先頭1桁は常に '0' のため、単純に先頭を除去して3桁にする。
- * 例: '0001' → '001', '0005' → '005', '0010' → '010'
+ * Since the leading digit of a Zengin code is always '0', simply strip the leading digit to make it 3 digits.
+ * Example: '0001' → '001', '0005' → '005', '0010' → '010'
  *
- * @throws {Error} 入力が4桁数字でない場合
+ * @throws {Error} if the input is not a 4-digit number
  */
 export function zenginCodeToMockBankId(zenginCode: string): string {
   if (!/^\d{4}$/.test(zenginCode)) {
     throw new Error(`Invalid zengin bank code: "${zenginCode}" (must be 4 digits)`);
   }
-  // Remove leading 1 digit (always '0') and extract 3 digits
+  // Strip the leading digit (always '0') to make it 3 digits
   return zenginCode.slice(1);
 }
 
 /**
- * zenith-mock 3桁 bank_id → Zengin 4-digit codebankコード変換。
+ * Convert a zenith-mock 3-digit bank_id → 4-digit Zengin bank code.
  *
- * 例: '001' → '0001', '010' → '0010'
+ * Example: '001' → '0001', '010' → '0010'
  *
- * @throws {Error} 入力が3桁数字でない場合
+ * @throws {Error} if the input is not a 3-digit number
  */
 export function mockBankIdToZenginCode(bankId: string): string {
   if (!/^\d{3}$/.test(bankId)) {
@@ -73,13 +74,13 @@ export function mockBankIdToZenginCode(bankId: string): string {
 }
 
 /**
- * 全銀account number（7桁数字）と支店コードから「未解決account識別子」をgenerateする。
+ * Generate an "unresolved account identifier" from a Zengin account number (7-digit number) and a branch code.
  *
- * この識別子は DB の `account_hash` ではなく、bank `account-verify` endpointへの
- * inquiry入力として使用するための一時的なプレースホルダー。
- * 呼び出し元が `account-verify` で解決した後、returnされた `account_hash` を使用する。
+ * This identifier is not the DB's `account_hash` but a temporary placeholder
+ * used as the lookup input to the bank's `account-verify` endpoint.
+ * After the caller resolves it via `account-verify`, use the returned `account_hash`.
  *
- * フォーマット: `unresolved:{4桁bankコード}-{3桁支店コード}-{7桁account number}`
+ * Format: `unresolved:{4-digit bank code}-{3-digit branch code}-{7-digit account number}`
  */
 export function buildUnresolvedAccountRef(
   zenginBankCode: string,
@@ -90,8 +91,8 @@ export function buildUnresolvedAccountRef(
 }
 
 /**
- * 未解決account識別子かどうかを判定する。
- * `account-verify` を呼ぶ前に使用。
+ * Determine whether this is an unresolved account identifier.
+ * Used before calling `account-verify`.
  */
 export function isUnresolvedAccountRef(accountHash: string): boolean {
   return accountHash.startsWith("unresolved:");
@@ -102,44 +103,44 @@ export function isUnresolvedAccountRef(accountHash: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Legacy Zenginmessageフォーマット: bank transfermessage（内国為替transaction）
- * 固定長フォーマットを JSON に射影した構造体。
- * フィールド名は全銀協フォーマットspecification書の項目名に準拠。
+ * Legacy Zengin message format: transfer message (domestic exchange transaction)
+ * A struct projecting the fixed-length format into JSON.
+ * Field names follow the item names in the Zengin Association format specification.
  *
- * bankコードは4桁（全銀標準）、支店コードは3桁。
+ * Bank code is 4 digits (Zengin standard), branch code is 3 digits.
  */
 export interface LegacyZenginTransfer {
-  /** Originating bank code (Zengin 4-digit) */
+  /** Originating bank code (Zengin 4 digits: '0001'–'9999') */
   shimukeKinko: string;
-  /** Originating branch (3-digit). Not used in zenith-mock DB */
+  /** Originating branch code (3 digits: '001'–'999'). Not used for DB matching in zenith-mock */
   shimukeSiten: string;
-  /** 被Originating bank code (Zengin 4-digit) */
+  /** Destination bank code (Zengin 4 digits: '0001'–'9999') */
   hishimukeKinko: string;
-  /** 被Originating branch (3-digit). Not used in zenith-mock DB */
+  /** Destination branch code (3 digits: '001'–'999'). Not used for DB matching in zenith-mock */
   hishimukeSiten: string;
-  /** Subject ('1'=Savings, '2'=Current, '4'=Savings) */
+  /** Account type ('1'=ordinary, '2'=current, '4'=savings) */
   kamoku: "1" | "2" | "4";
-  /** account number (7-digit numeric). Separate from zenith-mock account_hash */
+  /** Account number (7-digit number). A different system from zenith-mock's account_hash */
   kozaBango: string;
-  /** payee名（カタカナ半角, 最大48文字） */
+  /** Recipient name (half-width katakana, max 48 characters) */
   uketorininMei: string;
-  /** amount (yen, positive, max 10 digits) */
+  /** Amount (yen, positive integer, max 10 digits) */
   kingaku: number;
-  /** Bank transfer specified date 'YYYYMMDD' */
+  /** Designated transfer date 'YYYYMMDD' */
   furikomiShiteibi: string;
-  /** 依頼人コード（省略可） */
+  /** Requester code (optional) */
   iraininCode?: string;
-  /** 依頼人名（カタカナ半角, 省略可） */
+  /** Requester name (half-width katakana, optional) */
   iraininMei?: string;
-  /** EDIinformation（最大20文字, 省略可） */
+  /** EDI information (max 20 characters, optional) */
   ediJoho?: string;
 }
 
-/** Zengin subject → zenith-mock account type */
+/** Zengin account-type code → zenith-mock account type mapping */
 const KAMOKU_MAP: Record<string, string> = {
-  "1": "SAVINGS", // Savings account
-  "2": "CHECKING", // Checking account
-  "4": "SAVINGS", // Savings deposit (treated as SAVINGS in zenith-mock)
+  "1": "SAVINGS", // Ordinary deposit account
+  "2": "CHECKING", // Current account
+  "4": "SAVINGS", // Savings deposit account (treated as SAVINGS in zenith-mock)
 };
 
 // ---------------------------------------------------------------------------
@@ -147,40 +148,40 @@ const KAMOKU_MAP: Record<string, string> = {
 // ---------------------------------------------------------------------------
 
 /**
- * Zenith Coordinator API の PaymentInitiatedRequest に相当する最小構造体。
- * 完全な型は types.ts の PaymentInitiatedRequest を参照。
+ * Minimal struct corresponding to the Zenith Coordinator API's PaymentInitiatedRequest.
+ * See PaymentInitiatedRequest in types.ts for the complete type.
  *
- * `payee.account_hash` が `isUnresolvedAccountRef()` === true の場合、
- * send前に `account-verify` endpointで解決が必要。
+ * When `payee.account_hash` has `isUnresolvedAccountRef()` === true,
+ * it must be resolved via the `account-verify` endpoint before sending.
  */
 export interface ConvertedPaymentRequest {
   txid: string;
   lane: "STANDARD" | "EXPRESS";
   amount: { value: number; currency: "JPY" };
-  /** bank_id is zenith-mock 3-digit format */
+  /** bank_id is in zenith-mock 3-digit format */
   payer: { bank_id: string; account_hash: string };
   /**
-   * bank_id is zenith-mock 3-digit format。
-   * account_hash が `unresolved:` プレフィックスを持つ場合は
-   * `account-verify` で解決してから使用する。
+   * bank_id is in zenith-mock 3-digit format.
+   * When account_hash has the `unresolved:` prefix,
+   * resolve it via `account-verify` before use.
    */
   payee: { bank_id: string; account_hash: string; account_name?: string };
   purpose: string;
   idempotency_key: string;
-  /** 元の全銀フォーマットのEDIinformation（存在する場合） */
+  /** EDI information from the original Zengin format (if present) */
   legacy_edi?: string;
-  /** 変換元フォーマット（audit用） */
+  /** Source format (for auditing) */
   _source_format: "ZENGIN_LEGACY";
   /**
-   * 変換元の全銀コードinformation（支店コード等の補足informationを保持）
-   * DB matchには使わないが、障害調査・match用に保持する。
+   * Source Zengin code information (retains supplementary info such as branch code).
+   * Not used for DB matching, but retained for incident investigation and reconciliation.
    */
   _zengin_meta: {
-    shimukeKinko: string; // Zengin 4-digit code
-    shimukeSiten: string; // Branch 3-digit code (DB not supported)
-    hishimukeKinko: string; // Zengin 4-digit code
-    hishimukeSiten: string; // Branch 3-digit code (DB not supported)
-    kozaBango: string; // 7-digit account number (separate system from account_hash)
+    shimukeKinko: string; // Zengin 4 digits
+    shimukeSiten: string; // Branch 3 digits (not supported by DB)
+    hishimukeKinko: string; // Zengin 4 digits
+    hishimukeSiten: string; // Branch 3 digits (not supported by DB)
+    kozaBango: string; // 7-digit account number (a different system from account_hash)
   };
 }
 
@@ -189,46 +190,46 @@ export interface ConvertedPaymentRequest {
 // ---------------------------------------------------------------------------
 
 /**
- * 全銀フォーマットのbank transfermessageを Zenith Coordinator API リクエスト形式に変換する。
+ * Convert a Zengin-format transfer message into Zenith Coordinator API request format.
  *
- * ## 変換規則
+ * ## Conversion rules
  *
- * | 全銀フィールド     | 変換先                           | remark                               |
+ * | Zengin field       | Target                           | Notes                              |
  * |--------------------|----------------------------------|------------------------------------|
- * | shimukeKinko (4桁) | payer.bank_id (3桁)              | `zenginCodeToMockBankId` で変換     |
- * | hishimukeKinko(4桁)| payee.bank_id (3桁)              | `zenginCodeToMockBankId` で変換     |
- * | shimukeSiten       | _zengin_meta のみ保持             | DB に支店概念なし                   |
- * | hishimukeSiten     | _zengin_meta のみ保持             | DB に支店概念なし                   |
- * | kozaBango (7桁数字)| payee.account_hash (unresolved:) | account-verify での解決が必要       |
- * | uketorininMei      | payee.account_name               | 名前matchの入力値                    |
- * | kingaku            | amount.value                     | 円単位                              |
- * | ediJoho            | legacy_edi                       | そのまま引き継ぎ                    |
+ * | shimukeKinko (4-digit) | payer.bank_id (3-digit)      | converted via `zenginCodeToMockBankId` |
+ * | hishimukeKinko(4-digit)| payee.bank_id (3-digit)      | converted via `zenginCodeToMockBankId` |
+ * | shimukeSiten       | retained only in _zengin_meta     | no branch concept in DB             |
+ * | hishimukeSiten     | retained only in _zengin_meta     | no branch concept in DB             |
+ * | kozaBango (7-digit num)| payee.account_hash (unresolved:) | requires resolution via account-verify |
+ * | uketorininMei      | payee.account_name               | input value for name matching       |
+ * | kingaku            | amount.value                     | in yen                              |
+ * | ediJoho            | legacy_edi                       | carried over as-is                  |
  *
- * ## 使用例
+ * ## Usage example
  * ```typescript
  * const converted = convertLegacyToNew(legacy, txid, payerAccountHash)
  * if (isUnresolvedAccountRef(converted.payee.account_hash)) {
- *   // Resolve via account-verify before fund transfer
+ *   // resolve via account-verify before transferring
  *   const verified = await callAccountVerify(converted.payee.bank_id, converted._zengin_meta.kozaBango)
  *   converted.payee.account_hash = verified.account_hash
  * }
  * ```
  *
- * @param legacy           - 変換元の全銀フォーマットmessage
- * @param txid             - 新システム側で採番したtransaction ID
- * @param payerAccountHash - 仕向bank側で特定済みのfund transfer人account hash (`h:{UUID}` 形式)
+ * @param legacy           - the source Zengin-format message
+ * @param txid             - transaction ID assigned by the new system
+ * @param payerAccountHash - the remitter's account hash already identified on the originating bank side (`h:{UUID}` format)
  */
 export function convertLegacyToNew(
   legacy: LegacyZenginTransfer,
   txid: string,
   payerAccountHash: string
 ): ConvertedPaymentRequest {
-  // Bank code: Zengin 4-digit code → zenith-mock 3-digit
+  // Bank code: Zengin 4 digits → zenith-mock 3 digits
   const payerBankId = zenginCodeToMockBankId(legacy.shimukeKinko);
   const payeeBankId = zenginCodeToMockBankId(legacy.hishimukeKinko);
 
-  // Destination account: Zengin account number cannot be used directly as account_hash.
-  // Generate unresolved identifier; caller resolves via account-verify
+  // Destination account: a Zengin account number cannot be used directly as an account_hash.
+  // Generate an unresolved identifier; the caller resolves it via account-verify.
   const payeeAccountHash = buildUnresolvedAccountRef(
     legacy.hishimukeKinko,
     legacy.hishimukeSiten,
@@ -263,24 +264,24 @@ export function convertLegacyToNew(
 }
 
 // ---------------------------------------------------------------------------
-// Converter: New format → Legacy Zengin (reverse conversion: for current Zengin system integration)
+// Converter: New format → Legacy Zengin (reverse conversion: for integration with the current Zengin system)
 // ---------------------------------------------------------------------------
 
 /**
- * Reverse convert Zenith Coordinator transaction information to Zengin format compatible message.
- * Used for fallback send and audit purposes during coexistence period with current Zengin system.
+ * Reverse-convert Zenith Coordinator transaction information into a Zengin-format-compatible message.
+ * Used for fallback sending and auditing during the coexistence period with the current Zengin system.
  *
- * ## Caution items
- * - Branch code: Since zenith-mock has no branch concept, `hishimukeSiten` / `shimukeSiten`
- *   must be obtained from bank-side account master and passed by the caller.
- * - account number: Since reverse lookup from account_hash is not possible, `payeeKozaBango` is received from outside.
+ * ## Notes
+ * - Branch code: since zenith-mock has no branch concept, `hishimukeSiten` / `shimukeSiten`
+ *   must be obtained by the caller from the bank's account master and passed in.
+ * - Account number: since account_hash cannot be reverse-looked-up, `payeeKozaBango` is received externally.
  *
- * @param converted        - Zenith Coordinator 形式のtransactioninformation
- * @param payeeKozaBango   - Destination account number (7 digits, already obtained on bank side)
- * @param uketorininMei    - Payee name (in katakana)
- * @param furikomiShiteibi - Bank transfer specified date 'YYYYMMDD'
- * @param payeeSitenCode   - Destination branch code (3 digits, default '000')
- * @param shimukeSitenCode - Originating branch code (3 digits, default '000')
+ * @param converted        - transaction information in Zenith Coordinator format
+ * @param payeeKozaBango   - destination account number (7 digits, obtained on the bank side)
+ * @param uketorininMei    - recipient name (katakana)
+ * @param furikomiShiteibi - designated transfer date 'YYYYMMDD'
+ * @param payeeSitenCode   - destination branch code (3 digits, '000' if omitted)
+ * @param shimukeSitenCode - originating branch code (3 digits, '000' if omitted)
  */
 export function convertNewToLegacy(
   converted: Pick<ConvertedPaymentRequest, "payer" | "payee" | "amount">,
@@ -295,7 +296,7 @@ export function convertNewToLegacy(
     shimukeSiten: shimukeSitenCode,
     hishimukeKinko: mockBankIdToZenginCode(converted.payee.bank_id),
     hishimukeSiten: payeeSitenCode,
-    kamoku: "1", // Default: Savings account
+    kamoku: "1", // Default: ordinary deposit account
     kozaBango: payeeKozaBango.slice(-7).padStart(7, "0"),
     uketorininMei: toHalfWidthKatakana(uketorininMei).slice(0, 48),
     kingaku: converted.amount.value,
@@ -308,10 +309,10 @@ export function convertNewToLegacy(
 // ---------------------------------------------------------------------------
 
 /**
- * Basic validation of Zengin format message.
+ * Basic validation of a Zengin-format message.
  *
- * Bank code is expected to be 4 digits per Zengin standard, branch code 3 digits.
- * Note: differs from zenith-mock DB-side code (3 digits).
+ * Bank code is expected to be the Zengin-standard 4 digits, branch code 3 digits.
+ * Note that this differs from zenith-mock's DB-side code (3 digits).
  */
 export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
   ok: boolean;
@@ -330,7 +331,7 @@ export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
   if (!/^\d{3}$/.test(legacy.hishimukeSiten))
     errors.push(`hishimukeSiten must be 3 digits, got "${legacy.hishimukeSiten}"`);
   if (!["1", "2", "4"].includes(legacy.kamoku))
-    errors.push(`kamoku must be '1' (Savings), '2' (当座), or '4' (貯蓄)`);
+    errors.push(`kamoku must be '1' (普通), '2' (当座), or '4' (貯蓄)`);
   if (!/^\d{1,7}$/.test(legacy.kozaBango))
     errors.push(`kozaBango must be 1–7 digits, got "${legacy.kozaBango}"`);
   if (legacy.uketorininMei.length === 0) errors.push("uketorininMei is required");
@@ -342,7 +343,7 @@ export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
   if (!/^\d{8}$/.test(legacy.furikomiShiteibi))
     errors.push(`furikomiShiteibi must be YYYYMMDD, got "${legacy.furikomiShiteibi}"`);
 
-  // Confirm leading '0' (Zengin = '0' + 3-digit)
+  // Verify that it starts with '0' (a Zengin bank code is '0' + 3 digits)
   if (/^\d{4}$/.test(legacy.shimukeKinko) && legacy.shimukeKinko[0] !== "0")
     errors.push(
       `shimukeKinko first digit should be '0' for domestic banks, got "${legacy.shimukeKinko[0]}"`
@@ -359,12 +360,12 @@ export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Return account type string from Zengin code */
+/** Return the zenith-mock account-type string from a Zengin account-type code */
 export function kamokuToAccountType(kamoku: string): string {
   return KAMOKU_MAP[kamoku] ?? "SAVINGS";
 }
 
-/** Full-width → half-width katakana (lookup table) */
+/** Full-width katakana → half-width katakana conversion (lookup-table approach) */
 const FULL_TO_HALF_KATAKANA: Record<string, string> = {
   ァ: "ｧ",
   ア: "ｱ",
@@ -451,13 +452,13 @@ const FULL_TO_HALF_KATAKANA: Record<string, string> = {
 function toHalfWidthKatakana(str: string): string {
   return str
     .replace(/[\u30A1-\u30F6\u30AC-\u30F4]/g, (ch) => FULL_TO_HALF_KATAKANA[ch] ?? ch)
-    .replace(/\u30FC/g, "\uFF70") // long vowel ー → ｰ
-    .replace(/\u3000/g, " "); // full-width space → half-width
+    .replace(/\u30FC/g, "\uFF70") // Long vowel mark ー → ｰ
+    .replace(/\u3000/g, " "); // Full-width space → half-width
 }
 
-/** Normalize katakana (remove control, non-ASCII; trim) */
+/** Normalize a katakana string (remove control chars / non-ASCII, trim) */
 function normalizeKatakana(str: string): string {
   return toHalfWidthKatakana(str)
-    .replace(/[^\x20-\x7E\uFF65-\uFF9F]/g, "") // Remove anything except ASCII + half-width katakana
+    .replace(/[^\x20-\x7E\uFF65-\uFF9F]/g, "") // Remove everything except ASCII + half-width katakana
     .trim();
 }

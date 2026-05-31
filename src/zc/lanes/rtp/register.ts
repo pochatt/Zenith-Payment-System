@@ -7,7 +7,7 @@ import { nowISO } from "../../../types";
 import { writeFinalityLog } from "../../orchestrator";
 
 /**
- * RTP請求登録（既存 API）
+ * RTP request registration (existing API)
  */
 export async function registerRtp(
   req: RtpRequestInput,
@@ -51,8 +51,8 @@ export async function registerRtp(
 }
 
 /**
- * RTP Attempt実行: CREATED/NOTIFIED → TX_CREATED
- * payer がbank transferを起こしたとき（POST /api/transfers で lane=RTP）に呼ばれる
+ * Execute RTP Attempt: CREATED/NOTIFIED → TX_CREATED
+ * Called when the payer initiates a transfer (POST /api/transfers with lane=RTP)
  */
 export async function attemptRtp(rtpId: string, linkedTxid: string, env: Env): Promise<boolean> {
   const db = env.DB;
@@ -91,7 +91,7 @@ export async function attemptRtp(rtpId: string, linkedTxid: string, env: Env): P
 }
 
 /**
- * RTP完了マーク（txid が SETTLED になったとき）
+ * Mark RTP as complete (when txid becomes SETTLED)
  */
 export async function settleRtp(rtpId: string, db: D1Database): Promise<void> {
   await db
@@ -101,7 +101,7 @@ export async function settleRtp(rtpId: string, db: D1Database): Promise<void> {
 }
 
 /**
- * RTP請求登録（拡張版 — bank SSE 通知付き）
+ * RTP request registration (extended version — with bank SSE notification)
  */
 export async function registerRtpRequest(
   db: D1Database,
@@ -116,7 +116,7 @@ export async function registerRtpRequest(
 ): Promise<{ result: "REGISTERED" | "DUPLICATE"; rtpId: string }> {
   const now = nowISO();
 
-  // idempotentcheck: return DUPLICATE if record exists
+  // Idempotency check: return DUPLICATE if an existing record is found
   const existing = await db
     .prepare(`SELECT rtp_id FROM RtpRequests WHERE rtp_id = ?`)
     .bind(rtpId)
@@ -186,12 +186,13 @@ export async function registerRtpRequest(
 }
 
 /**
- * bankへの RTP 通知を行う。
+ * Send an RTP notification to the bank.
  *
- * 本番では支払bankの ZC Ingress (`/bank/{bankId}/zc-ingress/rtp-notify`) を
- * HTTP/SSE で叩く想定だが、Workers バンドル制約で動的 import ができないため
- * モックでは no-op として成功扱いをreturn。receive側 (`bankRtpNotify`) は
- * 統合後 RtpRequests を直接見るため、別tableへの複製は不要。
+ * In production this is expected to call the paying bank's ZC Ingress
+ * (`/bank/{bankId}/zc-ingress/rtp-notify`) via HTTP/SSE, but because dynamic
+ * import is not possible under Workers bundle constraints, the mock returns
+ * success as a no-op. Since the receiving side (`bankRtpNotify`) reads
+ * RtpRequests directly after consolidation, replication to a separate table is unnecessary.
  */
 async function notifyBankOfRtp(
   _rtpId: string,

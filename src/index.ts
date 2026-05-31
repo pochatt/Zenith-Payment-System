@@ -113,7 +113,7 @@ import {
   respondToApproval,
 } from "./bank/filter";
 
-// ZC TxEventLog inquiry
+// ZC TxEventLog query
 import { getTxEvents, getRecentEvents, getGtidEvents } from "./zc/trace";
 
 // ZC Finality chain verification & explainability
@@ -247,18 +247,18 @@ export default {
       // ZC Core API: /api/...
       // -----------------------------------------------------------------------
       if (path.startsWith("/api/")) {
-        // API authentication: validate X-Api-Key header or Authorization: Bearer header
-        // In mock environment, use ZC_HMAC_SECRET as the API key
+        // API authentication: validate the X-Api-Key header or the Authorization: Bearer header
+        // In the mock environment, use ZC_HMAC_SECRET as the API key
         const apiKey =
           req.headers.get("X-Api-Key") ?? req.headers.get("Authorization")?.replace("Bearer ", "");
 
-        // API key validation (priority)
+        // API key validation (preferred)
         const hasValidApiKey = env.ZC_HMAC_SECRET && apiKey === env.ZC_HMAC_SECRET;
 
-        // Allow browser UI calls from same origin (for development/demo)
-        // Origin header is added by browser. For same-origin requests, Origin is either
-        // omitted or matches the request URL origin. Unlike Referer, it does not include path,
-        // so bypasses like "https://attacker.com/dashboard" are not possible.
+        // Allow browser UI calls from the same origin (for development and demo)
+        // The Origin header is set by the browser. For same-origin requests, Origin is
+        // either omitted or matches the request URL's origin. Unlike Referer, it contains no path, so
+        // a bypass like "https://attacker.com/dashboard" is impossible.
         const origin = req.headers.get("Origin");
         const requestOrigin = new URL(req.url).origin;
         const isFromSameOrigin = !origin || origin === requestOrigin;
@@ -368,7 +368,7 @@ async function handleZcApi(
   method: string,
   env: Env
 ): Promise<Response> {
-  // GET /api/openapi/*.yaml — API specification
+  // GET /api/openapi/*.yaml -- API specification
   const yamlHeaders = {
     "Content-Type": "text/yaml; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
@@ -384,11 +384,11 @@ async function handleZcApi(
   // POST /api/htlc/create
   if (method === "POST" && path === "/api/htlc/create") return handlePostHtlcCreate(req, env);
 
-  // POST /api/htlc/auth-request  Payee-initiated authorization request
+  // POST /api/htlc/auth-request  receiving-side authorization request
   if (method === "POST" && path === "/api/htlc/auth-request")
     return handleHtlcAuthRequest(req, env);
 
-  // GET /api/htlc/auth-requests  List authorization requests
+  // GET /api/htlc/auth-requests  authorization request list
   if (method === "GET" && path === "/api/htlc/auth-requests")
     return handleListHtlcAuthRequests(req, env);
 
@@ -419,7 +419,7 @@ async function handleZcApi(
     return stub.fetch(new Request("http://do/reserve", { method: "POST", body: await req.text() }));
   }
 
-  // GET/POST/DELETE /api/htlc/auth-whitelist  Whitelist management
+  // GET/POST/DELETE /api/htlc/auth-whitelist  whitelist management
   if (path === "/api/htlc/auth-whitelist") {
     if (method === "GET") return handleListAuthWhitelist(env);
     if (method === "POST") return handleRegisterAuthWhitelist(req, env);
@@ -428,17 +428,17 @@ async function handleZcApi(
   if (method === "DELETE" && whitelistDeleteMatch)
     return handleRevokeAuthWhitelist(whitelistDeleteMatch[1]!, req, env);
 
-  // GET /api/htlc/auth/:auth_id  Get authorization request details
+  // GET /api/htlc/auth/:auth_id  authorization request detail
   const htlcAuthGetMatch = path.match(/^\/api\/htlc\/auth\/([^/]+)$/);
   if (method === "GET" && htlcAuthGetMatch)
     return handleGetHtlcAuthRequest(htlcAuthGetMatch[1]!, env);
 
-  // POST /api/htlc/auth/:auth_id/approve  Payer approval
+  // POST /api/htlc/auth/:auth_id/approve  originating-side approval
   const htlcAuthApproveMatch = path.match(/^\/api\/htlc\/auth\/([^/]+)\/approve$/);
   if (method === "POST" && htlcAuthApproveMatch)
     return handleHtlcAuthApprove(req, htlcAuthApproveMatch[1]!, env);
 
-  // POST /api/htlc/auth/:auth_id/decline  Payer decline
+  // POST /api/htlc/auth/:auth_id/decline  originating-side decline
   const htlcAuthDeclineMatch = path.match(/^\/api\/htlc\/auth\/([^/]+)\/decline$/);
   if (method === "POST" && htlcAuthDeclineMatch)
     return handleHtlcAuthDecline(req, htlcAuthDeclineMatch[1]!, env);
@@ -447,12 +447,12 @@ async function handleZcApi(
   const htlcClaimMatch = path.match(/^\/api\/htlc\/([^/]+)\/claim$/);
   if (method === "POST" && htlcClaimMatch) return handlePostHtlcClaim(req, htlcClaimMatch[1]!, env);
 
-  // POST /api/htlc/:htlc_id/capture  Payee capture (authorization-based)
+  // POST /api/htlc/:htlc_id/capture  receiving-side capture (authorization type)
   const htlcCaptureMatch = path.match(/^\/api\/htlc\/([^/]+)\/capture$/);
   if (method === "POST" && htlcCaptureMatch)
     return handleHtlcCapture(req, htlcCaptureMatch[1]!, env);
 
-  // POST /api/htlc/:htlc_id/void  Void (authorization reversal)
+  // POST /api/htlc/:htlc_id/void  void (authorization cancellation)
   const htlcVoidMatch = path.match(/^\/api\/htlc\/([^/]+)\/void$/);
   if (method === "POST" && htlcVoidMatch) return handleHtlcVoid(req, htlcVoidMatch[1]!, env);
 
@@ -463,14 +463,14 @@ async function handleZcApi(
   const htlcGetMatch = path.match(/^\/api\/htlc\/([^/]+)$/);
   if (method === "GET" && htlcGetMatch) return handleGetHtlc(htlcGetMatch[1]!, env);
 
-  // GET /api/transactions/:txid/events  Transaction event log
+  // GET /api/transactions/:txid/events  transaction event log
   const txEventsMatch = path.match(/^\/api\/transactions\/([^/]+)\/events$/);
   if (method === "GET" && txEventsMatch) {
     const events = await getTxEvents(txEventsMatch[1]!, env.DB);
     return json(200, { txid: txEventsMatch[1], events });
   }
 
-  // GET /api/transactions/:txid/explain  Human-readable state transition explanation + tamper detection
+  // GET /api/transactions/:txid/explain  human-readable explanation of state transitions + tampering detection
   const txExplainMatch = path.match(/^\/api\/transactions\/([^/]+)\/explain$/);
   if (method === "GET" && txExplainMatch) {
     const result = await explainTransaction(env.DB, txExplainMatch[1]!);
@@ -478,7 +478,7 @@ async function handleZcApi(
     return json(200, result);
   }
 
-  // GET /api/transactions/:txid/story  Narrative + Mermaid sequence diagram + soundness
+  // GET /api/transactions/:txid/story  narrative + Mermaid sequence diagram + soundness
   const txStoryMatch = path.match(/^\/api\/transactions\/([^/]+)\/story$/);
   if (method === "GET" && txStoryMatch) {
     const result = await narrateTransaction(env.DB, txStoryMatch[1]!);
@@ -486,7 +486,7 @@ async function handleZcApi(
     return json(200, result);
   }
 
-  // GET /api/transactions/:txid/postcard.svg  Generated Kintsugi-style SVG (image)
+  // GET /api/transactions/:txid/postcard.svg  generated kintsugi-style SVG (image)
   const txPostcardSvgMatch = path.match(/^\/api\/transactions\/([^/]+)\/postcard\.svg$/);
   if (method === "GET" && txPostcardSvgMatch) {
     const exp = await explainTransaction(env.DB, txPostcardSvgMatch[1]!);
@@ -510,21 +510,21 @@ async function handleZcApi(
     return json(200, card);
   }
 
-  // GET /api/transactions/:txid/verify  FinalityLog hash chain verification
+  // GET /api/transactions/:txid/verify  FinalityLog hash chain validation
   const txVerifyMatch = path.match(/^\/api\/transactions\/([^/]+)\/verify$/);
   if (method === "GET" && txVerifyMatch) {
     const result = await verifyChain(env.DB, txVerifyMatch[1]!);
     return json(200, result);
   }
 
-  // GET /api/gtid/:gtid/verify  GTID hash chain verification
+  // GET /api/gtid/:gtid/verify  hash chain validation for GTID
   const gtidVerifyMatch = path.match(/^\/api\/gtid\/([^/]+)\/verify$/);
   if (method === "GET" && gtidVerifyMatch) {
     const result = await verifyChain(env.DB, gtidVerifyMatch[1]!);
     return json(200, result);
   }
 
-  // GET /api/events  Global event log (recent N entries)
+  // GET /api/events  global event log (most recent N entries)
   if (method === "GET" && path === "/api/events") {
     const url = new URL(req.url);
     const limit = parseInt(url.searchParams.get("limit") ?? "100");
@@ -550,11 +550,11 @@ async function handleZcApi(
   const gtidMatch = path.match(/^\/api\/gtid\/([^/]+)$/);
   if (method === "GET" && gtidMatch) return handleGetGtid(gtidMatch[1]!, env);
 
-  // GET /api/rtp/incoming?account=XXXXXXXXXX  Incoming request list (payer side)
+  // GET /api/rtp/incoming?account=XXXXXXXXXX  list of incoming requests (payer side)
   if (method === "GET" && path === "/api/rtp/incoming") {
     const account = new URL(req.url).searchParams.get("account") ?? "";
 
-    // Verify that account is bank_id(3) + account_number(7) = 10 characters
+    // Validate that account is bank_id(3) + account_number(7) = 10 characters
     if (!account || account.length !== 10) {
       return jsonError(
         400,
@@ -565,8 +565,8 @@ async function handleZcApi(
 
     const payerBankId = account.slice(0, 3);
     const now = new Date().toISOString();
-    // RtpRequestRows was deprecated in 0025_rtp_consolidate.sql, so payer-side
-    // request list also references RtpRequests directly.
+    // Because 0025_rtp_consolidate.sql removed RtpRequestRows, the payer-side incoming
+    // list also references RtpRequests directly.
     const rows = await env.DB.prepare(`
       SELECT rtp_id, payee_bank_id, payer_bank_id, amount_value, state AS rtp_status,
              payee_name, description, expires_at, notified_at, created_at
@@ -598,8 +598,8 @@ async function handleZcApi(
   if (method === "POST" && resumeNamecheckMatch)
     return handlePostResumeNameCheck(req, resumeNamecheckMatch[1]!, env);
 
-  // POST /api/transfers/:txid/no-debit-proof  H_locked automatic release (non-execution proof, §8.4.1)
-  // Like bank ingress, verify X-ZC-Signature (proof signed by PayerBank).
+  // POST /api/transfers/:txid/no-debit-proof  H_locked automatic release (proof-of-non-execution, §8.4.1)
+  // Like the bank ingress, validate X-ZC-Signature (signed proof originating from PayerBank).
   const noDebitMatch = path.match(/^\/api\/transfers\/([^/]+)\/no-debit-proof$/);
   if (method === "POST" && noDebitMatch) {
     const body = (await req.json().catch(() => null)) as {
@@ -623,7 +623,7 @@ async function handleZcApi(
     return json(result.ok ? 200 : 422, result);
   }
 
-  // POST /api/transfers/:txid/h-unlock-authorize  H_locked operational release (4-eye principle, §8.4.1)
+  // POST /api/transfers/:txid/h-unlock-authorize  H_locked operational release (four-eyes, §8.4.1)
   const hUnlockMatch = path.match(/^\/api\/transfers\/([^/]+)\/h-unlock-authorize$/);
   if (method === "POST" && hUnlockMatch) {
     const body = (await req.json().catch(() => null)) as {
@@ -660,8 +660,8 @@ async function handleZcApi(
   const dnsPosMatch = path.match(/^\/api\/dns\/([^/]+)\/position$/);
   if (method === "GET" && dnsPosMatch) return handleGetDnsPosition(dnsPosMatch[1]!, env);
 
-  // GET /api/boj/positions — BOJ balance inquiry for each participating bank (public API)
-  // White paper "Discussion Point 7: Approach to funds clearing and settlement" — pre-funded RTGS balance monitoring
+  // GET /api/boj/positions — query each participating bank's BOJ deposit (BOJ) balance (public API)
+  // Report "Topic 7: How funds settlement and clearing should work" — balance monitoring for the prefunded RTGS scheme
   if (method === "GET" && path === "/api/boj/positions") {
     const positions = await getBojPositions(env.DB);
     return json(200, { positions, as_of: nowISO() });
@@ -706,7 +706,7 @@ async function handleZcApi(
   }
 
   // -----------------------------------------------------------------------
-  // Circuit Breaker (participant bank connectivity monitoring)
+  // Circuit Breaker (participating bank connectivity monitoring)
   // -----------------------------------------------------------------------
 
   // GET /api/circuit-breaker
@@ -758,7 +758,7 @@ async function handleZcApi(
   if (method === "POST" && path === "/api/participants/register")
     return handlePostParticipantRegister(req, env);
 
-  // --- Bank management ---
+  // --- Bank administration ---
   // GET /api/banks
   if (method === "GET" && path === "/api/banks") return handleListBanks(env);
 
@@ -773,7 +773,7 @@ async function handleZcApi(
   const bankAcctsMatch = path.match(/^\/api\/banks\/([^/]+)\/accounts$/);
   if (method === "GET" && bankAcctsMatch) return handleBankAccounts(bankAcctsMatch[1]!, env);
 
-  // GET /api/accounts/:accountId/name  Account name inquiry
+  // GET /api/accounts/:accountId/name  account holder name lookup
   const nameMatch = path.match(/^\/api\/accounts\/([^/]+)\/name$/);
   if (method === "GET" && nameMatch) return handleAccountNameLookup(nameMatch[1]!, env);
 
@@ -884,7 +884,7 @@ async function handleZcApi(
     const result = await processQrPayment(env.DB, body, env);
     if (!result.valid) return jsonError(400, "QR_INVALID", result.error ?? "QR payment failed");
 
-    // QR validation OK → trigger actual bank transfer processing
+    // QR validation OK → launch the actual transfer processing
     const qr = result.qrRow!;
     const txid = `TX-${newUUID()}`;
     const zcReq = new Request("http://internal/api/transfers", {
@@ -1008,7 +1008,7 @@ async function handleBankApi(
   if (method === "POST" && ingressMatch)
     return handleBankIngressHttp(req, bankId, ingressMatch[1]!, env);
 
-  // customerAPI
+  // Customer API
   if (method === "GET" && sub === "/v1/me/accounts") return handleGetAccounts(req, bankId, env);
 
   const balanceMatch = sub.match(/^\/v1\/me\/accounts\/([^/]+)\/balance$/);
@@ -1059,7 +1059,7 @@ async function handleBankApi(
   if (method === "GET" && sub === "/v1/teller/batch/status")
     return handleBatchStatus(req, bankId, env);
 
-  // Credit filter management API
+  // Incoming credit filter management API
   if (sub === "/v1/filters") {
     if (method === "GET") {
       const url = new URL(req.url);
@@ -1091,7 +1091,7 @@ async function handleBankApi(
     }
   }
 
-  // credit / incoming payment approval API (customer)
+  // Incoming credit approval API (customer)
   if (method === "GET" && sub === "/v1/me/approvals") {
     const url = new URL(req.url);
     const approvals = await listApprovalRequests(
@@ -1111,9 +1111,9 @@ async function handleBankApi(
     const result = await respondToApproval(bankId, approvalRespondMatch[1]!, body, env.DB);
     if (!result.ok) return jsonError(400, result.reason ?? "ERROR", result.reason ?? "failed");
 
-    // If approval: notify ZC to resume_credit (via Queue)
+    // If approved: notify ZC of resume_credit (via Queue)
     if (body.approved && result.txid) {
-      // Get target transaction's payee information
+      // Fetch the payee information for the target transaction
       const txInfo = await env.DB.prepare(
         `SELECT payee_bank_id, payee_account_hash FROM Transactions WHERE txid=?`
       )
@@ -1136,7 +1136,7 @@ async function handleBankApi(
     return json(200, { result: body.approved ? "APPROVED" : "REJECTED", txid: result.txid });
   }
 
-  // BankAuditLog inquiry (teller)
+  // BankAuditLog lookup (teller)
   if (method === "GET" && sub === "/v1/teller/audit-log") {
     const url = new URL(req.url);
     const txid = url.searchParams.get("txid");
@@ -1208,7 +1208,7 @@ async function handleInternal(
     return json(200, { result: "SETTLED", cycle_id: body.cycle_id });
   }
 
-  // BOJ account balance inquiry for each bank
+  // Query each bank's BOJ deposit account (BOJ) balance
   if (method === "GET" && path === "/internal/boj-positions") {
     const positions = await getBojPositions(env.DB);
     return json(200, { positions });
@@ -1223,7 +1223,7 @@ async function handleInternal(
   }
 
   // POST /internal/transfers/:txid/resume-credit
-  // After customer approves credit, bank notifies ZC to resume credit processing
+  // After the customer approves the incoming credit, the bank notifies ZC to resume credit processing
   const resumeCreditMatch = path.match(/^\/internal\/transfers\/([^/]+)\/resume-credit$/);
   if (method === "POST" && resumeCreditMatch) {
     const txid = resumeCreditMatch[1]!;
