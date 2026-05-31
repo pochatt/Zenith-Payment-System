@@ -9,8 +9,8 @@ import type { RichDataStoreRow, RichDataStoreRequest, RichDataType } from "../ty
 const R2_THRESHOLD_BYTES = 50 * 1024;
 
 // ---------------------------------------------------------------------------
-// リッチデータ登録
-// 大きいデータ(>50KB)はR2に保存、content_jsonには summary のみ
+// Register rich data
+// Large data (>50KB) in R2; content_json has summary only
 // ---------------------------------------------------------------------------
 export async function storeRichData(
   db: D1Database,
@@ -86,7 +86,7 @@ export async function storeRichData(
 }
 
 // ---------------------------------------------------------------------------
-// リッチデータget (data_ref)
+// Get rich data (data_ref)
 // ---------------------------------------------------------------------------
 export async function getRichData(
   db: D1Database,
@@ -102,7 +102,7 @@ export async function getRichData(
 }
 
 // ---------------------------------------------------------------------------
-// txid紐付けリッチデータ一覧
+// List rich data linked to txid
 // ---------------------------------------------------------------------------
 export async function listRichDataByTxid(
   db: D1Database,
@@ -118,7 +118,7 @@ export async function listRichDataByTxid(
 }
 
 // ---------------------------------------------------------------------------
-// コンテンツhash計算 (SHA-256 of JSON)
+// Content hash calc (SHA-256 of JSON)
 // ---------------------------------------------------------------------------
 export async function computeContentHash(content: object): Promise<string> {
   const json = JSON.stringify(content);
@@ -128,7 +128,7 @@ export async function computeContentHash(content: object): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// 内部Helpers: R2保存時のD1summarygenerate
+// Internal helpers: generate D1 summary for R2
 // ---------------------------------------------------------------------------
 function buildSummary(
   content: Record<string, unknown>,
@@ -185,7 +185,7 @@ function buildSummary(
 }
 
 // ---------------------------------------------------------------------------
-// 内部Helpers: ArrayBuffer → hex string
+// Internal helpers: ArrayBuffer → hex
 // ---------------------------------------------------------------------------
 function bufToHex(buf: ArrayBuffer): string {
   return Array.from(new Uint8Array(buf))

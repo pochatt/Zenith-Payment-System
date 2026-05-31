@@ -69,7 +69,7 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
       txid,
       reasonCode: authResult.reason_code ?? "AUTHORITY_CHECK_NG",
       fromStates: ["PRECHECKED"],
-      skipReleaseH: true, // HV は H 予約を取らないため
+      skipReleaseH: true, // Because HV doesn't take H reservation
     });
     return;
   }
@@ -100,7 +100,7 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   }
 
   // 4. BOJbalancecheck（プレファンドRTGS）
-  // BOJ balanceは負債会計のため負値。`bojBalance + amount > 0` でbalance不足。
+  // BOJ balance negative (liability). Balance insufficient if `bojBalance + amount > 0`
   const bojBalance = await calcBalance(`${tx.payer_bank_id}-BOJ`, db);
   if (bojBalance + tx.amount_value > 0) {
     await cancelInFlightTx(db, {
@@ -117,8 +117,8 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 5. PRECHECKED → DECIDED_TO_SETTLE（H_RESERVED をスキップ）
-  // この直行遷移は ALLOWED_TRANSITIONS.PRECHECKED に明示的に列挙されている。
+  // 5. PRECHECKED → DECIDED_TO_SETTLE (skip H_RESERVED)
+  // Direct transition explicitly listed in ALLOWED_TRANSITIONS
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();
   const decided = await transitionWithLog(db, {
@@ -135,8 +135,8 @@ export async function advanceHighValue(txid: string, env: Env): Promise<void> {
   if (!decided.applied) return;
 
   // 6. ExecuteDebit（a_HV: proof_type=PAYER_HV_ISOLATION_PROOF）
-  // payer_account_hash を渡す（HV (high-value)は reserve-funds を経由しないため Bank 側で account を特定できない）
-  // IGSpayment開始はデビットconfirmation後（onPayerExecConfirmed）に行う。
+  // Pass payer_account_hash (HV bypasses reserve-funds; bank can't ID account)
+  // IGS payment starts after debit confirmation (onPayerExecConfirmed)
   await env.QUEUE.send({
     type: "ZC_BANK_DEBIT",
     payload: {

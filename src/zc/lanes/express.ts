@@ -78,7 +78,7 @@ export async function processExpress(
     };
   }
 
-  // 3. Name Check（PSPR参照または payeeAccount）
+  // 3. Name Check (PSPR or payeeAccount)
   const nameResult = await callBankNameCheck(
     req.payee.bank_id,
     {
@@ -112,7 +112,7 @@ export async function processExpress(
   }
   const reservationId = hResult.reservation_id;
 
-  // H_RESERVED 状態に遷移
+  // Transition to H_RESERVED state
   const reserved = await transitionWithLog(db, {
     txid,
     fromState: "PRECHECKED",
@@ -130,7 +130,7 @@ export async function processExpress(
     };
   }
 
-  // 5. Bank reserve-funds 呼び出し
+  // 5. Call bank reserve-funds
   const reserveResult = await callBankReserveFunds(
     req.payer.bank_id,
     {
@@ -154,7 +154,7 @@ export async function processExpress(
   // 6. Decision finalized
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();
-  // DECIDED_TO_SETTLE 時に dns_cycle_id をset（H解放のために必要）
+  // Set dns_cycle_id at DECIDED_TO_SETTLE (needed for H release)
   const dnsCycleId = await getOrCreateDnsCycle(db, now);
   const decided = await transitionWithLog(db, {
     txid,
@@ -177,10 +177,10 @@ export async function processExpress(
     };
   }
 
-  // H-reservedを RESERVED → LOCKED に切り替え（DNSsettlementまで保持）
+  // Switch H-reserved RESERVED → LOCKED (hold until DNS settlement)
   await lockH(reservationId, db);
 
-  // 7. 非同期で Execution をqueueに投入
+  // 7. 非同期で Enqueue Execution
   await env.QUEUE.send({
     type: "ZC_BANK_DEBIT",
     payload: {

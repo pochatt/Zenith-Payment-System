@@ -26,7 +26,7 @@ function getTellerHeaders(req: Request): { bankId: string; tellerId: string } | 
 }
 
 // ---------------------------------------------------------------------------
-// POST /bank/:bankId/v1/teller/cash/deposit  現金deposit
+// POST deposit cash
 // ---------------------------------------------------------------------------
 export async function handleCashDeposit(req: Request, bankId: string, env: Env): Promise<Response> {
   const headers = getTellerHeaders(req);
@@ -39,7 +39,7 @@ export async function handleCashDeposit(req: Request, bankId: string, env: Env):
     return jsonError(400, "INVALID_JSON", "invalid json");
   }
 
-  // amountValidation: 正の整数のみ許可（負のamountでbalancecheck迂回を防止）
+  // amountValidation: positive integers only (prevent balance check bypass)
   if (typeof body.amount !== "number" || !Number.isInteger(body.amount) || body.amount <= 0) {
     return jsonError(400, "INVALID_AMOUNT", "amount must be a positive integer");
   }
@@ -52,7 +52,7 @@ export async function handleCashDeposit(req: Request, bankId: string, env: Env):
   if (!account) return jsonError(404, "NOT_FOUND", "account not found");
 
   const txGroupId = `CASH-DEP-${newUUID()}`;
-  // 現金depositの対向は現金（Cash）account — Cash(-) / Customer(+)
+  // Cash deposit counterpart: Cash(-) / Customer(+)
   await insertJournalGroup(env.DB, {
     bankId,
     txGroupId,
@@ -83,7 +83,7 @@ export async function handleCashDeposit(req: Request, bankId: string, env: Env):
 }
 
 // ---------------------------------------------------------------------------
-// POST /bank/:bankId/v1/teller/cash/withdrawal  現金払い戻し
+// POST withdraw cash
 // ---------------------------------------------------------------------------
 export async function handleCashWithdrawal(
   req: Request,
@@ -100,7 +100,7 @@ export async function handleCashWithdrawal(
     return jsonError(400, "INVALID_JSON", "invalid json");
   }
 
-  // amountValidation: 正の整数のみ許可
+  // amountValidation: positive integers only
   if (typeof body.amount !== "number" || !Number.isInteger(body.amount) || body.amount <= 0) {
     return jsonError(400, "INVALID_AMOUNT", "amount must be a positive integer");
   }
@@ -116,7 +116,7 @@ export async function handleCashWithdrawal(
   if (balance < body.amount) return jsonError(400, "INSUFFICIENT_FUNDS", "insufficient balance");
 
   const txGroupId = `CASH-WD-${newUUID()}`;
-  // 現金払戻の対向は現金（Cash）account — Cash(+) / Customer(-)
+  // Cash withdrawal counterpart: Cash(+) / Customer(-)
   await insertJournalGroup(env.DB, {
     bankId,
     txGroupId,
@@ -173,7 +173,7 @@ export async function handleGetJournals(
 }
 
 // ---------------------------------------------------------------------------
-// POST /bank/:bankId/v1/teller/suspense/:suspenseId/resolve  segregated deposit収束
+// POST resolve segregated deposit
 // ---------------------------------------------------------------------------
 export async function handleSuspenseResolve(
   req: Request,
@@ -206,7 +206,7 @@ export async function handleSuspenseResolve(
   const suspAcctId = suspenseAccountId(bankId);
 
   if (body.action === "SETTLE") {
-    // 別段 → Savings account
+    // suspense → Savings account
     await insertJournalGroup(env.DB, {
       bankId,
       txGroupId,
@@ -234,7 +234,7 @@ export async function handleSuspenseResolve(
       .run();
     return json(200, { result: "SETTLED", suspense_id: suspenseId });
   } else {
-    // RETURN 時に別段balanceを消去するjournal entryをcreate
+    // On RETURN, create journal entry to clear suspense balance
     await insertJournalGroup(env.DB, {
       bankId,
       txGroupId: `SUSP-RETURN-${suspenseId}`,
@@ -266,7 +266,7 @@ export async function handleSuspenseResolve(
 }
 
 // ---------------------------------------------------------------------------
-// GET /bank/:bankId/v1/teller/batch/status  batch処理状態inquiry
+// GET batch status inquiry
 // ---------------------------------------------------------------------------
 export async function handleBatchStatus(req: Request, bankId: string, env: Env): Promise<Response> {
   const headers = getTellerHeaders(req);
@@ -292,7 +292,7 @@ export async function handleBatchStatus(req: Request, bankId: string, env: Env):
 }
 
 // ---------------------------------------------------------------------------
-// GET /bank/:bankId/v1/teller/accounts  行員用全account list
+// GET teller full account list
 // ---------------------------------------------------------------------------
 export async function handleTellerListAccounts(
   req: Request,
@@ -341,7 +341,7 @@ export async function handleTellerListAccounts(
 }
 
 // ---------------------------------------------------------------------------
-// POST /bank/:bankId/v1/teller/accounts  account新規create（全数値account number）
+// POST create account (all-numeric account number)
 // ---------------------------------------------------------------------------
 export async function handleCreateAccount(
   req: Request,
@@ -376,9 +376,9 @@ export async function handleCreateAccount(
 
   const now = nowISO();
 
-  // 次のaccount numberを算出: 同一bankの最大account number + 1
-  // IN ('SAVINGS','CURRENT') に限定 — '003-ZCS' 等のシステムaccountを除外し
-  //           parseInt('-ZCS') = NaN → NaN+1 = NaN でaccount numberが壊れる問題を防ぐ
+  // Calculate next account: max account in bank + 1
+  // Limit to SAVINGS/CURRENT — exclude system accounts
+  //           Prevent parseInt('-ZCS') = NaN → NaN+1 = NaN breaking account number
   const maxAcct = await env.DB.prepare(
     `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS', 'CURRENT') ORDER BY CAST(SUBSTR(account_id, 4) AS INTEGER) DESC LIMIT 1`
   )
@@ -392,7 +392,7 @@ export async function handleCreateAccount(
   }
   const accountId = generateAccountId(bankId, nextSeq);
 
-  // customer IDを自動generate
+  // Auto-generate customer ID
   const customerId = `C${newUUID().replace(/-/g, "").slice(0, 12)}`;
 
   await env.DB.prepare(
@@ -434,7 +434,7 @@ export async function handleCreateAccount(
 }
 
 // ---------------------------------------------------------------------------
-// PATCH /bank/:bankId/v1/teller/accounts/:accountId  accountステータスchange
+// PATCH account status change
 // ---------------------------------------------------------------------------
 export async function handleUpdateAccountStatus(
   req: Request,
@@ -493,7 +493,7 @@ export async function handleUpdateAccountStatus(
 }
 
 // ---------------------------------------------------------------------------
-// GET /bank/:bankId/v1/teller/suspense  segregated deposit一覧
+// GET segregated deposit list
 // ---------------------------------------------------------------------------
 export async function handleListSuspense(
   req: Request,
@@ -526,7 +526,7 @@ export async function handleListSuspense(
 }
 
 // ---------------------------------------------------------------------------
-// GET /bank/:bankId/v1/teller/journals  全journal entry帳（accountIDはqueryパラメータ）
+// GET full journal (accountID as param)
 // ---------------------------------------------------------------------------
 export async function handleGetAllJournals(
   req: Request,
@@ -558,8 +558,8 @@ export async function handleGetAllJournals(
 }
 
 // ---------------------------------------------------------------------------
-// POST /bank/:bankId/v1/teller/accounts/batch  account一括create
-// 最大200account/リクエスト。initial_deposit 付きでjournal entryも同時generate。
+// POST batch create accounts
+// Max 200/request. Also generate journal with initial_deposit
 // ---------------------------------------------------------------------------
 export async function handleBatchCreateAccounts(
   req: Request,
@@ -585,8 +585,8 @@ export async function handleBatchCreateAccounts(
   const today = now.slice(0, 10);
   const allowed = ["SAVINGS", "CURRENT"];
 
-  // 現在の最大account numberをget（既存ロジックと共通）
-  // 同時実行による ID 重複を防ぐため、UUID サフィックスでユニーク化
+  // Get current max account (common)
+  // UUID suffix for uniqueness in concurrency
   const maxAcct = await env.DB.prepare(
     `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS', 'CURRENT') ORDER BY CAST(SUBSTR(account_id, 4) AS INTEGER) DESC LIMIT 1`
   )
@@ -597,7 +597,7 @@ export async function handleBatchCreateAccounts(
     const currentSeq = parseInt(maxAcct.account_id.slice(3), 10);
     nextSeq = isNaN(currentSeq) ? 1 : currentSeq + 1;
   }
-  // 同時リクエストによる seq 衝突を回避するため、ランダムオフセットを加算
+  // Add random offset to avoid seq collision
   nextSeq += Math.floor(Math.random() * 1000000);
 
   const stmts: ReturnType<D1Database["prepare"]>[] = [];
@@ -666,7 +666,7 @@ export async function handleBatchCreateAccounts(
     nextSeq++;
   }
 
-  // D1 batch: 200account×3ステートメント = 最大600件（制限内）
+  // D1 batch: 200 accounts × 3 statements = max 600 (within limit)
   if (stmts.length > 0) await env.DB.batch(stmts);
 
   return json(201, { result: "BATCH_CREATED", count: created.length, created });

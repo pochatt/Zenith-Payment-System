@@ -58,7 +58,7 @@ export async function openCase(db: D1Database, input: OpenCaseInput): Promise<st
     }),
   ]);
 
-  // Transactions に case_id を紐付け
+  // Link case_id to Transactions
   if (input.related_txid) {
     await db
       .prepare(`UPDATE Transactions SET case_id=?, updated_at=? WHERE txid=?`)

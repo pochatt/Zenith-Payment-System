@@ -163,7 +163,7 @@ export function isCrossBorderTransfer(payerBankId: string, payeeBankId: string):
 }
 
 // ---------------------------------------------------------------------------
-// プロキシ解paymentみアカウントinformationhash化
+// Proxy-resolved payment account hash
 // ---------------------------------------------------------------------------
 
 /**

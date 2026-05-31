@@ -4,8 +4,8 @@
  * limit reset, and audit logging.
  * @module cron/eod
  */
-// 3. Bank側: 利息計算・日次スナップショット
-// 4. ゼロサムvalidation
+// 3. Bank side: interest calc, daily snapshot
+// 4. Zero-sum validation
 import type { Env } from "../types";
 import { todayJST } from "../types";
 import { kickDns, settleDns } from "../zc/dns";
@@ -23,8 +23,8 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
   const today = todayJST();
 
   try {
-    // 1. BULK 事前処理: RECEIVED → DECIDED_TO_SETTLE
-    // kickDns より先に実行することで、当日 OPEN サイクルの dns_cycle_id が正しく付与される
+    // 1. BULK preprocessing: RECEIVED → DECIDED_TO_SETTLE
+    // Execute before kickDns so today's OPEN cycle gets correct dns_cycle_id
     const bulkReceived = await db
       .prepare(`SELECT txid FROM Transactions WHERE lane='BULK' AND state='RECEIVED'`)
       .all<{ txid: string }>();
@@ -38,8 +38,8 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
     const kickResult = await kickDns(today, env);
     log.push(`DNS Kick: cycle=${kickResult.cycle_id} state=${kickResult.state}`);
 
-    // 3. DNS settlement（モック: 即時 SETTLED）
-    // settleDns 内部で BULK DECIDED_TO_SETTLE TX の ZC_BANK_DEBIT queue投入まで行う
+    // 3. DNS settlement (mock: immediate SETTLED)
+    // settleDns executes through enqueuing ZC_BANK_DEBIT for BULK
     if (kickResult.state === "KICKED") {
       await settleDns(kickResult.cycle_id, env);
       log.push(`DNS Settled: ${kickResult.cycle_id}`);
@@ -54,12 +54,12 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
       .all<{ htlc_id: string; txid: string }>();
 
     for (const htlc of expiredHtlcs.results) {
-      // env を渡してbank側サスペンスの解放通知も行う（HTLC_LOCKED 時は reserve-funds がexecutedみ）
+      // Pass env; also notify bank-side suspense release
       await cancelHtlc(htlc.htlc_id, htlc.txid, "TIMELOCK_EXPIRED", db, env);
       log.push(`HTLC expired: ${htlc.htlc_id}`);
     }
 
-    // 5. 利息計算 + balanceスナップショット
+    // 5. Interest calc + balance snapshot
     const accounts = await db
       .prepare(`SELECT DISTINCT bank_id, account_id FROM BankAccounts WHERE status='NORMAL'`)
       .all<{ bank_id: string; account_id: string }>();
@@ -82,7 +82,7 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
     }
     log.push(`Snapshots saved for ${accountRows.length} accounts`);
 
-    // 6. ゼロサムvalidation
+    // 6. Zero-sum validation
     for (const bankId of bankIdSet) {
       const ok = await verifyZeroSum(bankId, db);
       log.push(`ZeroSum ${bankId}: ${ok ? "OK" : "VIOLATED!"}`);
@@ -91,7 +91,7 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
       }
     }
 
-    // 7. participating bankの日次fund transfer累計リセット（tx_amount_limit/daily_amount_limit 用）
+    // 7. Daily fund transfer total reset (tx_amount_limit/daily_amount_limit)
     try {
       const today = todayJST();
       await db
@@ -107,16 +107,16 @@ export async function runEod(env: Env): Promise<{ ok: boolean; log: string[] }> 
       }
     }
 
-    // 8. 通知リトライ・IGSリトライ・SSEeventプルーニング
+    // 8. Notification/IGS retries, SSE event pruning
     await retryPendingNotifications(db, env);
     await retryFailedIgs(db, env);
     await pruneDeliveredEvents(db);
     log.push("Notification retry, IGS retry, event prune: done");
 
-    // 9. FinalityLog hashチェーン日次audit
-    // 全チェーンを走査し、改ざん（prev_hash 断絶・entry_hash 不一致）を検知したら
-    // CASE へ収束させる。説明可能性の単一の正である FinalityLog の完全性を、
-    // 誰かが個別 txid をinquiryするのを待たずに日次でconfirmationする。
+    // 9. Daily FinalityLog hash chain audit
+    // Scan chain; detect tampering (prev_hash break, entry_hash mismatch)
+    // Converge to CASE. Preserve FinalityLog's single truth
+    // Confirm daily without waiting for inquiry
     const audit = await runFinalityChainAudit(env);
     log.push(
       `Finality audit: ${audit.chains_checked} chains / ${audit.entries_checked} entries, ` +

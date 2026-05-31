@@ -27,7 +27,7 @@ export interface Env {
   /**
    * System-wide HIGH_VALUE auto-routing threshold in JPY (integer string).
    * Payments at or above this amount are automatically escalated to HIGH_VALUE lane.
-   * Default: 100000000 (¥100,000,000 = 1億円). Per-bank override via Participants.hv_threshold.
+   * Default: 100000000 (¥100,000,000 = 100M yen). Per-bank override via Participants.hv_threshold.
    */
   ZC_HV_THRESHOLD?: string;
   R2_BUCKET?: R2Bucket;
@@ -110,37 +110,37 @@ export interface FatfR16Data {
 // Account Number Utilities
 // ---------------------------------------------------------------------------
 
-/** account numberからbankコード (3桁) をget */
+/** Get bank code (3-digit) from account number */
 export function bankCodeFromAccount(accountId: string): string {
   return accountId.slice(0, 3);
 }
 
-/** bankコードからsegregated depositaccount numberをgenerate */
+/** Generate suspense account from bank code */
 export function suspenseAccountId(bankCode: string): string {
   return `${bankCode}0000000`;
 }
 
-/** bankコードから ZCsettlement勘定account numberをgenerate */
+/** Generate ZC settlement account from bank code */
 export function nostroAccountId(bankCode: string): string {
   return `${bankCode}-ZCS`;
 }
 
-/** bankコードから利益剰余金（Retained Earnings）account numberをgenerate */
+/** Generate Retained Earnings account from bank code */
 export function retainedEarningsAccountId(bankCode: string): string {
   return `${bankCode}-RE`;
 }
 
-/** bankコードから現金（Cash）account numberをgenerate */
+/** Generate Cash account number from bank code */
 export function cashAccountId(bankCode: string): string {
   return `${bankCode}-CASH`;
 }
 
-/** account numberがsegregated depositかどうか */
+/** Whether account is segregated deposit */
 export function isSuspenseAccount(accountId: string): boolean {
   return accountId.endsWith("0000000");
 }
 
-/** 次のaccount numberをgenerate */
+/** Generate next account number */
 export function generateAccountId(bankCode: string, seq: number): string {
   return `${bankCode}${String(seq).padStart(7, "0")}`;
 }

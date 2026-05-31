@@ -37,7 +37,7 @@ export async function respondToRtp(
     return { result: "NOT_FOUND" };
   }
 
-  // 既に応答済みの場合
+  // If already responded
   const alreadyDone: RtpRequestRow["state"][] = [
     "ACCEPTED",
     "DECLINED",
@@ -75,14 +75,14 @@ export async function respondToRtp(
     return { result: "DECLINED" };
   }
 
-  // ACCEPTED: fund transfertransactionを自動generate
+  // ACCEPTED: auto-generate fund transfer transaction
   const linkedTxid = `TX-${crypto.randomUUID()}`;
 
-  // fund transfer Transaction create + FinalityLog + RtpRequests の TX_CREATED 化を
-  // 1 つの db.batch() に統合する。旧implementationは INSERT/UPDATE をbatch、FinalityLog を別 await
-  // していたため「Transactions 行はあるが RtpAccepted logが残らない」窓が存在した。
-  // insertTxWithLog は ALLOWED_ENTRY_STATES = ['RECEIVED', ...] を強制するので、
-  // RTP は canonical な RECEIVED 入口で他laneと合流する。
+  // fund transfer Transaction + FinalityLog + RtpRequests TX_CREATED
+  // Integrate into single db.batch(). Old implementation batched INSERT/UPDATE, FinalityLog separately
+  // So 'row exists but no log' window existed
+  // insertTxWithLog enforces ALLOWED_ENTRY_STATES
+  // RTP merges with other lanes at canonical RECEIVED entry
   await insertTxWithLog(db, {
     txid: linkedTxid,
     lane: "RTP",
@@ -108,7 +108,7 @@ export async function respondToRtp(
     ],
   });
 
-  // オーケストレーターへsend（STANDARD フローで精算処理を進める）
+  // Send to orchestrator (progress settlement in STANDARD flow)
   await env.QUEUE.send({
     type: "ZC_STATE_ADVANCE",
     payload: { txid: linkedTxid, action: "ADVANCE_STANDARD" },

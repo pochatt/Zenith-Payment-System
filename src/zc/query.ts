@@ -66,10 +66,10 @@ export async function handleGetTransaction(txid: string, env: Env): Promise<Resp
           : "WAIT";
 
   // ---------------------------------------------------------------------------
-  // inquiryメタinformation（specification書: 運用設計 > inquiryメタinformation）
+  // inquiry metadata (spec: operations > metadata)
   // ---------------------------------------------------------------------------
 
-  // watermark: このtransactionに関する FinalityLog の最新 event_seq
+  // watermark: latest event_seq in FinalityLog for this tx
   // 窓口が「どこまで反映されたinformationか」をconfirmationできる
   const watermarkRow = await db
     .prepare(`SELECT MAX(event_seq) AS wm FROM FinalityLog WHERE txid = ?`)
@@ -78,7 +78,7 @@ export async function handleGetTransaction(txid: string, env: Env): Promise<Resp
   const watermark = watermarkRow?.wm ?? 0;
 
   // next_retry_at: 次回inquiry推奨時刻（状態に応じて算出）
-  // 終端状態は null（もう変わらない）、中間状態は 5-30秒後を推奨
+  // Terminal null (won't change); intermediate: recommend 5-30 sec later
   const now = new Date();
   let nextRetryAt: string | null = null;
   if (["SETTLED", "CANCELLED", "FAILED_EXECUTION"].includes(tx.state)) {
@@ -93,7 +93,7 @@ export async function handleGetTransaction(txid: string, env: Env): Promise<Resp
     nextRetryAt = new Date(now.getTime() + 10_000).toISOString(); // 10s — default
   }
 
-  // freshness_level: GREEN=最新、YELLOW=少し古い、RED=大幅にdelay
+  // freshness_level: GREEN=latest, YELLOW=stale, RED=major delay
   const updatedAgo = now.getTime() - new Date(tx.updated_at).getTime();
   const freshness = updatedAgo < 10_000 ? "GREEN" : updatedAgo < 60_000 ? "YELLOW" : "RED";
 

@@ -10,7 +10,7 @@ import { claimHtlc, cancelHtlc } from "../htlc";
 
 /**
  * receipt側（加盟店）がキャプチャを実行する。
- * Vault から preimage をgetして内部的に claimHtlc を呼び出す。
+ * Get preimage from Vaultして内部的に claimHtlc を呼び出す。
  * POST /api/htlc/:htlc_id/capture
  */
 export async function captureHtlcAuth(
@@ -40,7 +40,7 @@ export async function captureHtlcAuth(
     return { result: "ERROR", reason_code: "CAPTURE_EXPIRED" };
   }
 
-  // Vault から preimage をget
+  // Get preimage from Vault
   const vault = await db
     .prepare(`SELECT payload_json FROM Vault WHERE vault_ref=? AND is_evicted=0`)
     .bind(authReq.vault_ref)
@@ -50,7 +50,7 @@ export async function captureHtlcAuth(
 
   const { preimage } = JSON.parse(vault.payload_json) as { preimage: string };
 
-  // claimHtlc を内部呼び出し（preimage を提示して DECIDED_TO_SETTLE へ）
+  // Internal call claimHtlc (present preimage, go to DECIDED_TO_SETTLE)
   const claimResult = await claimHtlc(
     {
       htlc_id: htlcId,
@@ -64,10 +64,10 @@ export async function captureHtlcAuth(
     return { result: "ERROR", reason_code: claimResult.reason_code ?? "CLAIM_FAILED" };
   }
 
-  // Vault の preimage を使用済みにする
+  // Mark Vault preimage used
   await db.prepare(`UPDATE Vault SET is_evicted=1 WHERE vault_ref=?`).bind(authReq.vault_ref).run();
 
-  // HtlcAuthRequests を CAPTURED にupdate
+  // Update HtlcAuthRequests to CAPTURED
   await db
     .prepare(
       `UPDATE HtlcAuthRequests
@@ -112,11 +112,11 @@ export async function voidHtlcAuth(
     return { result: "ERROR", reason_code: "INVALID_AUTH_STATE" };
   }
 
-  // cancelHtlc を内部呼び出し（H 解放 + bank側別段解放）
-  // env を渡して callBankReleaseReserve を実行し、approval済みsegregated depositを解放する
+  // Internal call cancelHtlc (H release + bank suspense release)
+  // Pass env; execute callBankReleaseReserve to release approved suspense
   await cancelHtlc(htlcId, authReq.txid!, req.reason ?? "VOID_REQUESTED", db, env);
 
-  // Vault の preimage を無効化
+  // Invalidate Vault preimage
   if (authReq.vault_ref) {
     await db
       .prepare(`UPDATE Vault SET is_evicted=1 WHERE vault_ref=?`)
@@ -124,7 +124,7 @@ export async function voidHtlcAuth(
       .run();
   }
 
-  // HtlcAuthRequests を VOIDED にupdate
+  // Update HtlcAuthRequests to VOIDED
   await db
     .prepare(
       `UPDATE HtlcAuthRequests

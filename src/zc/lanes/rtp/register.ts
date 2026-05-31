@@ -116,7 +116,7 @@ export async function registerRtpRequest(
 ): Promise<{ result: "REGISTERED" | "DUPLICATE"; rtpId: string }> {
   const now = nowISO();
 
-  // idempotentcheck: 既存レコードがあれば DUPLICATE をreturn
+  // idempotentcheck: return DUPLICATE if record exists
   const existing = await db
     .prepare(`SELECT rtp_id FROM RtpRequests WHERE rtp_id = ?`)
     .bind(rtpId)

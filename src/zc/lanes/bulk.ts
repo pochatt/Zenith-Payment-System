@@ -31,7 +31,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   });
   if (!precheck.applied) return;
 
-  // payer_bank_id / amount / account_hash は PRECHECKED 後にまとめて読む
+  // Read payer_bank_id/amount/account_hash together after PRECHECKED
   const tx = await db
     .prepare(
       `SELECT payer_bank_id, amount_value, payer_account_hash FROM Transactions WHERE txid = ?`
@@ -63,8 +63,8 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   });
   if (!reserved.applied) return;
 
-  // 3. bank側 reserve-funds（SuspenseDetails RESERVED create）
-  // execute-debit が RESERVATION_NOT_FOUND で失敗するのを防ぐ
+  // 3. Bank reserve-funds (SuspenseDetails RESERVED create)
+  // Prevent execute-debit failure with RESERVATION_NOT_FOUND
   const reserveResult = await callBankReserveFunds(
     tx.payer_bank_id,
     {
@@ -84,7 +84,7 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 4. Decisionfinalized（Bulkは即時Decision）
+  // 4. Decision finalized (Bulk immediate)
   // dns_cycle_id は kickDns が一元管理するため、ここではsetしない
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();
@@ -101,8 +101,8 @@ export async function advanceBulk(txid: string, env: Env): Promise<void> {
   });
   if (!decided.applied) return;
 
-  // DECIDED_TO_SETTLE で lockH（H_RESERVED → LOCKED）
+  // Lock H at DECIDED_TO_SETTLE (H_RESERVED → LOCKED)
   await lockH(reservationId, db);
 
-  // DNS Execution はEOD時に一括実行（queueには積まない）
+  // DNS Execution bulk-executes at EOD (doesn't queue)
 }

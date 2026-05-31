@@ -6,7 +6,7 @@
 import type { EdiRecordRow, EdiRegisterRequest, EdiLineItem, EdiFilterCondition } from "../types";
 
 // ---------------------------------------------------------------------------
-// EDI登録: EdiRecords tableへ INSERT
+// EDI registration: INSERT into EdiRecords table
 // ---------------------------------------------------------------------------
 export async function registerEdiRecord(
   db: D1Database,
@@ -75,7 +75,7 @@ export async function getEdiByTxid(db: D1Database, txid: string): Promise<EdiRec
 }
 
 // ---------------------------------------------------------------------------
-// edi_ref からEDIレコードget
+// Get EDI record from edi_ref
 // ---------------------------------------------------------------------------
 export async function getEdiByRef(db: D1Database, ediRef: string): Promise<EdiRecordRow | null> {
   const row = await db
@@ -88,7 +88,7 @@ export async function getEdiByRef(db: D1Database, ediRef: string): Promise<EdiRe
 }
 
 // ---------------------------------------------------------------------------
-// Transactions の edi_ref カラムをupdate (fund transfer時にEDIを紐付ける)
+// Update Transactions edi_ref (link EDI during fund transfer)
 // ---------------------------------------------------------------------------
 export async function linkEdiToTransaction(
   db: D1Database,
@@ -104,7 +104,7 @@ export async function linkEdiToTransaction(
 }
 
 // ---------------------------------------------------------------------------
-// EDI filter: EdiFilterCondition に基づいて EdiRecords + Transactions をjoinquery
+// EDI filter: join EdiRecords + Transactions based on EdiFilterCondition
 // ---------------------------------------------------------------------------
 export async function filterByEdiCondition(
   db: D1Database,
@@ -144,9 +144,9 @@ export async function filterByEdiCondition(
       predicate = `${fieldExpr} LIKE ?`;
       break;
     case "REGEX":
-      // SQLite has no native REGEX; LIKE では正規表現は動作しない。
-      // アプリケーション層で正規表現matchングを行い、SQL はワイルドカード近似で候補を絞る。
-      // 完全な REGEX サポートは将来 SQLite 拡張で対応予定。
+      // SQLite no regex; LIKE doesn't do patterns
+      // App layer regex; SQL narrows with wildcard
+      // Complete REGEX support planned for future SQLite extension
       predicate = `${fieldExpr} LIKE ?`;
       break;
     case "GT":
@@ -181,7 +181,7 @@ export async function filterByEdiCondition(
   const result = await db.prepare(sql).bind(bankId, bindValue).all<EdiRecordRow>();
   let rows = result.results ?? [];
 
-  // REGEX: SQL LIKE で候補を絞った後、アプリケーション層で正規表現matchングを適用
+  // REGEX: narrow with SQL LIKE, apply regex in app
   if (condition.operator === "REGEX") {
     try {
       const re = new RegExp(condition.value);
@@ -190,7 +190,7 @@ export async function filterByEdiCondition(
         return typeof val === "string" && re.test(val);
       });
     } catch {
-      // 無効な正規表現の場合はフォールバック結果をそのままreturn
+      // If invalid regex, return fallback as-is
     }
   }
 
@@ -198,7 +198,7 @@ export async function filterByEdiCondition(
 }
 
 // ---------------------------------------------------------------------------
-// line_items_json のパース/シリアライズ
+// Parse/serialize line_items_json
 // ---------------------------------------------------------------------------
 export function parseLineItems(json: string): EdiLineItem[] {
   try {

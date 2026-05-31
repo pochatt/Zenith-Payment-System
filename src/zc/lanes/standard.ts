@@ -57,7 +57,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
       purpose: string | null;
     }>();
   if (!tx) return;
-  if (tx.state !== "RECEIVED") return; // 既に進んでいる
+  if (tx.state !== "RECEIVED") return; // If already progressed
 
   // 1. PRECHECKED
   const prechecked = await transitionWithLog(db, {
@@ -67,7 +67,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     eventType: "PreCheckPassed",
     payload: { txid },
   });
-  if (!prechecked.applied) return; // 別コールが先に遷移済み
+  if (!prechecked.applied) return; // Other call already transitioned
 
   // 2. AML Authority Check
   const authResult = await callBankAuthorityCheck(
@@ -88,7 +88,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 3. Name Check（Standard はaccountinformation→名義結果を提示）
+  // 3. Name Check (Standard shows account info → name result)
   const nameResult = await callBankNameCheck(
     tx.payee_bank_id,
     {
@@ -100,7 +100,7 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     env
   );
   if (nameResult.result === "MISMATCH") {
-    // 名義confirmation結果を PRECHECKED_SUSPENDED に遷移して待機（customer最終confirmation）
+    // Transition name confirmation to PRECHECKED_SUSPENDED, await (final customer confirmation)
     await transitionWithLog(db, {
       txid,
       fromState: "PRECHECKED",
@@ -150,11 +150,11 @@ export async function advanceStandard(txid: string, env: Env): Promise<void> {
     return;
   }
 
-  // 6. 支払人最終pending authorization（Standard固有）
-  // REFUND purpose（Reversal TX）は OPS 起点で自然なapproval者が存在しないため自動authorizationする。
-  // その他のtransactionはfund transfer行（またはcustomer）が POST /api/transfers/:txid/authorize を
+  // 6. Final payer pending auth (Standard-specific)
+  // REFUND purpose has no natural approver from OPS; auto-authorize
+  // Other transactions: party calls POST /api/transfers/:txid/authorize
   // 呼び出すまで H_RESERVED 状態で待機する。
-  // 基本思想: ZC は決定主体ではなく状態の中継者。fund transferの最終authorizationはfund transfer行に委ねる。
+  // Principle: ZC is not decision authority but state relay. Final fund transfer authorization vested in party
   if (tx.purpose === "REFUND") {
     await authorizeStandard(txid, true, env);
   }
@@ -188,7 +188,7 @@ export async function authorizeStandard(
 
   if (!authorized) {
     await cancelInFlightTx(db, { txid, reasonCode: "CANCEL_BY_PAYER", fromStates: ["H_RESERVED"] });
-    // H_RESERVED cancelled時は reserve-funds 成功済みのためbankのsegregated depositを解放する
+    // On H_RESERVED cancellation, release bank segregated deposit (reserve-funds succeeded)
     const suspense = await db
       .prepare(
         `SELECT suspense_id FROM SuspenseDetails WHERE txid=? AND bank_id=? AND status='RESERVED' AND direction='PAY' LIMIT 1`
@@ -227,12 +227,12 @@ export async function authorizeStandard(
   });
   if (!decided.applied) return { ok: false, state: decided.previousState ?? "STATE_CONFLICT" };
 
-  // H-reservedを RESERVED → LOCKED に切り替え（DNSsettlementまで保持）
+  // Switch H-reserved RESERVED → LOCKED (hold until DNS settlement)
   if (tx.h_reservation_id) {
     await lockH(tx.h_reservation_id, db);
   }
 
-  // Execution をqueueに投入
+  // Enqueue Execution
   await env.QUEUE.send({
     type: "ZC_BANK_DEBIT",
     payload: {
@@ -274,7 +274,7 @@ export async function resumeFromNameCheckSuspended(
   if (!tx) return { ok: false, state: "NOT_FOUND" };
   if (tx.state !== "PRECHECKED_SUSPENDED") return { ok: false, state: tx.state };
 
-  // PRECHECKED_SUSPENDED → PRECHECKED（名義check上書きapproval）
+  // PRECHECKED_SUSPENDED → PRECHECKED (name check override)
   const resumed = await transitionWithLog(db, {
     txid,
     fromState: "PRECHECKED_SUSPENDED",

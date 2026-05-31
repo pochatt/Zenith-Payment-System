@@ -144,7 +144,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       }>();
   } catch (e: any) {
     if (e.message && e.message.includes("no such column")) {
-      // マイグレーション未適用時: limits は適用されず、RECEIVE_ONLY checkも実施されない
+      // If migration not applied: limits not enforced, no RECEIVE_ONLY check
       console.error(
         `[ingress] Schema incomplete: missing columns in Participants table. Migration 0010+ may not have been applied. Error: ${e.message}`
       );
@@ -160,7 +160,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
     }
   }
 
-  // 被仕向のみparticipating bank（RECEIVE_ONLY）はfund transfer起点になれない
+  // Receive-only participating banks cannot initiate fund transfer
   if (participant?.participation_mode === "RECEIVE_ONLY") {
     await completeIdempotency(
       idempKey,
@@ -197,9 +197,9 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
     try {
       const today = nowISO().slice(0, 10); // 'YYYY-MM-DD'
 
-      // EODクーロンが失敗・delayした場合でも当日初回リクエスト時に自動リセットする。
+      // Even if EOD cron fails, auto-reset on first request of day
       // daily_amount_last_reset_date が今日以前であれば used を 0 にリセットしてから加算。
-      // 日付checkと加算を1文で行い TOCTOU (time-of-check-time-of-use) を防ぐ。
+      // Date check + addition in 1 statement to prevent TOCTOU
       if (participant.daily_amount_last_reset_date !== today) {
         const upd = await db
           .prepare(
@@ -234,7 +234,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       }
     } catch (e: any) {
       if (e.message && e.message.includes("no such column")) {
-        // schema不完全時: warningをlogして制限なしとして続行（開発環境での利便性のため）
+        // If schema incomplete: warn, continue unrestricted (dev convenience)
         console.error(
           `[ingress] Schema incomplete: daily_amount_used column missing. Migration 0010+ may not have been applied. Daily limits will be ignored. Error: ${e.message}`
         );
@@ -258,9 +258,9 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
     }
   }
 
-  // HIGH_VALUE 自動エスカレーション
-  // STANDARD または EXPRESS でamountが閾値以上の場合、HIGH_VALUE laneに自動切替する。
-  // 閾値の優先順位: participating bankset(hv_threshold) > 環境変数(ZC_HV (high-value)_THRESHOLD) > デフォルト(1億円)
+  // HIGH_VALUE auto-escalation
+  // If amount ≥ threshold in STANDARD/EXPRESS, auto-switch to HIGH_VALUE
+  // Threshold priority: bank set > env var > default (100M)
   const DEFAULT_HV_THRESHOLD = 100_000_000;
   const hvThreshold =
     participant?.hv_threshold ??
@@ -352,11 +352,11 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       break;
     case "RTP":
       result = { result: "INGRESS_ACCEPTED", txid: body.txid, state: "RECEIVED" };
-      // RTP: RTP請求とfund transferTXを紐付け（REQUESTED → ATTEMPTED）
+      // RTP: Link RTP invoice and fund transfer TX (REQUESTED → ATTEMPTED)
       if (body.pspr_ref) {
         await attemptRtp(body.pspr_ref, body.txid, env);
       }
-      // STANDARD と同じフローで精算処理を進める
+      // Proceed settlement in STANDARD flow
       await env.QUEUE.send({
         type: "ZC_STATE_ADVANCE",
         payload: { txid: body.txid, action: "ADVANCE_STANDARD" },
@@ -366,7 +366,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       });
       break;
     case "HTLC":
-      // HTLC は専用endpoint POST /api/htlc/create を使用する
+      // HTLC uses dedicated endpoint POST /api/htlc/create
       await completeIdempotency(
         idempKey,
         { result: "REJECTED", reason_code: "USE_HTLC_ENDPOINT" },
@@ -381,7 +381,7 @@ export async function handlePostTransfers(req: Request, env: Env): Promise<Respo
       result = { result: "INGRESS_ACCEPTED", txid: body.txid, state: "RECEIVED" };
   }
 
-  // EDI連携: edi_ref が指定されていればtransactionと紐付け
+  // EDI linkage: if edi_ref specified, link to transaction
   const bodyAny3 = body as any;
   if (bodyAny3.edi_ref) {
     await linkEdiToTransaction(db, body.txid, bodyAny3.edi_ref).catch((e) =>
@@ -535,8 +535,8 @@ export async function handlePostCancel(req: Request, txid: string, env: Env): Pr
     return jsonError(409, "INVALID_STATE", `Cannot cancel tx in state ${tx.state}`);
   }
 
-  // CAS + FinalityLog + H release + finalize は cancelInFlightTx に集約。
-  // bank側別段解放だけが ingress 固有のためseparately呼び出す。
+  // CAS + FinalityLog + H release + finalize consolidated in cancelInFlightTx
+  // Only bank suspense release is ingress-specific; call separately
   const cancelled = await cancelInFlightTx(db, {
     txid,
     reasonCode: body.reason_code,
@@ -605,14 +605,14 @@ export async function handlePostParticipantRegister(req: Request, env: Env): Pro
 }
 
 // ---------------------------------------------------------------------------
-// POST /internal/seed  全データリセット → 初期データ投入
+// POST seed Full reset → load initial data
 // ---------------------------------------------------------------------------
 export async function handleSeed(env: Env): Promise<Response> {
   const db = env.DB;
   const now = nowISO();
 
-  // 1) 全tableをdelete（ZC → Bank の依存順）
-  // tableが存在しない場合でも続行できるよう、個別に実行する
+  // 1) Delete all tables (ZC → Bank dependency order)
+  // Execute individually so continue if table missing
   const deleteTargets = [
     "TxEventLog",
     "BankAuditLog",
@@ -640,7 +640,7 @@ export async function handleSeed(env: Env): Promise<Response> {
     "BankJournals",
     "BankAccounts",
     "InterestRates",
-    // migration 0003+ で追加されたtable
+    // table added in migration 0003+
     "AccountVerifications",
     "CreditNotifications",
     "CrossBorderTransactions",
@@ -651,7 +651,7 @@ export async function handleSeed(env: Env): Promise<Response> {
     "QrCodes",
     "RichDataStore",
   ];
-  // table名はハードコードlistのみ許可（SQL識別子インジェクション防止）
+  // Hardcoded table names only (prevent SQL identifier injection)
   const ALLOWED_TABLES = new Set(deleteTargets);
   for (const t of deleteTargets) {
     if (!ALLOWED_TABLES.has(t) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(t)) continue;
@@ -662,7 +662,7 @@ export async function handleSeed(env: Env): Promise<Response> {
     }
   }
 
-  // 2) 初期データ投入（全数値account number体系: BBBAAAAAAA）
+  // 2) Load initial data (all-numeric system: BBBAAAAAAA)
   await db.batch([
     // Participants（ZCparticipating bank）
     db
@@ -674,20 +674,20 @@ export async function handleSeed(env: Env): Promise<Response> {
       VALUES ('002','尾張銀行','/bank/002',100000000,0,1,?)`)
       .bind(now),
 
-    // BankAccounts（account number: bankコード3桁 + 連番7桁, 別段=BBB0000000, ZCS=BBB-ZCS）
+    // BankAccounts (3-digit bank code + 7-digit serial; suspense=BBB0000000, ZCS=BBB-ZCS)
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('0010000001','001','C001','田中 太郎','SAVINGS','NORMAL','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('0010000002','001','C002','佐藤 花子','SAVINGS','NORMAL','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('0010000000','001','SYSTEM','別段預金','SUSPENSE','NORMAL','2025-01-01T00:00:00Z')`),
-    // ZCsettlement勘定（日銀Checking account相当）: 負balance=ZCが当行に支払義務あり（当行のsettlement資産）
+    // ZC settlement (BOJ Checking equiv): negative = ZC owes (bank asset)
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('001-ZCS','001','SYSTEM','ZC清算勘定','SETTLEMENT','NORMAL','2025-01-01T00:00:00Z')`),
-    // 現金（Cash）account
+    // Cash account
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('001-CASH','001','SYSTEM','現金','ASSET','NORMAL','2025-01-01T00:00:00Z')`),
-    // 日銀預け金勘定 001
+    // BOJ deposit account 001
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('001-BOJ','001','BOJ','日本銀行（預け金勘定）','BOJ','NORMAL','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
@@ -700,14 +700,14 @@ export async function handleSeed(env: Env): Promise<Response> {
       VALUES ('002-ZCS','002','SYSTEM','ZC清算勘定','SETTLEMENT','NORMAL','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('002-CASH','002','SYSTEM','現金','ASSET','NORMAL','2025-01-01T00:00:00Z')`),
-    // 日銀預け金勘定 002
+    // BOJ deposit account 002
     db.prepare(`INSERT INTO BankAccounts (account_id,bank_id,customer_id,customer_name,account_type,status,opened_at)
       VALUES ('002-BOJ','002','BOJ','日本銀行（預け金勘定）','BOJ','NORMAL','2025-01-01T00:00:00Z')`),
 
-    // BankJournals（初期balance 各100万円）
-    // ゼロサム: customer account(+) / ZCsettlement勘定(−) のペア
-    //   ZCS(−) = 「ZCが当行に2M支払義務あり」= 当行の初期settlement資産（日銀当座相当）
-    //   Suspense は 0 スタート（fund transfer中のみbalanceが動く中間勘定）
+    // BankJournals (init: 1M yen each)
+    // Zero-sum: customer account(+) / ZC settlement(−) pair
+    //   ZCS(−) = 'ZC owes 2M' = bank's settlement asset (BOJ current equiv)
+    //   Suspense starts 0 (balance moves only during fund transfer; intermediate account)
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
       VALUES ('JNL-INIT-001-1','001','0010000001',1000000,'CASH','INIT-001','初期残高','2025-01-01','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
@@ -725,9 +725,9 @@ export async function handleSeed(env: Env): Promise<Response> {
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
       VALUES ('JNL-INIT-002-2X','002','002-ZCS',-1000000,'CASH','INIT-002','初期ZC清算残高 offset','2025-01-01','2025-01-01T00:00:00Z')`),
 
-    // BOJ 初期プレファンド（HIGH_VALUE RTGS用: 各行1000億円）
-    // ゼロサム: BOJ(-1000B) / ZCS(+1000B) で対当
-    // calcBalance('BBB-BOJ') が負 = 積立balanceあり。正になると BOJ_INSUFFICIENT_FUNDS
+    // BOJ initial prefunding (HIGH_VALUE RTGS: 100 billion per bank)
+    // Zero-sum: BOJ(-1000B) / ZCS(+1000B) pairing
+    // calcBalance negative = balance exists. Positive = BOJ_INSUFFICIENT_FUNDS
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
       VALUES ('JNL-INIT-001-BOJ','001','001-BOJ',-100000000000,'CASH','INIT-001-BOJ','BOJ初期プレファンド','2025-01-01','2025-01-01T00:00:00Z')`),
     db.prepare(`INSERT INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
@@ -752,7 +752,7 @@ export async function handleSeed(env: Env): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/banks/add  bank新規追加
+// POST /api/banks/add Add new bank
 // ---------------------------------------------------------------------------
 export async function handleAddBank(req: Request, env: Env): Promise<Response> {
   const body = await parseBody<{ bank_name: string; h_limit?: number }>(req);
@@ -762,7 +762,7 @@ export async function handleAddBank(req: Request, env: Env): Promise<Response> {
   const db = env.DB;
   const now = nowISO();
 
-  // 次のbankコードを自動割当: 既存の最大bank_id + 1
+  // Auto-assign next bank code: max bank_id + 1
   const maxBank = await db
     .prepare(`SELECT bank_id FROM Participants ORDER BY bank_id DESC LIMIT 1`)
     .first<{ bank_id: string }>();
@@ -777,7 +777,7 @@ export async function handleAddBank(req: Request, env: Env): Promise<Response> {
     .bind(nextCode, body.bank_name, `/bank/${nextCode}`, body.h_limit ?? 100000000, now)
     .run();
 
-  // bank側: account・journal entryの初期化をbankイングレス経由で依頼（基本思想: 金融機関が自身のaccount管理に責任を持つ）
+  // Bank-side: request init via bank ingress (bank accountable for account mgmt)
   const { handleBankIngress } = await import("../bank/ingress");
   await handleBankIngress(
     nextCode,
@@ -795,7 +795,7 @@ export async function handleAddBank(req: Request, env: Env): Promise<Response> {
 export async function handleDeleteBank(bankId: string, env: Env): Promise<Response> {
   const db = env.DB;
 
-  // 有効なtransactionがないかconfirmation
+  // Confirm no valid transaction
   const activeTx = await db
     .prepare(
       `SELECT COUNT(*) AS cnt FROM Transactions WHERE (payer_bank_id=? OR payee_bank_id=?) AND state NOT IN ('SETTLED','CANCELLED','FAILED_EXECUTION')`
@@ -810,7 +810,7 @@ export async function handleDeleteBank(bankId: string, env: Env): Promise<Respon
     );
   }
 
-  // bank側: account・journal entryのdeleteをbankイングレス経由で依頼（基本思想: 金融機関が自身のaccount管理に責任を持つ）
+  // Bank-side: request delete via bank ingress (bank accountable for account mgmt)
   const { handleBankIngress } = await import("../bank/ingress");
   await handleBankIngress(bankId, "cleanup-bank", {}, env);
 
@@ -862,11 +862,11 @@ export async function handleAccountNameLookup(accountId: string, env: Env): Prom
       account_type: string;
     }>();
   if (!account) return jsonError(404, "NOT_FOUND", "account not found");
-  // システムaccount（segregated deposit・settlement勘定等）はbank transfer先として利用不可
+  // System accounts cannot be transfer destinations
   if (account.account_type !== "SAVINGS") {
     return jsonError(422, "ACCOUNT_NOT_TRANSFERABLE", "this account cannot receive transfers");
   }
-  // bank名もget
+  // Also get bank name
   const bank = await env.DB.prepare(`SELECT bank_name FROM Participants WHERE bank_id=?`)
     .bind(bankCode)
     .first<{ bank_name: string }>();
@@ -880,7 +880,7 @@ export async function handleAccountNameLookup(accountId: string, env: Env): Prom
 }
 
 // ---------------------------------------------------------------------------
-// POST /internal/sim/setup  シミュレーター大規模初期化（サーバーサイド一括処理）
+// POST sim setup Large-scale simulator init
 // ---------------------------------------------------------------------------
 export async function handleSimSetup(req: Request, env: Env): Promise<Response> {
   const t0 = Date.now();
@@ -891,19 +891,19 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
     /* use defaults */
   }
 
-  const bankCount = Math.min(params.bank_count ?? 18, 50); // 003〜020 (最大50)
-  const accountsPerBank = Math.min(params.accounts_per_bank ?? 200, 500); // 最大500
+  const bankCount = Math.min(params.bank_count ?? 18, 50); // 003~020 (max 50)
+  const accountsPerBank = Math.min(params.accounts_per_bank ?? 200, 500); // Max 500
   const personalRatio = Math.max(0, Math.min(params.personal_ratio ?? 0.9, 1));
   const db = env.DB;
   const now = nowISO();
   const today = now.slice(0, 10);
 
-  // Step 1: seed reset（001/002 を初期化）
+  // Step 1: seed reset (init 001/002)
   const seedReq = new Request("http://internal/internal/seed", { method: "POST" });
-  await handleSeed(env); // 戻り値は無視（DB初期化が目的）
+  await handleSeed(env); // Ignore return (goal: DB init)
 
-  // Step 2: bank 003〜(002+bankCount) を追加
-  // handleAddBank は「既存最大+1」で採番するため逐次実行
+  // Step 2: add banks 003~(002+count)
+  // handleAddBank uses 'max+1'; execute sequentially
   const bankIds: string[] = [];
   for (let i = 0; i < bankCount; i++) {
     const maxBank = await db
@@ -948,7 +948,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
          VALUES (?, ?, 'SAVINGS', 0.001, ?)`
         )
         .bind(`RATE-${nextCode}-SAVINGS`, nextCode, today),
-      // BOJ 初期プレファンド（HIGH_VALUE RTGS用: 1000億円）
+      // BOJ initial prefunding (HIGH_VALUE RTGS: 100 billion yen)
       db
         .prepare(
           `INSERT OR IGNORE INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
@@ -979,8 +979,8 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
     bankIds.push(nextCode);
   }
 
-  // Step 3: 各bankに accountsPerBank accountを一括create（+初期deposit）
-  // D1 batch は ~1000 文/回のため、account200件=最大400 stmt → 1バンクで収まる
+  // Step 3: batch create accounts per bank (+ init deposit)
+  // D1 batch ~1000 statements/call; 200 accounts = max 400 stmts → fits 1 bank
   let totalAccounts = 0;
   const personalCount = Math.round(accountsPerBank * personalRatio);
   const corporateCount = accountsPerBank - personalCount;
@@ -1001,7 +1001,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
 
   for (const bankId of bankIds) {
     const stmts: ReturnType<D1Database["prepare"]>[] = [];
-    // 既存accountの最大連番をget（既存ロジックと共通）
+    // Get max serial (common)
     const maxAcct = await db
       .prepare(
         `SELECT account_id FROM BankAccounts WHERE bank_id=? AND account_type IN ('SAVINGS','CURRENT') ORDER BY CAST(SUBSTR(account_id, 4) AS INTEGER) DESC LIMIT 1`
@@ -1023,7 +1023,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
       const customerName = `${nameBase}${(j + 1).toString().padStart(3, "0")}`;
       const customerId = `C${bankId}${seq.toString().padStart(6, "0")}`;
       const accountId = `${bankId}${seq.toString().padStart(7, "0")}`;
-      const deposit = isPersonal ? 1_000_000 : 5_000_000; // 個人100万 / 法人500万
+      const deposit = isPersonal ? 1_000_000 : 5_000_000; // Individual 1M / Corporate 5M
 
       stmts.push(
         db
@@ -1073,7 +1073,7 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
 
       seq++;
     }
-    // D1 batch 上限を避けるため 300 stmt ごとに分割
+    // Split every 300 stmts to avoid D1 batch limit
     for (let k = 0; k < stmts.length; k += 300) {
       await db.batch(stmts.slice(k, k + 300));
     }
@@ -1089,8 +1089,8 @@ export async function handleSimSetup(req: Request, env: Env): Promise<Response> 
 }
 
 // ---------------------------------------------------------------------------
-// POST /internal/sim/setup-bank  シミュレーター: 1bank分のaccountを一括create
-// フロントエンドが bank_index=0..N-1 を順に呼び出すことで進捗を制御する
+// POST sim setup-bank Batch create 1 bank's accounts
+// Frontend controls progress by calling bank_index sequentially
 // ---------------------------------------------------------------------------
 export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Response> {
   const t0 = Date.now();
@@ -1109,9 +1109,9 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
   const today = now.slice(0, 10);
 
   // bank_index=0 → bank 003, bank_index=1 → bank 004 …
-  // 既存の最大bank_id + 1 ではなく index で直接計算（seed後は001/002のみ）
+  // Calculate by index, not max + 1 (post-seed: 001/002 only)
   const nextCode = String(3 + bankIndex).padStart(3, "0");
-  // フロントの SIM_BANKS と同じbank名mapping
+  // Same bank name mapping as frontend SIM_BANKS
   const BANK_NAMES: Record<string, string> = {
     "003": "加賀銀行",
     "004": "肥前銀行",
@@ -1134,7 +1134,7 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
   };
   const bankName = BANK_NAMES[nextCode] || `テスト銀行${nextCode}`;
 
-  // Participant + システムaccountをcreate
+  // Create Participant + system accounts
   await db.batch([
     db
       .prepare(
@@ -1172,7 +1172,7 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
        VALUES (?, ?, 'SAVINGS', 0.001, ?)`
       )
       .bind(`RATE-${nextCode}-SAVINGS`, nextCode, today),
-    // BOJ 初期プレファンド（HIGH_VALUE RTGS用: 1000億円）
+    // BOJ initial prefunding (HIGH_VALUE RTGS: 100 billion yen)
     db
       .prepare(
         `INSERT OR IGNORE INTO BankJournals (journal_id,bank_id,account_id,amount,tx_type,tx_group_id,description,value_date,created_at)
@@ -1201,7 +1201,7 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
       ),
   ]);
 
-  // customer accountを 300 stmt ごとにbatchcreate
+  // Batch create customer accounts every 300 stmts
   const personalCount = Math.round(accountsPerBank * personalRatio);
   const corporateCount = accountsPerBank - personalCount;
   const personalNames = [
@@ -1278,13 +1278,13 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
     );
   }
 
-  // batch処理実行 + 実際のcreate数をconfirmation
+  // Execute batch + confirm created count
   let actualCreated = 0;
   for (let k = 0; k < stmts.length; k += 300) {
     await db.batch(stmts.slice(k, k + 300));
   }
 
-  // 実際にcreateされたaccount数をconfirmation
+  // Confirm actual account creation count
   const checkResult = await db
     .prepare(
       `SELECT COUNT(*) AS cnt FROM BankAccounts WHERE bank_id = ? AND account_type IN ('SAVINGS', 'CURRENT')`
@@ -1303,7 +1303,7 @@ export async function handleSimSetupOneBank(req: Request, env: Env): Promise<Res
 }
 
 // ---------------------------------------------------------------------------
-// HTLC Auth (payee-initiated authorization type)ハンドラ群
+// HTLC Auth (payee-initiated authorization) handler group
 // ---------------------------------------------------------------------------
 
 /** POST /api/htlc/auth-request  receipt側がオーソリリクエストをsend */
@@ -1450,7 +1450,7 @@ export async function handleListAuthWhitelist(env: Env): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
-// ユーティリティ
+// Utilities
 // ---------------------------------------------------------------------------
 export function json(status: number, data: unknown): Response {
   return new Response(JSON.stringify(data), {

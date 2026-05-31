@@ -21,7 +21,7 @@ export interface ReserveSuspenseInput {
 }
 
 // ---------------------------------------------------------------------------
-// segregated deposit（payment account）: Savings account → 別段（RESERVED）
+// segregated deposit (payment): Savings → suspense (RESERVED)
 // ---------------------------------------------------------------------------
 export async function reserveSuspense(
   db: D1Database,
@@ -31,7 +31,7 @@ export async function reserveSuspense(
   const suspenseId = `SUSP-${newUUID()}`;
   const suspAcctId = suspenseAccountId(input.bankId);
 
-  // journal entry: Savings account(-) / segregated deposit(+)  → ゼロサム
+  // journal entry: Savings(-) / suspense(+) → zero-sum
   await insertJournalGroup(db, {
     bankId: input.bankId,
     txGroupId: `RESERVE-${suspenseId}`,
@@ -89,7 +89,7 @@ export async function executeSuspenseDebit(suspenseId: string, db: D1Database): 
 }
 
 // ---------------------------------------------------------------------------
-// segregated deposit（receipt口）: Hard Landing
+// segregated deposit (receipt): Hard Landing
 // ---------------------------------------------------------------------------
 export interface LandSuspenseInput {
   bankId: string;
@@ -108,9 +108,9 @@ export async function landSuspense(db: D1Database, input: LandSuspenseInput): Pr
   const suspAcctId = suspenseAccountId(input.bankId);
   const status = input.isCustody ? "CUSTODY" : "LANDED";
 
-  // journal entry: 別段（receipt口）(+) / ZCsettlement勘定(−)
-  //   ZCS(−) = ZCが当行に支払義務を負った（receipt超方向に移動） ← ゼロサム ✓
-  //   後続の executeSuspenseCredit で 別段(−) / customer account(+) に解消される
+  // journal entry: suspense (receipt) (+) / ZC settlement (−)
+  //   ZCS(−) = ZC owes bank (receipt-excess direction) ← zero-sum ✓
+  //   Resolved in executeSuspenseCredit: suspense(−) / customer account(+)
   const zcsAccountId = nostroAccountId(input.bankId);
   await insertJournalGroup(db, {
     bankId: input.bankId,
@@ -158,9 +158,9 @@ export async function landSuspense(db: D1Database, input: LandSuspenseInput): Pr
 }
 
 // ---------------------------------------------------------------------------
-// available balance = 帳簿balance
-// reserveSuspense が既に customer(-amount)/suspense(+amount) のjournal entryをcreate済みのため
-// SUM(BankJournals) に -amount が反映済み。SuspenseDetails を再度差し引くと二重控除になる。
+// available balance = ledger balance
+// Since reserveSuspense already created journal entry customer(-)/suspense(+)
+// SUM(BankJournals) reflects -amount. Deducting SuspenseDetails again = double deduction
 // ---------------------------------------------------------------------------
 export async function getAvailableBalance(accountId: string, db: D1Database): Promise<number> {
   const balance = await db
@@ -172,8 +172,8 @@ export async function getAvailableBalance(accountId: string, db: D1Database): Pr
 }
 
 // ---------------------------------------------------------------------------
-// account_hash/account_id から BankAccount をget
-// モック: account_hash は "h:{account_id}" または account_id そのもの
+// Get BankAccount from account_hash/account_id
+// Mock: account_hash is "h:{account_id}" or account_id itself
 // ---------------------------------------------------------------------------
 export async function getAccountByHash(
   bankId: string,
@@ -189,7 +189,7 @@ export async function getAccountByHash(
 }
 
 // ---------------------------------------------------------------------------
-// DNSsettlement時の別段解消
+// Segregated deposit liquidation at DNS settlement
 // ---------------------------------------------------------------------------
 export async function settleSuspenseForDns(
   bankId: string,
@@ -197,8 +197,8 @@ export async function settleSuspenseForDns(
   db: D1Database
 ): Promise<void> {
   const now = nowISO();
-  // 当該サイクルのTXのみに限定（他サイクルの別段を誤ってsettlementしない）
-  // PAY方向: RESERVED → EXECUTED → SETTLED（支払側の別段settlement）
+  // Limit to TXs in this cycle (don't accidentally settle suspense from other cycles)
+  // PAY direction: RESERVED → EXECUTED → SETTLED (payer suspense settlement)
   await db
     .prepare(
       `UPDATE SuspenseDetails SET status='SETTLED', settled_at=?, dns_cycle_id=?, updated_at=?
@@ -207,9 +207,9 @@ export async function settleSuspenseForDns(
     )
     .bind(now, dnsCycleId, now, bankId, dnsCycleId)
     .run();
-  // RECEIVE方向: CUSTODY ステータスのreceipt側レコードもDNSsettlement対象とする
-  // CUSTODYはaccount凍結/閉鎖でcredit / incoming paymentできなかった資金。DNSsettlementが完了しても
-  // 資金自体はcustodyに留まるが、settlementステータスはrecordする必要がある
+  // RECEIVE direction: CUSTODY receipt-side records also eligible for DNS settlement
+  // CUSTODY: funds unable to credit due to account freeze/closure. Even after DNS settlement
+  // Funds in custody; settlement status must be recorded
   await db
     .prepare(
       `UPDATE SuspenseDetails SET dns_cycle_id=?, updated_at=?

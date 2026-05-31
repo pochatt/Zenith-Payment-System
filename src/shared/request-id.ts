@@ -19,9 +19,9 @@ export const REQUEST_PREFIX = {
   NAME_CHECK: "NAME",
   /** Funds reserved */
   RESERVE_FUNDS: "RESERVE",
-  /** 仕向実行 (a) */
+  /** Originating execution (a) */
   EXECUTE_DEBIT: "DEBIT",
-  /** 被仕向実行 (b) */
+  /** Destination execution (b) */
   EXECUTE_CREDIT: "CREDIT",
   /** 資金reserved解放 */
   RELEASE_RESERVE: "RELEASE",
@@ -33,7 +33,7 @@ export const REQUEST_PREFIX = {
   CANCEL_RELEASE: "CANCEL-RELEASE",
   /** Credit 再開 (credit / incoming paymentapproval後) */
   CREDIT_RESUME: "CREDIT-RESUME",
-  /** GTID leg レディネスconfirmation */
+  /** GTID leg readiness confirmation */
   LEG_READY: "LEG-READY",
 } as const;
 

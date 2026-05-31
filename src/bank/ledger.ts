@@ -9,7 +9,7 @@ import { newUUID } from "../shared/idempotency";
 
 export interface JournalEntry {
   accountId: string;
-  amount: number; // 符号付き（正=増加、負=減少）
+  amount: number; // signed (positive=increase, negative=decrease)
   txType: string; // TRANSFER|RESERVE|EXECUTE|CREDIT|INTEREST|CASH|CORRECTION
   txid?: string;
   description?: string;
@@ -29,7 +29,7 @@ export interface JournalGroupInput {
 export async function insertJournalGroup(db: D1Database, input: JournalGroupInput): Promise<void> {
   const sum = input.entries.reduce((s, e) => s + e.amount, 0);
   if (sum !== 0) {
-    // ゼロサム違反はシステムバグなので例外を投げる
+    // Zero-sum violation is bug; throw exception
     throw new Error(`Zero-sum violation: SUM(amount)=${sum} for group=${input.txGroupId}`);
   }
 
@@ -111,8 +111,8 @@ export async function applyDailyInterest(
 
   if (!rate || accounts.results.length === 0) return;
 
-  const dailyRate = rate.annual_rate / 360; // 30/360 ルール
-  const reAcctId = retainedEarningsAccountId(bankId); // 利益剰余金口座（別段預金を汚さない）
+  const dailyRate = rate.annual_rate / 360; // 30/360 rule
+  const reAcctId = retainedEarningsAccountId(bankId); // Retained earnings account (keeps suspense clean)
 
   for (const acc of accounts.results) {
     const balance = await calcBalance(acc.account_id, db);
@@ -120,7 +120,7 @@ export async function applyDailyInterest(
     const interest = Math.floor(balance * dailyRate);
     if (interest === 0) continue;
 
-    // ゼロサム: 利益剰余金(負=費用) と Savings account(正=負債)
+    // Zero-sum: retained earnings (negative=expense), Savings (positive=liability)
     await insertJournalGroup(db, {
       bankId,
       txGroupId: `INT-${snapshotDate}-${acc.account_id}`,

@@ -822,7 +822,7 @@ paths:
       summary: 全仕訳帳照会
       description: |
         当該銀行の全仕訳を照会する。account_id / from / to / limit で
-        フィルタリング可能。最大500件。
+        フィルタリング可能。Max 500件。
       operationId: getAllJournals
       parameters:
         - $ref: '#/components/parameters/bankId'
@@ -840,7 +840,7 @@ paths:
           schema: { type: string, format: date }
         - name: limit
           in: query
-          description: 取得件数上限（デフォルト200、最大500）
+          description: 取得件数上限（デフォルト200、Max 500）
           schema: { type: integer, default: 200, maximum: 500 }
       security:
         - tellerAuth: []
@@ -1367,7 +1367,7 @@ components:
       properties:
         result: { type: string, enum: [EXACT_MATCH, CLOSE_MATCH, MISMATCH, NOT_FOUND] }
         account_exists: { type: boolean }
-        name_match_score: { type: number, description: Levenshtein距離（0=完全一致） }
+        name_match_score: { type: number, description: Levenshtein距離（0=exact match） }
 
     CreditNotifyIngressRequest:
       type: object

@@ -24,7 +24,7 @@ export async function registerGtid(
 }> {
   const db = env.DB;
   const now = nowISO();
-  // total_amount は PAYER leg の合計（全 leg 合算は2倍になる）
+  // total_amount = PAYER leg sum (all legs = 2x)
   const totalAmount = req.legs
     .filter((l) => l.role === "PAYER")
     .reduce((s, l) => s + l.amount.value, 0);
@@ -80,7 +80,7 @@ export async function registerGtid(
     txid_or_gtid: req.gtid,
   });
 
-  // 非同期で全 leg の ready-check を実行
+  // Async: execute ready-check all legs
   await env.QUEUE.send({
     type: "ZC_BANK_LEG_READY",
     payload: { gtid: req.gtid },
@@ -111,7 +111,7 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     .bind(gtid)
     .all<GtidLegRow>();
 
-  // GT_PRECHECKED に遷移（CAS: 並行処理による二重実行を防ぐ）
+  // Transition to GT_PRECHECKED (CAS: prevent duplicate parallel execution)
   const toPrechecked = await db
     .prepare(
       `UPDATE GtidTransactions SET state='GT_PRECHECKED', updated_at=?, version=version+1 WHERE gtid=? AND state='GT_RECEIVED'`
@@ -119,13 +119,13 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     .bind(now, gtid)
     .run();
 
-  // changes=0 は他の Worker が先に遷移済み → 二重実行しない
+  // changes=0 = other Worker already transitioned → don't duplicate
   if ((toPrechecked.meta.changes ?? 0) === 0) return;
 
-  // 各 leg の ready-check
+  // ready-check per leg
   let allReady = true;
   for (const leg of legs.results) {
-    // queue再試行で同一 request_id を保証（leg_id は一意なので安全）
+    // Guarantee same request_id in queue retry (leg_id unique, safe)
     const checkResult = await callBankLegReadyCheck(
       leg.bank_id,
       {
@@ -178,8 +178,8 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     return;
   }
 
-  // Bug #6 fix: PAYER/PAYEE 両ロールの存在confirmationを Decision finalized前に実施
-  // Decision後にvalidationすると GT_DECIDED_TO_SETTLE → GT_DECIDED_CANCEL という不正遷移が FinalityLog にrecordされる
+  // Bug #6: confirm PAYER/PAYEE existence before Decision finalized
+  // Validation after Decision records improper GT_DECIDED_TO_SETTLE → GT_DECIDED_CANCEL in FinalityLog
   // V8 perf: single-pass partition + amount aggregation. The previous form did
   // two .filter() passes plus two .reduce() passes (4 traversals + 2 array
   // allocations). One for-loop covers all four computations.
@@ -198,12 +198,12 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
       totalPayeeAmount += leg.amount_value;
     }
   }
-  // PAYER ↔ PAYEE の対応付けは leg_id の辞書順でfinalizedする。
-  // SQLite の SELECT は ROWID（挿入順）順にreturnため、req.legs の並びが
-  // leg_id 順と異なる場合、両arrayが同じ位置で対応しないと
-  // 取り違いのcredit / incoming payment（A→B が A→C になる等）が起きる。両arrayを leg_id で
-  // sortしておくと「両側の i 番目」で必ず正しい対が取れる。
-  // specificationコメント: 'leg_id による安定的なmapping' をimplementationで保証する。
+  // PAYER ↔ PAYEE pairing finalized by leg_id lexicographic order
+  // SQLite SELECT in ROWID order; req.legs ordering
+  // If different from leg_id order, both arrays must correspond same position
+  // Misdirected credit (A→B becomes A→C) occurs. Both by leg_id
+  // With sort, 'i-th on both' always pairs correctly
+  // Specification note: guarantee 'stable mapping by leg_id' in implementation
   const cmpLegId = (a: GtidLegRow, b: GtidLegRow) =>
     a.leg_id < b.leg_id ? -1 : a.leg_id > b.leg_id ? 1 : 0;
   payerLegs.sort(cmpLegId);
@@ -263,14 +263,14 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     return;
   }
 
-  // Decision finalized前に PAYER leg の H reservedをget・lock
+  // Get/lock PAYER leg H reserved before Decision finalized
   const hReservations = new Map<string, string>(); // leg_id → reservationId
   for (const leg of legs.results) {
     if (leg.role !== "PAYER") continue;
     const legTxid = `TX-GT-${leg.leg_id}`;
     const hResult = await reserveH(leg.bank_id, legTxid, leg.amount_value, db);
     if (!hResult.ok) {
-      // H超過またはparticipating bankなし → 既確保済みを解放してcancelled
+      // H exceeded or no bank → release reserved, cancel
       for (const resId of hReservations.values()) {
         await releaseH(resId, db);
       }
@@ -292,19 +292,19 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
       return;
     }
     const reservationId = hResult.reservation_id;
-    // DECIDED_TO_SETTLE 直行なので即 LOCK
+    // Direct to DECIDED_TO_SETTLE, so LOCK immediately
     await lockH(reservationId, db);
     hReservations.set(leg.leg_id, reservationId);
   }
 
-  // 全 leg OK → Decision 原子finalized
+  // All legs OK → Decision atomically finalized
   const decisionProofRef = newDecisionProofRef();
   const finalityLogRef = newFinalityLogRef();
   // dns_cycle_id をset（DNSsettlementでのH解放に必要）
   const dnsCycleId = await getOrCreateDnsCycle(db, now);
 
   // Bug #5 fix: AND state='GT_PRECHECKED' でステートガードを追加し、
-  // 並行timeoutcancelledが先に GT_DECIDED_CANCEL に遷移していた場合に上書きしない
+  // Don't overwrite if parallel timeout already went to GT_DECIDED_CANCEL
   const decisionUpdated = await db
     .prepare(
       `UPDATE GtidTransactions SET state='GT_DECIDED_TO_SETTLE', legs_ready_count=leg_count, updated_at=?, version=version+1 WHERE gtid=? AND state='GT_PRECHECKED'`
@@ -313,7 +313,7 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     .run();
 
   if ((decisionUpdated.meta.changes ?? 0) === 0) {
-    // 並行処理で既にcancelled等に遷移済み → 確保済みH-reservedを解放してスキップ
+    // Already transitioned in parallel → release reserved H, skip
     for (const resId of hReservations.values()) {
       await releaseH(resId, db);
     }
@@ -332,21 +332,21 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
     txid_or_gtid: gtid,
   });
 
-  // PAYERレグ用 Transaction をcreateし Execution をqueueへ投入する。
-  // PAYEEレグは Transaction を持たない。クレジットは PAYER Transaction の
-  // onPayerExecConfirmed → ZC_BANK_CREDIT フローで逐次実行されるため、
-  // ここで直接 ZC_BANK_CREDIT を投入すると二重credit / incoming paymentが発生する。
+  // Create PAYER leg Transaction; enqueue Execution
+  // PAYEE leg has no Transaction. Credit via PAYER Transaction
+  // Executed sequentially in onPayerExecConfirmed → ZC_BANK_CREDIT flow
+  // Direct ZC_BANK_CREDIT here causes duplicate credit
 
   for (const leg of legs.results) {
-    // PAYEEレグは Transaction を作らず ZC_BANK_CREDIT も送らない。
+    // PAYEE leg: no Transaction, no ZC_BANK_CREDIT
     // クレジットは対応する PAYERレグ Transaction の onPayerExecConfirmed で投入される。
     if (leg.role === "PAYEE") continue;
 
     const txid = `TX-GT-${leg.leg_id}`;
-    // PAYER の対応 PAYEE は leg_id の辞書順位（== sort 後のarray index）で決定。
-    // 両arrayは上で leg_id 昇順にsort済みのため、findIndex の結果がそのまま
-    // 正しい対の index になる。PAYEE 数が PAYER 数より少ない場合は先頭 PAYEE
-    // をフォールバックとする（単一payee fan-in 等の利便のため）。
+    // Corresponding PAYEE for PAYER by leg_id position (== post-sort array index)
+    // Arrays already sorted by leg_id; findIndex result direct
+    // Correct pairing index. If PAYEE < PAYER, first PAYEE
+    // Use as fallback (convenience for single-payee, etc)
     const payerIdx = payerLegs.findIndex((p) => p.leg_id === leg.leg_id);
     const counterpartyPayeeLeg = payeeLegs[payerIdx] ?? payeeLeg;
     const hReservationId = hReservations.get(leg.leg_id) ?? null;
@@ -399,7 +399,7 @@ export async function advanceGtid(gtid: string, env: Env): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// GTID cancelled終端処理: GT_DECIDED_CANCEL → GT_CANCELLED
+// GTID cancelled terminal: GT_DECIDED_CANCEL → GT_CANCELLED
 // ---------------------------------------------------------------------------
 async function finalizeGtidCancelled(gtid: string, db: D1Database, env?: Env): Promise<void> {
   // Release bank suspense for any PAYER legs that already reserved funds via leg-ready-check.

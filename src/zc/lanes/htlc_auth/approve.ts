@@ -30,7 +30,7 @@ import { transitionWithLog, insertTxWithLog } from "../_helpers";
  * fund transfer側（customer）がオーソリをapprovalする。
  * POST /api/htlc/auth/:auth_id/approve
  *   1. preimage + hashlock をgenerateして Vault にsave
- *   2. fund transfer側bankに資金reservedをかける
+ *   2. Reserve funds with fund transfer-side bankをかける
  *   3. Transactions を RECEIVED で INSERT（canonical entry）
  *   4. RECEIVED → HTLC_LOCKED へ `transitionWithLog` で遷移
  *      （ALLOWED_TRANSITIONS check + FinalityLog 同時record）
@@ -67,7 +67,7 @@ export async function approveAuthRequest(
     return { result: "ERROR", reason_code: "AUTH_EXPIRED" };
   }
 
-  // preimage generate → Vault にsave
+  // Generate preimage → save to Vault
   const buf = new Uint8Array(32);
   crypto.getRandomValues(buf);
   const preimage = Array.from(buf)
@@ -87,7 +87,7 @@ export async function approveAuthRequest(
     .bind(vaultRef, JSON.stringify({ preimage, auth_id: authId }), vaultExpiresAt, now)
     .run();
 
-  // fund transfer側bankに資金reserved
+  // Reserve funds with fund transfer-side bank
   const htlcId = `HAUTH-${authId}`;
   const txid = `TX-HAUTH-${authId}`;
   const requestId = `RESERVE-AUTH-${authId}`;
@@ -138,9 +138,9 @@ export async function approveAuthRequest(
     payload: { txid, lane: "HTLC", flow: "HTLC_AUTH", auth_id: authId },
     sideUpdates: [
       {
-        // HtlcContracts は HTLC_LOCKED でcreateしておき、Step 2 の Transactions
+        // Create HtlcContracts at HTLC_LOCKED; Step 2 Transactions
         // 遷移 (RECEIVED → HTLC_LOCKED) と整合させる。claimHtlc がリードする
-        // hashlock/timelock を確実に提供するため Transactions より先に存在させる。
+        // Create before Transactions to ensure hashlock/timelock availability
         sql: `INSERT OR IGNORE INTO HtlcContracts
             (htlc_id, txid, state, hashlock, timelock, amount_value,
              payer_bank_id, payee_bank_id, secret_verified, authority_recheck_required,
@@ -177,7 +177,7 @@ export async function approveAuthRequest(
     return { result: "ERROR", reason_code: "INVALID_AUTH_STATE" };
   }
 
-  // HtlcAuthRequests を AUTH_APPROVED にupdate
+  // Update HtlcAuthRequests to AUTH_APPROVED
   await db
     .prepare(
       `UPDATE HtlcAuthRequests

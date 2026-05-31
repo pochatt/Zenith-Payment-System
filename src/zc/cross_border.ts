@@ -19,11 +19,11 @@ import { buildPacs008 } from "../shared/iso20022";
 // Constants
 // ---------------------------------------------------------------------------
 
-/** モック固定為替レート（外貨 → JPY）: constants.ts を正として統一使用 */
+/** Mock fixed rates (foreign → JPY): use constants.ts */
 import { EXCHANGE_RATE_TO_JPY as MOCK_EXCHANGE_RATES } from "../shared/constants";
 
 // ---------------------------------------------------------------------------
-// クロスボーダーfund transfer開始
+// Cross-border fund transfer start
 // ---------------------------------------------------------------------------
 
 /**
@@ -31,8 +31,8 @@ import { EXCHANGE_RATE_TO_JPY as MOCK_EXCHANGE_RATES } from "../shared/constants
  *
  * 処理順序:
  * 1. FATF R16 validation
- * 2. CrossBorderTransactions レコードcreate
- * 3. 国内 Transactions レコード (DEFERRED lane) create
+ * 2. CrossBorderTransactions record create
+ * 3. Domestic Transactions record (DEFERRED lane) create
  * 4. pacs.008 messagegenerate
  * 5. 外部 FPS へsend (モック: logのみ)
  *
@@ -57,13 +57,13 @@ export async function initiateCrossBorderTransfer(
   const cbTxid = req.cb_txid.startsWith("CB-") ? req.cb_txid : `CB-${crypto.randomUUID()}`;
   const domesticTxid = `TX-${crypto.randomUUID()}`;
 
-  // 外貨 → 円換算
+  // Foreign → JPY conversion
   const rate = MOCK_EXCHANGE_RATES[req.foreign_currency.toUpperCase()] ?? 1;
   const domesticAmount = Math.round(req.foreign_amount * rate);
 
   const fatfJson = serializeFatfData(req.fatf_data);
 
-  // 2. CrossBorderTransactions レコードcreate
+  // 2. CrossBorderTransactions record create
   await db
     .prepare(`
     INSERT INTO CrossBorderTransactions
@@ -89,10 +89,10 @@ export async function initiateCrossBorderTransfer(
     )
     .run();
 
-  // 3. 国内 Transactions レコード (DEFERRED lane) create
-  // payee 側は外部 FPS のinformationをsetする（空文字列だと execute-credit でaccount特定不可）
-  // クロスボーダーでは foreign_bank_bic を payee_bank_id、foreign_account_id を
-  // payee_account_hash に格納し、credit / incoming payment処理で参照可能にする
+  // 3. Domestic Transactions record (DEFERRED lane) create
+  // Payee sets external FPS info (empty string prevents account ID in execute-credit)
+  // Cross-border: use foreign_bank_bic as payee_bank_id, foreign_account_id as
+  // Store in payee_account_hash; accessible in credit processing
   await db
     .prepare(`
     INSERT OR IGNORE INTO Transactions
@@ -130,7 +130,7 @@ export async function initiateCrossBorderTransfer(
     fatf: req.fatf_data,
   });
 
-  // 5. 外部 FPS へsend (モック: logのみ)
+  // 5. Send to external FPS (mock: log only)
   if (env.FOREIGN_FPS_ENDPOINT) {
     console.log(
       `[cross_border] MOCK send to foreign FPS ${env.FOREIGN_FPS_ENDPOINT}`,
@@ -144,7 +144,7 @@ export async function initiateCrossBorderTransfer(
 }
 
 // ---------------------------------------------------------------------------
-// クロスボーダーfund transfer状態update
+// Cross-border fund transfer status update
 // ---------------------------------------------------------------------------
 
 /**
@@ -185,7 +185,7 @@ export async function updateCrossBorderStatus(
 }
 
 // ---------------------------------------------------------------------------
-// クロスボーダーfund transferinquiry
+// Cross-border fund transfer inquiry
 // ---------------------------------------------------------------------------
 
 /**
@@ -208,7 +208,7 @@ export async function getCrossBorderTransaction(
 }
 
 // ---------------------------------------------------------------------------
-// domestic_txid からクロスボーダーinformationをget
+// Get cross-border info from domestic_txid
 // ---------------------------------------------------------------------------
 
 /**

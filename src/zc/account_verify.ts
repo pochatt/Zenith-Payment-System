@@ -20,7 +20,7 @@ import { signPayload } from "../shared/hmac";
 // requestAccountVerification
 // ---------------------------------------------------------------------------
 /**
- * accountconfirmationリクエストをcreateし、対象bankの ZC Ingress API を呼ぶ。
+ * accountconfirmationリクエストをcreateし、Call target bank's ZC Ingress API。
  * cacheヒット時はbank呼び出しをスキップする。
  *
  * @returns verification_id
@@ -32,17 +32,17 @@ export async function requestAccountVerification(
 ): Promise<string> {
   const now = nowISO();
 
-  // idempotentcheck: 同じ idempotency_key が存在すれば既存 ID をreturn
+  // idempotentcheck: if same idempotency_key exists, return existing ID
   const existing = await db
     .prepare(`SELECT verification_id FROM AccountVerifications WHERE idempotency_key = ?`)
     .bind(req.idempotency_key)
     .first<{ verification_id: string }>();
   if (existing) return existing.verification_id;
 
-  // アカウントhash（account_id をそのままhash相当として使用）
+  // account hash (use account_id directly as hash)
   const accountHash = req.target_account_id;
 
-  // cacheconfirmation: 同一 (target_bank_id, target_account_hash) で有効deadline内のレコードを探す
+  // Cache check: find record with same (bank, hash) within deadline
   const cached = await db
     .prepare(
       `SELECT * FROM AccountVerifications
@@ -58,7 +58,7 @@ export async function requestAccountVerification(
     .first<AccountVerificationRow>();
 
   if (cached) {
-    // cacheヒット: 新しいレコードをcache結果でコピーcreate
+    // Cache hit: copy-create from cache result
     const newId = req.verification_id;
     await db
       .prepare(
@@ -87,7 +87,7 @@ export async function requestAccountVerification(
     return newId;
   }
 
-  // 新規レコードを PENDING で挿入
+  // Insert new record as PENDING
   await db
     .prepare(
       `INSERT OR IGNORE INTO AccountVerifications
@@ -107,7 +107,7 @@ export async function requestAccountVerification(
     )
     .run();
 
-  // 対象bankの ZC Ingress API を呼ぶ
+  // Call target bank's ZC Ingress API
   const bankPayload: BankAccountVerifyRequest = {
     verification_id: req.verification_id,
     account_id: req.target_account_id,
@@ -174,7 +174,7 @@ export async function handleBankVerifyResponse(
   let targetAccountName: string | null = null;
   let matchScore: number | null = null;
   let fraudWarning = 0;
-  // cache有効deadline: MATCHED/UNMATCHED は 24 時間、NOT_FOUND は 1 時間
+  // Cache expiry: MATCHED/UNMATCHED 24h, NOT_FOUND 1h
   let cachedUntil: string | null = null;
 
   switch (response.result) {

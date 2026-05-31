@@ -56,7 +56,7 @@ export {
 export type { FinalityLogEntry };
 
 // ---------------------------------------------------------------------------
-// Execution 完了後の状態遷移処理
+// State transition after Execution completes
 // ---------------------------------------------------------------------------
 
 /**
@@ -110,7 +110,7 @@ export async function onPayerExecConfirmed(
     event_type: "PayerExecConfirmed",
     state_from: tx.state,
     state_to: "PAYER_EXEC_CONFIRMED",
-    // bankProofRefJson は呼び出し側で JSON.stringify 済み。parse→stringify を経由せず
+    // bankProofRefJson already stringified; skip re-parse
     // 文字列連結で payload をconstructし、中間オブジェクト確保を回避する。
     payload_json: `{"payer_bank_proof_ref":${bankProofRefJson}}`,
     txid_or_gtid: txid,
@@ -118,7 +118,7 @@ export async function onPayerExecConfirmed(
 
   await autoResolveCaseForTx(db, txid);
 
-  // HIGH_VALUE laneは IGS コールバック（handleIgsCallback）が ZC_BANK_CREDIT を投入する
+  // HIGH_VALUE lane receives ZC_BANK_CREDIT via IGS callback (handleIgsCallback)
   if (tx.lane !== "HIGH_VALUE") {
     await env.QUEUE.send({
       type: "ZC_BANK_CREDIT",
@@ -171,8 +171,8 @@ export async function onPayeeExecConfirmed(
 
   if (!isValidTransition(tx.state, "PAYEE_EXEC_CONFIRMED")) return;
 
-  // HIGH_VALUE 不変条件: external_settlement_status = 'SETTLED' でなければ bconfirmationをdenial
-  // (spec: "PAYEE_EXEC_CONFIRMED(b)へ遷移してよいのは external_settlement_status == SETTLED の場合に限る")
+  // HIGH_VALUE invariant: deny confirmation unless external_settlement_status = 'SETTLED'
+  // (spec: Transition to PAYEE_EXEC_CONFIRMED(b) only when external_settlement_status == SETTLED)
   if (tx.lane === "HIGH_VALUE" && tx.external_settlement_status !== "SETTLED") {
     console.error(
       `[orchestrator] HV invariant violated for ${txid}: external_settlement_status=${tx.external_settlement_status}, expected SETTLED`
@@ -195,7 +195,7 @@ export async function onPayeeExecConfirmed(
     event_type: "PayeeExecConfirmed",
     state_from: tx.state,
     state_to: "PAYEE_EXEC_CONFIRMED",
-    // 同上: parse→stringify を回避（bankProofRefJson は既に有効な JSON 文字列）
+    // Same: avoid parse→stringify (valid JSON)
     payload_json: `{"payee_bank_proof_ref":${bankProofRefJson}}`,
     txid_or_gtid: txid,
   });

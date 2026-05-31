@@ -30,7 +30,7 @@ export async function checkAndFinalizeGtid(gtid: string, db: D1Database): Promis
     .bind(gtid)
     .all<{ txid: string; tx_state: string | null }>();
 
-  // 失敗 leg がある場合は GT_SUSPENDED へ遷移
+  // If failed leg, transition to GT_SUSPENDED
   const anyFailed = legs.results.some(
     (l) => l.tx_state === "SUSPENDED" || l.tx_state === "FAILED_EXECUTION"
   );
@@ -55,7 +55,7 @@ export async function checkAndFinalizeGtid(gtid: string, db: D1Database): Promis
     return;
   }
 
-  // null txid レグは PAYER Transaction のcredit / incoming paymentフローで実質的に完了済みとみなす
+  // Null txid leg deemed complete via PAYER Transaction credit flow
   const allSettled = legs.results.every((l) => l.tx_state === "SETTLED" || l.txid === null);
   if (!allSettled) return;
 

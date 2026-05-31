@@ -32,7 +32,7 @@ export async function createAuthRequest(
     return { result: "AUTH_REQUESTED", auth_id: existing.auth_id };
   }
 
-  // ホワイトlistconfirmation
+  // whitelist confirmation
   const whitelist = await db
     .prepare(
       `SELECT * FROM HtlcAuthWhitelist
@@ -56,12 +56,12 @@ export async function createAuthRequest(
     return { result: "ERROR", reason_code: "PAYEE_NOT_WHITELISTED" };
   }
 
-  // amount制限check
+  // amount limit check
   if (whitelist.max_amount !== null && req.amount.value > whitelist.max_amount) {
     return { result: "ERROR", reason_code: "AMOUNT_EXCEEDS_AUTH_LIMIT" };
   }
 
-  // 目的check
+  // purpose check
   if (whitelist.allowed_purposes && req.purpose) {
     const allowed = JSON.parse(whitelist.allowed_purposes) as string[];
     if (!allowed.includes(req.purpose)) {

@@ -49,7 +49,7 @@ export async function createCreditNotification(
       purpose,
       ediSummary,
       now,
-      now // 初回は即時配信
+      now // First delivery immediate
     )
     .run();
 
@@ -83,17 +83,17 @@ export async function deliverNotification(
   }
 
   if (notif.status === "DELIVERED" || notif.status === "FAILED") {
-    // idempotent: 終端状態ならスキップ
+    // idempotent: skip if terminal state
     return;
   }
 
-  // delivery_attempts をインクリメント
+  // Increment delivery_attempts
   const newAttempts = notif.delivery_attempts + 1;
 
   const idemKey = `CN-${notif.notification_id}-${newAttempts}`;
 
-  // BankCreditNotifyIngressRequest として直接 handleBankIngress を呼び出す
-  // （同一Worker内呼び出し: env.BANK_BASE_URL が空でも動作）
+  // Call handleBankIngress directly as BankCreditNotifyIngressRequest
+  // (Same-Worker: works even if env.BANK_BASE_URL empty)
   const ingressPayload = {
     request_id: idemKey,
     notification_id: notif.notification_id,
@@ -136,7 +136,7 @@ export async function deliverNotification(
     return;
   }
 
-  // 配信失敗: 再試行schedule or FAILED
+  // Delivery failure: retry schedule or FAILED
   if (newAttempts >= notif.max_attempts) {
     await db
       .prepare(
@@ -192,7 +192,7 @@ export async function retryPendingNotifications(db: D1Database, env: Env): Promi
 // ---------------------------------------------------------------------------
 // getNotificationStatus
 // ---------------------------------------------------------------------------
-/** notification_id に紐付く CreditNotifications レコードをreturn。 */
+/** Return CreditNotifications linked to notification_id */
 export async function getNotificationStatus(
   db: D1Database,
   notificationId: string

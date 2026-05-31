@@ -4,8 +4,8 @@
  * cleans up stalled GTID transactions.
  * @module cron/timeout_sweep
  */
-// - Vault TTL切れ → 論理delete（is_evicted = 1）
-// - GT_DECIDED_TO_SETTLE スタック GTID 回収
+// - Vault TTL expired → logical delete (is_evicted = 1)
+// - Recover stacked GT_DECIDED_TO_SETTLE GTIDs
 import type { Env } from "../types";
 import { nowISO } from "../types";
 import { suspendTx, checkAndFinalizeGtid } from "../zc/orchestrator";
@@ -14,18 +14,18 @@ import { cancelHtlc } from "../zc/lanes/htlc";
 import { expireRtpRequests } from "../zc/rtp";
 import { retryPendingNotifications } from "../zc/credit_notify";
 
-// timeout閾値（秒）
-const T2_EXEC_TIMEOUT_SEC = 300; // 5分: DECIDED_TO_SETTLE → PAYER_EXEC_CONFIRMED
-const T3_PAYEE_TIMEOUT_SEC = 300; // 5分: PAYER_EXEC_CONFIRMED → PAYEE_EXEC_CONFIRMED
+// timeout threshold (seconds)
+const T2_EXEC_TIMEOUT_SEC = 300; // 5 min: DECIDED_TO_SETTLE → PAYER_EXEC_CONFIRMED
+const T3_PAYEE_TIMEOUT_SEC = 300; // 5 min: PAYER_EXEC_CONFIRMED → PAYEE_EXEC_CONFIRMED
 
 export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
   const db = env.DB;
   const now = new Date();
   let swept = 0;
 
-  // 1. T2_exec timeout: DECIDED_TO_SETTLE が 5分以上
-  // BULK/DEFERRED は EOD まで DECIDED_TO_SETTLE で待機する設計のため除外
-  // HTLC は timelock で独立管理されるため除外（claimHtlc は同期 debit で完結）
+  // 1. T2_exec timeout: DECIDED_TO_SETTLE ≥ 5 minutes
+  // BULK/DEFERRED excluded (wait at DECIDED_TO_SETTLE until EOD)
+  // HTLC excluded (independent timelock management; claimHtlc completes with sync debit)
   const t2Deadline = new Date(now.getTime() - T2_EXEC_TIMEOUT_SEC * 1000).toISOString();
   const decidedOld = await db
     .prepare(
@@ -39,7 +39,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     swept++;
   }
 
-  // 2. T3_payee_proof timeout: PAYER_EXEC_CONFIRMED が 5分以上
+  // 2. T3_payee_proof timeout: PAYER_EXEC_CONFIRMED ≥ 5 minutes
   const t3Deadline = new Date(now.getTime() - T3_PAYEE_TIMEOUT_SEC * 1000).toISOString();
   const payerConfOld = await db
     .prepare(`SELECT txid FROM Transactions WHERE state='PAYER_EXEC_CONFIRMED' AND updated_at < ?`)
@@ -51,7 +51,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     swept++;
   }
 
-  // 3. FAILED_EXECUTION 遷移: SUSPENDED が expires_at を超えた場合
+  // 3. FAILED_EXECUTION: SUSPENDED exceeds expires_at
   const failedOld = await db
     .prepare(
       `SELECT txid FROM Transactions WHERE state='SUSPENDED' AND expires_at IS NOT NULL AND expires_at < ?`
@@ -86,26 +86,26 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     .all<{ htlc_id: string; txid: string }>();
 
   for (const htlc of expiredHtlcs.results) {
-    // env を渡してbank側サスペンスの解放通知も行う（HTLC_LOCKED 時は reserve-funds がexecutedみ）
+    // Pass env; also notify bank-side suspense release
     await cancelHtlc(htlc.htlc_id, htlc.txid, "TIMELOCK_EXPIRED", db, env);
     swept++;
   }
 
-  // 5. Vault TTL 切れ（論理delete）
+  // 5. Vault TTL expired (logical delete)
   const expiredVault = await db
     .prepare(`UPDATE Vault SET is_evicted=1 WHERE is_evicted=0 AND expires_at < ?`)
     .bind(now.toISOString())
     .run();
   swept += expiredVault.meta.changes ?? 0;
 
-  // 6. RTP expired（state 列のみをupdate）
+  // 6. RTP expired (update state column only)
   swept += await expireRtpRequests(db);
 
-  // 7. 未配信通知リトライ
+  // 7. Undelivered notification retries
   await retryPendingNotifications(db, env);
 
-  // 8. GT_DECIDED_TO_SETTLE スタック GTID 回収（10分以上updateなし）
-  // leg 実行失敗や 0-legs で checkAndFinalizeGtid が呼ばれなかった GTID を救済
+  // 8. Recover stacked GT_DECIDED_TO_SETTLE GTIDs (≥10 min no update)
+  // Rescue GTIDs where checkAndFinalizeGtid not called (leg failure or 0-legs)
   const gtStuckDeadline = new Date(now.getTime() - 10 * 60 * 1000).toISOString();
   const stuckGtids = await db
     .prepare(
@@ -119,7 +119,7 @@ export async function runTimeoutSweep(env: Env): Promise<{ swept: number }> {
     swept++;
   }
 
-  // 9. GT_SETTLED 済みなのに GtidLegs.state が未updateのレコードを一括修正
+  // 9. Batch-fix records where GT_SETTLED but GtidLegs.state not updated
   const legFixResult = await db
     .prepare(`
     UPDATE GtidLegs SET state='LEG_SETTLED', updated_at=?

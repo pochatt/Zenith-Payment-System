@@ -27,16 +27,16 @@ import { filterByEdiCondition } from "../zc/edi";
 // ---------------------------------------------------------------------------
 
 /**
- * credit filterをevaluateする。
- * execute-credit の前段で呼び出し、最初にmatchしたfilterのアクションをreturn。
+ * Evaluate credit filter.
+ * Called before execute-credit; return action of first matched filter.
  *
- * @param bankId        credit / incoming paymentbank ID
- * @param accountId     receiving accountID（内部ID）
- * @param senderBankId  payer bankID
- * @param senderAccountHash payeraccount hash
+ * @param bankId        credit bank ID
+ * @param accountId     receiving account ID (internal)
+ * @param senderBankId  payer bank ID
+ * @param senderAccountHash payee account hash
  * @param amountValue   transfer amount
- * @param ediData       messageEDI data（null可）
- * @param txid          ZCtransaction ID
+ * @param ediData       message EDI data (nullable)
+ * @param txid          ZC transaction ID
  */
 export async function evaluatePaymentFilters(
   bankId: string,
@@ -48,7 +48,7 @@ export async function evaluatePaymentFilters(
   txid: string,
   db: D1Database
 ): Promise<FilterEvalResult> {
-  // bank全体filter + accountfilterをget（priority: ACCOUNT > BANK_WIDE）
+  // Get bank-wide + account filter (priority: ACCOUNT > BANK_WIDE)
   const rows = await db
     .prepare(
       `SELECT * FROM PaymentFilters
@@ -69,7 +69,7 @@ export async function evaluatePaymentFilters(
     });
     if (!matched) continue;
 
-    // filterにmatchした
+    // matched filter
     if (filter.action === "REJECT") {
       return {
         matched: true,
@@ -79,7 +79,7 @@ export async function evaluatePaymentFilters(
       };
     }
 
-    // HOLD_CONFIRM / HOLD_MANUAL: approval requestをgenerate
+    // HOLD_CONFIRM / HOLD_MANUAL: generate approval request
     const approvalId = await createApprovalRequest(db, {
       bankId,
       accountId,
@@ -89,7 +89,7 @@ export async function evaluatePaymentFilters(
       senderAccountHash,
       amountValue,
       ediData,
-      // approval deadline: credit holdから24時間
+      // approval deadline: 24 hours from credit hold
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     });
 
@@ -104,7 +104,7 @@ export async function evaluatePaymentFilters(
   return { matched: false };
 }
 
-/** filter conditionのevaluate */
+/** Evaluate filter condition */
 function matchFilter(
   filterType: string,
   condition: Record<string, unknown>,
@@ -137,11 +137,11 @@ function matchFilter(
       }
     }
 
-    // EDI_STRUCTURED: EdiFilterCondition による構造化match
-    // condition は { field, operator, value } の EdiFilterCondition 形式
-    // evaluatePaymentFilters からの同期呼び出しでは DB アクセス不可のため、
-    // ediData（purpose テキスト）に対して条件を文字列matchする簡易evaluateを行う。
-    // 完全な DB matchは applyEdiFilter() を使用すること。
+    // EDI_STRUCTURED: structured match by EdiFilterCondition
+    // condition is EdiFilterCondition format: { field, operator, value }
+    // Synchronous call from evaluatePaymentFilters cannot access DB;
+    // Simple evaluate: string match conditions against ediData (purpose text)
+    // Use applyEdiFilter() for complete DB match.
     case "EDI_STRUCTURED": {
       const cond = condition as Partial<EdiFilterCondition>;
       if (!cond.field || !cond.operator || cond.value === undefined) return false;
@@ -169,7 +169,7 @@ function matchFilter(
     }
 
     case "REQUIRE_APPROVAL":
-      return true; // 無条件発動
+      return true; // Unconditionally triggered
 
     default:
       return false;
@@ -224,7 +224,7 @@ async function createApprovalRequest(
   return approvalId;
 }
 
-/** customerのapproval/denialをrecordする */
+/** Record customer approval/denial */
 export async function respondToApproval(
   bankId: string,
   approvalId: string,
@@ -252,7 +252,7 @@ export async function respondToApproval(
     .run();
 
   if (respondResult.meta.changes === 0) {
-    // expires_at <= now ならexpired → TIMEOUT にマーク
+    // If expires_at <= now, expired → mark as TIMEOUT
     const timeoutResult = await db
       .prepare(
         `UPDATE PaymentApprovalRequests SET status='TIMEOUT', updated_at=?
@@ -270,7 +270,7 @@ export async function respondToApproval(
   return { ok: true, txid: approval.txid };
 }
 
-/** expiredのapproval requestを TIMEOUT にupdate（timeout_sweep.ts から呼ばれる） */
+/** Update expired approval to TIMEOUT (from timeout_sweep.ts) */
 export async function sweepExpiredApprovals(db: D1Database): Promise<number> {
   const now = nowISO();
   const result = await db
@@ -284,7 +284,7 @@ export async function sweepExpiredApprovals(db: D1Database): Promise<number> {
   return result.meta.changes ?? 0;
 }
 
-/** accountのapproval待ちリクエスト一覧 */
+/** List approval-pending requests */
 export async function listApprovalRequests(
   bankId: string,
   accountId: string | null,
@@ -407,7 +407,7 @@ export async function deleteFilter(
 }
 
 // ---------------------------------------------------------------------------
-// EDI構造化filter: EdiRecords + Transactions をjoinして条件match
+// EDI structured filter: join EdiRecords + Transactions, match conditions
 // ---------------------------------------------------------------------------
 
 /**

@@ -432,7 +432,7 @@ function vesselExtras(shape: VesselShape): VesselExtra[] {
       ];
     case "twin_cups":
       // GTID: a thin gold coupler line tying the two bases together —
-      // the visual signature of "Decision一体性".
+      // the visual signature of "Decision integrity"
       return [
         { d: "M186,458 L294,458", stroke: "#d4a056", opacity: 0.85, width: 1.4 },
         { d: "M240,452 L240,462", stroke: "#d4a056", opacity: 0.85, width: 1.4 },

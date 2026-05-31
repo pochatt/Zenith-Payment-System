@@ -577,17 +577,17 @@ export function parseZenginRecord(line: string): ZenginFixedRecord {
  */
 export function formatZenginRecord(record: ZenginFixedRecord): string {
   const parts: string[] = [
-    record.record_type, //  1文字
-    record.bank_code.padStart(4, "0").substring(0, 4), //  4文字
-    record.branch_code.padStart(3, "0").substring(0, 3), //  3文字
-    record.account_type, //  1文字
-    record.account_number.padStart(7, "0").substring(0, 7), //  7文字
-    padZenginKana(record.beneficiary_name, 30), // 30文字
-    String(record.amount).padStart(10, "0").substring(0, 10), // 10文字
-    padZenginKana(record.originator_name, 40), // 40文字
-    record.originator_bank_code.padStart(4, "0").substring(0, 4), //  4文字
-    record.originator_branch_code.padStart(3, "0").substring(0, 3), // 3文字
-    "".padEnd(17, " "), // 17文字（予備）
+    record.record_type, //  1 character
+    record.bank_code.padStart(4, "0").substring(0, 4), //  4 characters
+    record.branch_code.padStart(3, "0").substring(0, 3), //  3 characters
+    record.account_type, //  1 character
+    record.account_number.padStart(7, "0").substring(0, 7), //  7 characters
+    padZenginKana(record.beneficiary_name, 30), // 30 characters
+    String(record.amount).padStart(10, "0").substring(0, 10), // 10 characters
+    padZenginKana(record.originator_name, 40), // 40 characters
+    record.originator_bank_code.padStart(4, "0").substring(0, 4), //  4 characters
+    record.originator_branch_code.padStart(3, "0").substring(0, 3), // 3 characters
+    "".padEnd(17, " "), // 17 characters（予備）
   ];
 
   const result = parts.join("");

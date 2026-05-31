@@ -7,8 +7,8 @@ import type { QrCodeRow, QrGenerateRequest, QrPayRequest } from "../types";
 import { signPayload, verifySignature } from "../shared/hmac";
 
 // ---------------------------------------------------------------------------
-// QRコードgenerate
-// signatureは HMAC-SHA256(qr_ref + payee_bank_id + amount, QR_SECRET)
+// Generate QR code
+// Signature is HMAC-SHA256(qr_ref + payee_bank_id + amount, QR_SECRET)
 // ---------------------------------------------------------------------------
 export async function generateQrCode(
   db: D1Database,
@@ -79,7 +79,7 @@ export async function getQrCode(db: D1Database, qrRef: string): Promise<QrCodeRo
 }
 
 // ---------------------------------------------------------------------------
-// QRpayment実行 (signaturevalidation → 使用済みマーク → txidreturn)
+// QR execution (signature validation → mark used → return txid)
 // ---------------------------------------------------------------------------
 export async function processQrPayment(
   db: D1Database,
@@ -99,12 +99,12 @@ export async function processQrPayment(
     }
   }
 
-  // 使用済みcheck (DYNAMIC QRは1回限り)
+  // usage check (DYNAMIC QR single-use)
   if (qrRow.qr_type === "DYNAMIC" && qrRow.is_used === 1) {
     return { valid: false, error: "QR_ALREADY_USED" };
   }
 
-  // amountvalidation: DYNAMIC QRは固定amount優先、なければreq.amount。STATIC QRはreq.amountが必須
+  // DYNAMIC QR prefers fixed amount, else req.amount. STATIC QR requires req.amount
   const effectiveAmount =
     qrRow.qr_type === "DYNAMIC" ? (qrRow.amount_value ?? req.amount) : req.amount;
   if (effectiveAmount == null || effectiveAmount <= 0) {
@@ -123,7 +123,7 @@ export async function processQrPayment(
     return { valid: false, error: "QR_INVALID_SIGNATURE" };
   }
 
-  // DYNAMIC QRは使用済みにセット
+  // Set DYNAMIC QR as used
   if (qrRow.qr_type === "DYNAMIC") {
     await db
       .prepare(`
@@ -134,7 +134,7 @@ export async function processQrPayment(
     return { valid: true, qrRow: { ...qrRow, is_used: 1 }, effectiveAmount };
   }
 
-  // STATIC QRはそのままreturn (何度でも使用可能)
+  // Return STATIC QR as-is (reusable)
   return { valid: true, qrRow, effectiveAmount };
 }
 
@@ -153,7 +153,7 @@ export async function verifyQrSignature(
 }
 
 // ---------------------------------------------------------------------------
-// 内部Helpers: signatureペイロード文字列construct
+// Internal helpers: construct signature payload
 // ---------------------------------------------------------------------------
 function buildSigPayload(qrRef: string, payeeBankId: string, amountValue?: number): string {
   const amountStr = amountValue !== undefined ? String(amountValue) : "";

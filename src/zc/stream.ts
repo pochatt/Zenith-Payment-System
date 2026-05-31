@@ -8,7 +8,7 @@ import type { EventStreamRow, StreamEventType } from "../types";
 import { nowISO } from "../types";
 
 // ---------------------------------------------------------------------------
-// event発行
+// Emit event
 // ---------------------------------------------------------------------------
 
 /**
@@ -42,7 +42,7 @@ export async function publishEvent(
 }
 
 // ---------------------------------------------------------------------------
-// 未配信eventget
+// Get undelivered events
 // ---------------------------------------------------------------------------
 
 /**
@@ -96,7 +96,7 @@ export async function getPendingEvents(
 }
 
 // ---------------------------------------------------------------------------
-// event配信済みマーク（単一）
+// Mark event delivered (single)
 // ---------------------------------------------------------------------------
 
 /**
@@ -115,7 +115,7 @@ export async function markEventDelivered(db: D1Database, eventId: string): Promi
 }
 
 // ---------------------------------------------------------------------------
-// event配信済みマーク（batch）
+// Mark event delivered (batch)
 // ---------------------------------------------------------------------------
 
 /**
@@ -128,7 +128,7 @@ export async function markEventDelivered(db: D1Database, eventId: string): Promi
 export async function markEventsDelivered(db: D1Database, eventIds: string[]): Promise<void> {
   if (eventIds.length === 0) return;
 
-  // D1 は パラメータ展開でIN句が使えないため batch で処理
+  // D1 cannot use IN clauses with parameter expansion; handle via batch
   const stmts = eventIds.map((id) =>
     db.prepare(`UPDATE EventStream SET is_delivered = 1 WHERE event_id = ?`).bind(id)
   );
@@ -146,7 +146,7 @@ export async function markEventsDelivered(db: D1Database, eventIds: string[]): P
  * 1. ReadableStream をgenerate
  * 2. getPendingEvents を 2 秒ごとにポーリング
  * 3. 各eventを SSE フォーマット (`data: {...}\n\n`) でエンqueue
- * 4. send後に配信済みマーク
+ * 4. send後にMark delivered
  *
  * @param db           - D1 データベース
  * @param targetBankId - 配信先bank ID
@@ -158,11 +158,11 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
 
   const stream = new ReadableStream({
     async start(controller) {
-      // 初回接続通知
+      // First connection notification
       const connectMsg = `data: ${JSON.stringify({ type: "CONNECTED", bank_id: targetBankId })}\n\n`;
       controller.enqueue(new TextEncoder().encode(connectMsg));
 
-      // ポーリンgroup（2 秒間隔）
+      // Polling group (2 sec interval)
       const poll = async () => {
         try {
           const events = await getPendingEvents(db, targetBankId, lastEventId);
@@ -174,7 +174,7 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
               lastEventId = ev.event_id;
             }
 
-            // 配信済みマーク
+            // Mark delivered
             await markEventsDelivered(
               db,
               events.map((e) => e.event_id)
@@ -182,13 +182,13 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
           }
         } catch (err) {
           console.error("[stream] SSE poll error:", err);
-          // errorをクライアントへ通知してもストリームは継続
+          // Notify client of error; stream continues
           const errMsg = `data: ${JSON.stringify({ type: "ERROR", message: "poll failed" })}\n\n`;
           try {
             controller.enqueue(new TextEncoder().encode(errMsg));
           } catch {
-            // コントローラが既にクローズされている場合は無視
-            // ストリーム破棄 → timer停止
+            // Ignore if controller closed
+            // Discard stream → stop timer
             if (timerId) {
               clearInterval(timerId);
               timerId = null;
@@ -197,11 +197,11 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
         }
       };
 
-      // 2 秒ごとのポーリング（Workers のeventループ内で動作）
+      // Poll every 2 seconds (within Workers event loop)
       timerId = setInterval(poll, 2000);
     },
     cancel() {
-      // クライアント切断時にtimerを停止（リソースリーク＆誤配信済みマーク防止）
+      // クライアント切断時にtimerを停止（リソースリーク＆誤Mark delivered防止）
       if (timerId) {
         clearInterval(timerId);
         timerId = null;
@@ -220,7 +220,7 @@ export function createSseResponse(db: D1Database, targetBankId: string): Respons
 }
 
 // ---------------------------------------------------------------------------
-// 古い配信済みeventdelete
+// Delete old delivered events
 // ---------------------------------------------------------------------------
 
 /**
@@ -244,7 +244,7 @@ export async function pruneDeliveredEvents(db: D1Database): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// 内部ユーティリティ
+// 内部Utilities
 // ---------------------------------------------------------------------------
 
 /**

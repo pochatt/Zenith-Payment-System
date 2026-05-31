@@ -109,21 +109,21 @@ export function isUnresolvedAccountRef(accountHash: string): boolean {
  * bankコードは4桁（全銀標準）、支店コードは3桁。
  */
 export interface LegacyZenginTransfer {
-  /** 仕向bankコード（Zengin 4-digit code: '0001'〜'9999'） */
+  /** Originating bank code (Zengin 4-digit) */
   shimukeKinko: string;
-  /** 仕向支店コード（3桁: '001'〜'999'）。zenith-mock では DB matchに不使用 */
+  /** Originating branch (3-digit). Not used in zenith-mock DB */
   shimukeSiten: string;
-  /** 被仕向bankコード（Zengin 4-digit code: '0001'〜'9999'） */
+  /** 被Originating bank code (Zengin 4-digit) */
   hishimukeKinko: string;
-  /** 被仕向支店コード（3桁: '001'〜'999'）。zenith-mock では DB matchに不使用 */
+  /** 被Originating branch (3-digit). Not used in zenith-mock DB */
   hishimukeSiten: string;
-  /** 科目 ('1'=Savings, '2'=当座, '4'=貯蓄) */
+  /** Subject ('1'=Savings, '2'=Current, '4'=Savings) */
   kamoku: "1" | "2" | "4";
-  /** account number（7桁数字）。zenith-mock の account_hash とは別体系 */
+  /** account number (7-digit numeric). Separate from zenith-mock account_hash */
   kozaBango: string;
   /** payee名（カタカナ半角, 最大48文字） */
   uketorininMei: string;
-  /** amount（円, 正の整数, 最大10桁） */
+  /** amount (yen, positive, max 10 digits) */
   kingaku: number;
   /** Bank transfer specified date 'YYYYMMDD' */
   furikomiShiteibi: string;
@@ -135,7 +135,7 @@ export interface LegacyZenginTransfer {
   ediJoho?: string;
 }
 
-/** 全銀科目コード → zenith-mock account種別mapping */
+/** Zengin subject → zenith-mock account type */
 const KAMOKU_MAP: Record<string, string> = {
   "1": "SAVINGS", // Savings account
   "2": "CHECKING", // Checking account
@@ -157,10 +157,10 @@ export interface ConvertedPaymentRequest {
   txid: string;
   lane: "STANDARD" | "EXPRESS";
   amount: { value: number; currency: "JPY" };
-  /** bank_id は zenith-mock 3桁形式 */
+  /** bank_id is zenith-mock 3-digit format */
   payer: { bank_id: string; account_hash: string };
   /**
-   * bank_id は zenith-mock 3桁形式。
+   * bank_id is zenith-mock 3-digit format。
    * account_hash が `unresolved:` プレフィックスを持つ場合は
    * `account-verify` で解決してから使用する。
    */
@@ -342,7 +342,7 @@ export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
   if (!/^\d{8}$/.test(legacy.furikomiShiteibi))
     errors.push(`furikomiShiteibi must be YYYYMMDD, got "${legacy.furikomiShiteibi}"`);
 
-  // 先頭が '0' であることをconfirmation（全銀bankコードは '0' + 3桁）
+  // Confirm leading '0' (Zengin = '0' + 3-digit)
   if (/^\d{4}$/.test(legacy.shimukeKinko) && legacy.shimukeKinko[0] !== "0")
     errors.push(
       `shimukeKinko first digit should be '0' for domestic banks, got "${legacy.shimukeKinko[0]}"`
@@ -359,12 +359,12 @@ export function validateLegacyFormat(legacy: LegacyZenginTransfer): {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** 全銀科目コードから zenith-mock account種別文字列をreturn */
+/** Return account type string from Zengin code */
 export function kamokuToAccountType(kamoku: string): string {
   return KAMOKU_MAP[kamoku] ?? "SAVINGS";
 }
 
-/** 全角カタカナ → 半角カタカナ変換（ルックアップtable方式） */
+/** Full-width → half-width katakana (lookup table) */
 const FULL_TO_HALF_KATAKANA: Record<string, string> = {
   ァ: "ｧ",
   ア: "ｱ",
@@ -451,11 +451,11 @@ const FULL_TO_HALF_KATAKANA: Record<string, string> = {
 function toHalfWidthKatakana(str: string): string {
   return str
     .replace(/[\u30A1-\u30F6\u30AC-\u30F4]/g, (ch) => FULL_TO_HALF_KATAKANA[ch] ?? ch)
-    .replace(/\u30FC/g, "\uFF70") // 長音符 ー → ｰ
-    .replace(/\u3000/g, " "); // 全角スペース → 半角
+    .replace(/\u30FC/g, "\uFF70") // long vowel ー → ｰ
+    .replace(/\u3000/g, " "); // full-width space → half-width
 }
 
-/** カタカナ文字列を正規化（制御文字・非ASCII除去, trim） */
+/** Normalize katakana (remove control, non-ASCII; trim) */
 function normalizeKatakana(str: string): string {
   return toHalfWidthKatakana(str)
     .replace(/[^\x20-\x7E\uFF65-\uFF9F]/g, "") // Remove anything except ASCII + half-width katakana

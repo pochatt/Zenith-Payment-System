@@ -134,7 +134,7 @@ function validateOriginator(party: FatfParty): string[] {
   if (!party.name || party.name.trim().length === 0) {
     errors.push(`${prefix}.name: 送金人氏名は必須です`);
   } else if (party.name.trim().length > 140) {
-    errors.push(`${prefix}.name: 送金人氏名は140文字以内にしてください`);
+    errors.push(`${prefix}.name: 送金人氏名は140 characters以内にしてください`);
   }
 
   if (!party.account_id || party.account_id.trim().length === 0) {
@@ -186,7 +186,7 @@ function validateBeneficiary(party: FatfParty): string[] {
   if (!party.name || party.name.trim().length === 0) {
     errors.push(`${prefix}.name: 受取人氏名は必須です`);
   } else if (party.name.trim().length > 140) {
-    errors.push(`${prefix}.name: 受取人氏名は140文字以内にしてください`);
+    errors.push(`${prefix}.name: 受取人氏名は140 characters以内にしてください`);
   }
 
   if (!party.account_id || party.account_id.trim().length === 0) {
@@ -231,7 +231,7 @@ function validateInstitution(inst: FatfInstitution): string[] {
   // Format validation if BIC exists
   if (inst.bic) {
     if (!isValidBicFormat(inst.bic)) {
-      errors.push(`bic: 無効な BIC フォーマット '${inst.bic}' (8文字または11文字が必要)`);
+      errors.push(`bic: 無効な BIC フォーマット '${inst.bic}' (8文字または11 characterが必要)`);
     }
   }
 

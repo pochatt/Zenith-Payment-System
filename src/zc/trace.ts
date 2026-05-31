@@ -11,7 +11,7 @@ export interface TxEventParams {
   txid?: string | null;
   correlation_id?: string | null;
   actor: string; // 'ZC' | 'BANK_001' | 'CUSTOMER' | 'SYSTEM'
-  action: string; // アクションConstants（下記参照）
+  action: string; // Action constants (see below)
   status: TxEventStatus; // 'OK' | 'NG' | 'PENDING'
   reason_code?: string | null;
   amount?: number | null;
@@ -52,7 +52,7 @@ export async function logTxEvent(db: D1Database, params: TxEventParams): Promise
       )
       .run();
   } catch (err) {
-    // log書き込み失敗は本処理に影響させない
+    // Don't let log fail affect main
     console.error("[trace] TxEventLog write failed:", err);
   }
 }
@@ -153,7 +153,7 @@ export async function getTxEvents(txid: string, db: D1Database): Promise<unknown
   return combined;
 }
 
-/** GTID に紐付く全 FinalityLog eventを時系列でreturn */
+/** Return all FinalityLog events linked to GTID chronologically */
 export async function getGtidEvents(gtid: string, db: D1Database): Promise<unknown[]> {
   const flRows = await db
     .prepare(

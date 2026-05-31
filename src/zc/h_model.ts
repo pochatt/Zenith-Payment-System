@@ -86,8 +86,8 @@ export async function reserveH(
     .run();
 
   if ((upd.meta.changes ?? 0) === 0) {
-    // changes=0 は (a) participating bankなし、(b) 非アクティブ、(c) h_limit 超過 のいずれか。
-    // 1 queryで is_active と h_limit/h_used をgetして具体的な理由をreturn。
+    // changes=0 means (a) no bank, (b) inactive, or (c) h_limit exceeded
+    // Get is_active and h_limit/h_used in 1 query; return specific reason
     const bankRow = await db
       .prepare(`SELECT is_active, h_limit, h_used FROM Participants WHERE bank_id = ?`)
       .bind(bankId)
@@ -115,7 +115,7 @@ export async function reserveH(
     .bind(reservationId, txid, bankId, amount, now)
     .run();
 
-  // 成功時のスナップショット（h_used_after, h_limit）を 1 queryでget
+  // Get success snapshot (h_used_after, h_limit) in 1 query
   const after = await db
     .prepare(`SELECT h_used, h_limit FROM Participants WHERE bank_id = ?`)
     .bind(bankId)
@@ -159,9 +159,9 @@ export async function lockH(reservationId: string, db: D1Database): Promise<bool
  * @returns true if released, false if already released or not found
  */
 export async function releaseH(reservationId: string, db: D1Database): Promise<boolean> {
-  // TOCTOU (time-of-check-time-of-use)防止: CASガード付きの単一batchで実行
-  // HReservations の is_released=0 ガードが二重解放を防ぎ、
-  // Participants の h_used 減算はそのガードの成功に依存する
+  // TOCTOU prevention: execute single batch with CAS guard
+  // HReservations is_released=0 guard prevents double release
+  // Participants h_used subtraction depends on guard success
   const row = await db
     .prepare(`SELECT bank_id, amount, is_released FROM HReservations WHERE reservation_id = ?`)
     .bind(reservationId)
@@ -170,10 +170,10 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
   if (!row || row.is_released === 1) return false;
 
   const now = nowISO();
-  // batch内で HReservations の CAS updateと Participants の h_used 減算を同一transactionで実行
-  // HReservations の UPDATE が changes=0 なら（既に is_released=1）、
-  // Participants の UPDATE も同じtransaction内で実行されるが、
-  // 戻り値で changes=0 を検出して呼び出し元に false をreturn
+  // Execute HReservations CAS update and Participants h_used subtract in same txn
+  // If HReservations UPDATE is changes=0 (already is_released=1)
+  // Participants UPDATE also in same txn
+  // Detect changes=0; return false to caller
   const stmts = [
     db
       .prepare(
@@ -181,11 +181,11 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
          WHERE reservation_id = ? AND is_released = 0`
       )
       .bind(now, reservationId),
-    // h_used 減算は HReservations の CAS が成功した場合のみ意味がある
-    // D1 batch はtransaction内実行のため、CAS 失敗時は後続 stmt も含めて
-    // ロールバックされないが、changes=0 で呼び出し元が判定する
-    // 注: h_used < amount となる場合は会計不整合のためwarninglogを出力する。
-    // MAX(0, ...) はフロア保護として維持するが、不整合の隠蔽を防ぐ。
+    // h_used subtraction only if HReservations CAS succeeds
+    // D1 batch executes within transaction; on CAS failure, subsequent stmts included
+    // Won't rollback; caller detects changes=0
+    // Note: if h_used < amount, warning log (mismatch)
+    // Keep MAX(0) as floor, but prevent hiding inconsistencies
     db
       .prepare(
         `UPDATE Participants SET h_used = CASE
@@ -203,14 +203,14 @@ export async function releaseH(reservationId: string, db: D1Database): Promise<b
   const results = await db.batch(stmts);
   const released = (results[0]?.meta.changes ?? 0) > 0;
   if (released) {
-    // h_used < amount の場合は会計不整合（h_used が 0 にクランプされる）
+    // If h_used < amount, mismatch (h_used clamped to 0)
     const p = await db
       .prepare(`SELECT h_used FROM Participants WHERE bank_id = ?`)
       .bind(row.bank_id)
       .first<{ h_used: number }>();
     if (p && p.h_used === 0) {
       // 解放後 h_used=0 が期待通りでない可能性がある場合のwarning
-      // (他のreservedが存在するのに 0 になっていればフロア保護が作動した兆候)
+      // (If 0 despite other reserved entries existing, floor protection activated)
       const otherActive = await db
         .prepare(`SELECT COUNT(*) as cnt FROM HReservations WHERE bank_id = ? AND is_released = 0`)
         .bind(row.bank_id)
