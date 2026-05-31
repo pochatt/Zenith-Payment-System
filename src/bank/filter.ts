@@ -411,8 +411,8 @@ export async function deleteFilter(
 // ---------------------------------------------------------------------------
 
 /**
- * EdiFilterCondition に基づいて EdiRecords を検索し、
- * 一致したtransaction IDの一覧をreturn。
+ * Search EdiRecords based on EdiFilterCondition;
+ * return list of matching transaction IDs.
  *
  * @param db              D1 database
  * @param bankId          filter target bank ID (EdiRecords.created_by_bank_id)
